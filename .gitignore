@@ -48,6 +48,6 @@ TODO.md
 Screenshot*.png
 
 # Root-level working files (not source)
-FontCache.h
-Theme.h
-icons/
+/FontCache.h
+/Theme.h
+/icons/
