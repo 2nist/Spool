@@ -359,7 +359,14 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
     historyStrip.onSendToTimeline = [this]
     {
-        systemFeed.addMessage ("Clip \xe2\x86\x92 Timeline \xc2\xb7 bar stub");
+        if (!processorRef.hasGrabbedClip()) return;
+        routeClipToTimeline (buildGrabClip());
+    };
+
+    historyStrip.onSendToLooper = [this]
+    {
+        if (!processorRef.hasGrabbedClip()) return;
+        routeClipToLooper (buildGrabClip());
     };
 
     historyStrip.onActiveToggled = [this] (bool active)
@@ -370,14 +377,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     historyStrip.onDragStarted = [this]
     {
         if (!processorRef.hasGrabbedClip()) { m_dragClip.reset(); return; }
-        CapturedAudioClip clip;
-        clip.buffer.makeCopyOf (processorRef.getGrabbedClip());
-        clip.sampleRate = static_cast<double> (processorRef.getSampleRate());
-        clip.sourceName = (m_focusedSlotIndex >= 0)
-            ? ("SLOT " + juce::String (m_focusedSlotIndex + 1).paddedLeft ('0', 2))
-            : "MIX";
-        clip.sourceSlot = m_focusedSlotIndex;
-        m_dragClip = std::move (clip);
+        m_dragClip = buildGrabClip();
     };
 
     // Wire LooperStrip callbacks
@@ -410,9 +410,16 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             loadGrabbedClipToReelSlot (targetSlot);
         };
 
+        ls.onSendToLooper = [this]
+        {
+            if (!processorRef.hasGrabbedClip()) return;
+            routeClipToLooper (buildGrabClip());
+        };
+
         ls.onSendToTimeline = [this]
         {
-            systemFeed.addMessage ("Clip \xe2\x86\x92 Timeline \xc2\xb7 bar stub");
+            if (!processorRef.hasGrabbedClip()) return;
+            routeClipToTimeline (buildGrabClip());
         };
 
         ls.onLiveToggled = [this] (bool active)
@@ -759,11 +766,61 @@ void PluginEditor::loadClipToReelSlot (const CapturedAudioClip& clip, int slotIn
 void PluginEditor::loadGrabbedClipToReelSlot (int slotIndex)
 {
     if (!processorRef.hasGrabbedClip()) return;
+    loadClipToReelSlot (buildGrabClip(), slotIndex);
+}
 
+CapturedAudioClip PluginEditor::buildGrabClip() const
+{
     CapturedAudioClip clip;
     clip.buffer.makeCopyOf (processorRef.getGrabbedClip());
-    clip.sampleRate = static_cast<double> (processorRef.getSampleRate());
-    loadClipToReelSlot (clip, slotIndex);
+    clip.sampleRate = static_cast<double>  (processorRef.getSampleRate());
+    clip.sourceName = (m_focusedSlotIndex >= 0)
+        ? ("SLOT " + juce::String (m_focusedSlotIndex + 1).paddedLeft ('0', 2))
+        : "MIX";
+    clip.sourceSlot = m_focusedSlotIndex;
+    clip.tempo      = static_cast<double>  (processorRef.getBpm());
+
+    if (clip.tempo > 0.0 && processorRef.getBeatsPerBar() > 0.0)
+    {
+        const double barsExact = clip.durationSeconds() * clip.tempo / 60.0
+                                 / processorRef.getBeatsPerBar();
+        clip.bars = juce::roundToInt (barsExact);
+    }
+
+    return clip;
+}
+
+void PluginEditor::routeClipToLooper (const CapturedAudioClip& clip)
+{
+    // LOOPER destination — clip handed off to the looper workspace.
+    // m_looperClip persists the clip until a loop DSP engine consumes it.
+    // Visual: LooperStrip shows "clip loaded" state for all row-2 buttons.
+    m_looperClip = clip;
+    zoneB.getLooperStrip().setHasGrabbedClip (true);
+
+    juce::String msg = "LOOPER \xc2\xb7 " + juce::String (clip.durationSeconds(), 1)
+                       + "s from " + clip.sourceName;
+    if (clip.bars > 0)
+        msg += " (" + juce::String (clip.bars) + " bars)";
+    systemFeed.addMessage (msg);
+}
+
+void PluginEditor::routeClipToTimeline (const CapturedAudioClip& clip)
+{
+    // TIMELINE destination stub — no arrangement DSP engine in this build.
+    // Opens the Tracks panel to show placement intent.
+    // Future: TracksPanel::placeClip (clip, barPosition) goes here.
+    juce::String msg = "TIMELINE \xe2\x86\x92 " + juce::String (clip.durationSeconds(), 1)
+                       + "s from " + clip.sourceName;
+    if (clip.bars > 0)
+        msg += " (" + juce::String (clip.bars) + " bars)";
+    msg += " \xc2\xb7 stub";
+    systemFeed.addMessage (msg);
+
+    m_contentPanelOpen = true;
+    m_tabStrip.setActiveTab ("tracks");
+    zoneA.setActivePanel ("tracks");
+    resized();
 }
 
 void PluginEditor::openTransportSettings()

@@ -423,12 +423,13 @@ void AudioHistoryStrip::paintGrabControls (juce::Graphics& g) const
     struct BtnSpec { const char* label; bool active; };
     const BtnSpec btns[] =
     {
-        { "\xe2\x97\x80 4",   true  },
-        { "\xe2\x97\x80 8",   true  },
-        { "\xe2\x97\x80 16",  true  },
-        { "FREE",              m_hasSelection },
-        { "\xe2\x86\x92 REEL",     m_hasGrabbedRegion },
-        { "\xe2\x86\x92 TMLN",     m_hasGrabbedRegion },
+        { "\xe2\x97\x80 4",         true  },
+        { "\xe2\x97\x80 8",         true  },
+        { "\xe2\x97\x80 16",        true  },
+        { "FREE",                    m_hasSelection },
+        { "\xe2\x86\x92 REEL",      m_hasGrabbedRegion },
+        { "\xe2\x86\x92 LOOP",      m_hasGrabbedRegion },
+        { "\xe2\x86\x92 TMLN",      m_hasGrabbedRegion },
     };
 
     const int pad  = 4;
@@ -541,7 +542,8 @@ void AudioHistoryStrip::mouseDown (const juce::MouseEvent& e)
             if (e.mods.isShiftDown() && onSendToNewReelSlot) onSendToNewReelSlot();
             else if (onSendToReel)                           onSendToReel();
         }
-        else if (btn == 5 && onSendToTimeline) onSendToTimeline();
+        else if (btn == 5 && onSendToLooper)   onSendToLooper();
+        else if (btn == 6 && onSendToTimeline) onSendToTimeline();
         return;
     }
 
@@ -701,12 +703,12 @@ int AudioHistoryStrip::grabBtnAt (juce::Point<int> pos) const noexcept
     struct BtnSpec { const char* label; };
     const BtnSpec btns[] = {
         { "\xe2\x97\x80 4" }, { "\xe2\x97\x80 8" }, { "\xe2\x97\x80 16" },
-        { "FREE" }, { "\xe2\x86\x92 REEL" }, { "\xe2\x86\x92 TMLN" }
+        { "FREE" }, { "\xe2\x86\x92 REEL" }, { "\xe2\x86\x92 LOOP" }, { "\xe2\x86\x92 TMLN" }
     };
 
     const int pad = 4;
     int x = r.getX() + pad;
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < 7; ++i)
     {
         const int w = static_cast<int> (juce::GlyphArrangement::getStringWidth (Theme::Font::micro(),btns[i].label) + 12);
         const juce::Rectangle<int> br (x, r.getY() + 1, w, r.getHeight() - 2);

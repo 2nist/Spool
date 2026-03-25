@@ -34,6 +34,7 @@ public:
     std::function<void(int numBars)>              onGrabLastBars;
     std::function<void()>                         onGrabFree;
     std::function<void()>                         onSendToReel;
+    std::function<void()>                         onSendToLooper;
     std::function<void()>                         onSendToTimeline;
     std::function<void(bool active)>              onLiveToggled;
     std::function<void(int sourceIndex)>          onSourceChanged;

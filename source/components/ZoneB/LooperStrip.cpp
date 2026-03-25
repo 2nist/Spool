@@ -148,7 +148,7 @@ void LooperStrip::paintRow2 (juce::Graphics& g) const
     const Btn btns[] =
     {
         { "\xe2\x96\xb6 PLAY",    m_hasGrabbedClip },
-        { "\xe2\x8a\x95 LOOP",    false            },
+        { "\xe2\x8a\x95 LOOP",    m_hasGrabbedClip },
         { "\xe2\x86\x92 REEL",    m_hasGrabbedClip },
         { "\xe2\x86\x92 TMLN",    m_hasGrabbedClip },
     };
@@ -353,6 +353,7 @@ void LooperStrip::mouseDown (const juce::MouseEvent& e)
 
     // Row 2 buttons
     const int r2btn = row2BtnAt (pos);
+    if (r2btn == 1 && onSendToLooper)   { onSendToLooper();   return; }
     if (r2btn == 2 && onSendToReel)     { onSendToReel();     return; }
     if (r2btn == 3 && onSendToTimeline) { onSendToTimeline(); return; }
     if (r2btn == 4)

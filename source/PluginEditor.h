@@ -102,16 +102,31 @@ private:
     // Populated in historyStrip.onDragStarted, consumed in zoneB.onClipDropped.
     std::optional<CapturedAudioClip> m_dragClip;
 
+    // Clip handed off to the LOOPER destination.
+    // Owned here until a loop DSP engine is ready to consume it.
+    std::optional<CapturedAudioClip> m_looperClip;
+
     // Open the TPRT panel (from gear button in transport strip)
     void openTransportSettings();
+
+    /** Build a CapturedAudioClip from the current grabbed buffer + session metadata. */
+    CapturedAudioClip buildGrabClip() const;
 
     /** Load the current grabbed clip into slotIndex as a REEL instrument.
         Handles DSP type, slot focus, Zone A panel creation, and callback wiring. */
     void loadGrabbedClipToReelSlot (int slotIndex);
 
-    /** Generalised version of the above — loads any CapturedAudioClip into a slot.
+    /** Generalised REEL destination — loads any CapturedAudioClip into a slot.
         Called for both the grab-button path and the drag-and-drop path. */
     void loadClipToReelSlot (const CapturedAudioClip& clip, int slotIndex);
+
+    /** LOOPER destination — hands clip ownership to the looper workspace.
+        Updates LooperStrip UI; loop playback DSP is stubbed pending engine work. */
+    void routeClipToLooper (const CapturedAudioClip& clip);
+
+    /** TIMELINE destination — stub. Opens Tracks panel to indicate placement intent.
+        Arrangement DSP not yet implemented; clip provenance logged to system feed. */
+    void routeClipToTimeline (const CapturedAudioClip& clip);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

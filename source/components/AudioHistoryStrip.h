@@ -74,6 +74,7 @@ public:
         PluginEditor resolves which slot to target (typically focusedSlot + 1). */
     std::function<void()> onSendToNewReelSlot;
 
+    std::function<void()> onSendToLooper;
     std::function<void()> onSendToTimeline;
 
     /** Fired when the LIVE dot is clicked. */
@@ -161,7 +162,7 @@ private:
     void paintGrabControls(juce::Graphics&) const;
 
     // Hit-test for grab buttons — returns 0-based index or -1
-    // 0=◀4  1=◀8  2=◀16  3=FREE  4=→REEL  5=→TIMELINE
+    // 0=◀4  1=◀8  2=◀16  3=FREE  4=→REEL  5=→LOOP  6=→TMLN
     int grabBtnAt (juce::Point<int> pos) const noexcept;
 
     // Selection edge hit-test

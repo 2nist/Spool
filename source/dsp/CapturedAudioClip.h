@@ -6,28 +6,39 @@
 /**
     CapturedAudioClip — lightweight transient descriptor for a captured audio region.
 
-    Created when a user grabs a region from AudioHistoryStrip (via ◀4/◀8/◀16/FREE).
-    Carries buffer ownership, sample rate, and source provenance metadata.
-
-    Phase 1: passed by reference as processorRef.getGrabbedClip() + sampleRate.
-    Phase 2: used as the typed payload for drag-and-drop from AudioHistoryStrip
-             to Zone B module rows, enabling drop-into-REEL directly from the
-             history waveform.
+    Common transfer object for Tape → destination routing.  PluginEditor constructs
+    and owns this; destinations (REEL, LOOPER, TIMELINE) each have their own load path.
 
     Design note: AudioHistoryStrip must not own or construct this struct directly;
     PluginEditor acts as coordinator, constructing the descriptor when routing
-    from capture to a destination slot.
+    from capture to a destination.
+
+    Destinations:
+      REEL     — loadClipToReelSlot()    full DSP load + Zone A editor panel
+      LOOPER   — routeClipToLooper()     stores in m_looperClip; loop engine pending
+      TIMELINE — routeClipToTimeline()   stub; opens Tracks panel; arrangement pending
 */
 struct CapturedAudioClip
 {
     juce::AudioBuffer<float> buffer;
     double                   sampleRate  { 44100.0 };
 
-    /** Human-readable source label, e.g. "MIX", "REEL · SLOT 01". */
+    /** Human-readable source label, e.g. "MIX", "SLOT 01". */
     juce::String             sourceName;
 
     /** 0-based source slot index, or -1 for the master mix output. */
     int                      sourceSlot  { -1 };
 
-    // Future: tempo, bar length, beat-sync metadata
+    /** Session BPM at time of capture (0 = unknown). Used by TIMELINE. */
+    double                   tempo       { 0.0 };
+
+    /** Complete bars inferred at capture time (0 = unknown). Used by TIMELINE. */
+    int                      bars        { 0 };
+
+    /** Duration in seconds. Returns 0 if sampleRate is invalid. */
+    float durationSeconds() const noexcept
+    {
+        if (sampleRate <= 0.0) return 0.0f;
+        return static_cast<float> (buffer.getNumSamples()) / static_cast<float> (sampleRate);
+    }
 };
