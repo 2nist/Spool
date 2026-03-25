@@ -536,14 +536,32 @@ void AudioHistoryStrip::mouseDown (const juce::MouseEvent& e)
             const double len   = std::abs (m_selEnd - m_selStart);
             onGrabRegion (start, len);
         }
-        else if (btn == 4 && onSendToReel)     onSendToReel();
+        else if (btn == 4)
+        {
+            if (e.mods.isShiftDown() && onSendToNewReelSlot) onSendToNewReelSlot();
+            else if (onSendToReel)                           onSendToReel();
+        }
         else if (btn == 5 && onSendToTimeline) onSendToTimeline();
         return;
     }
 
-    // Waveform area — begin selection
+    // Waveform area — begin selection or grabbed-region drag
     if (!isCollapsed() && waveRect().contains (pos))
     {
+        // If there is a grabbed region and the click lands inside it, prepare a
+        // drag-and-drop gesture instead of starting a selection.
+        if (m_hasGrabbedRegion)
+        {
+            const float leftX  = secondsAgoToX (static_cast<float> (m_grabbedStart + m_grabbedLength));
+            const float rightX = secondsAgoToX (static_cast<float> (m_grabbedStart));
+            const float px     = static_cast<float> (pos.x);
+            if (px >= leftX - 8.0f && px <= rightX + 8.0f)
+            {
+                m_isGrabDragPending = true;
+                return;   // don't start selection here
+            }
+        }
+
         const double sAgo = static_cast<double> (xToSecondsAgo (static_cast<float> (pos.x)));
         const auto   mode = selDragModeAt (pos);
 
@@ -570,6 +588,33 @@ void AudioHistoryStrip::mouseDown (const juce::MouseEvent& e)
 
 void AudioHistoryStrip::mouseDrag (const juce::MouseEvent& e)
 {
+    // Pending DnD from grabbed region — fire once drag threshold is crossed
+    if (m_isGrabDragPending)
+    {
+        if (e.getDistanceFromDragStart() > 5.0f)
+        {
+            m_isGrabDragPending = false;
+
+            // Notify PluginEditor first so it can store the CapturedAudioClip
+            if (onDragStarted) onDragStarted();
+
+            // Build a small visual thumbnail for the drag cursor
+            juce::Image img (juce::Image::ARGB, 80, 20, true);
+            {
+                juce::Graphics gfx (img);
+                gfx.setColour (Theme::Colour::accent.withAlpha (0.85f));
+                gfx.fillRoundedRectangle (img.getBounds().toFloat(), 3.0f);
+                gfx.setColour (juce::Colours::white);
+                gfx.setFont   (Theme::Font::micro());
+                gfx.drawText  ("  CLIP", img.getBounds(), juce::Justification::centredLeft, false);
+            }
+
+            if (auto* ddc = juce::DragAndDropContainer::findParentDragContainerFor (this))
+                ddc->startDragging ("CapturedAudioClip", this, juce::ScaledImage (img));
+        }
+        return;
+    }
+
     if (m_isResizeDrag)
     {
         const int dy     = m_resizeDragStartY - e.getScreenY();  // drag up = taller
@@ -608,8 +653,9 @@ void AudioHistoryStrip::mouseDrag (const juce::MouseEvent& e)
 
 void AudioHistoryStrip::mouseUp (const juce::MouseEvent&)
 {
-    m_isResizeDrag = false;
-    m_selDrag      = SelDrag::None;
+    m_isResizeDrag     = false;
+    m_selDrag          = SelDrag::None;
+    m_isGrabDragPending = false;
 }
 
 void AudioHistoryStrip::mouseDoubleClick (const juce::MouseEvent& e)

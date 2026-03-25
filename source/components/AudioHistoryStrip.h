@@ -69,10 +69,20 @@ public:
 
     /** Fired by → routing buttons. */
     std::function<void()> onSendToReel;
+
+    /** Fired by → REEL when Shift is held — load into a new (non-focused) REEL slot.
+        PluginEditor resolves which slot to target (typically focusedSlot + 1). */
+    std::function<void()> onSendToNewReelSlot;
+
     std::function<void()> onSendToTimeline;
 
     /** Fired when the LIVE dot is clicked. */
     std::function<void(bool active)> onActiveToggled;
+
+    /** Fired at the start of a drag gesture originating from a grabbed region.
+        PluginEditor should use this to populate its m_dragClip before the JUCE
+        drag-and-drop system takes over. */
+    std::function<void()> onDragStarted;
 
     //==========================================================================
     // juce::Component
@@ -125,6 +135,9 @@ private:
     SelDrag m_selDrag      { SelDrag::None };
     double  m_dragAnchor   { 0.0 };
     double  m_selMoveOff   { 0.0 };
+
+    // Set while the user is dragging from within a grabbed region — triggers DnD
+    bool m_isGrabDragPending { false };
 
     //==========================================================================
     // Layout helpers

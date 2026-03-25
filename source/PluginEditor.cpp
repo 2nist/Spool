@@ -304,6 +304,14 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             processorRef.setStepActive (slotIdx, s, s < stepCount && pattern.stepActive (s));
     };
 
+    // Wire Zone B DnD drop → load the pending clip into the target slot
+    zoneB.onClipDropped = [this] (int flatSlotIndex)
+    {
+        if (!m_dragClip.has_value()) return;
+        loadClipToReelSlot (*m_dragClip, flatSlotIndex);
+        m_dragClip.reset();
+    };
+
     // Set up Audio History Strip
     historyStrip.setCircularBuffer (&processorRef.getCircularBuffer());
     historyStrip.setSourceInfo ("MIX", Theme::Colour::accent);
@@ -338,28 +346,15 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
     historyStrip.onSendToReel = [this]
     {
-        if (!processorRef.hasGrabbedClip())
-            return;
-
-        // Load into the currently focused slot or slot 0 as fallback
         const int targetSlot = (m_focusedSlotIndex >= 0) ? m_focusedSlotIndex : 0;
+        loadGrabbedClipToReelSlot (targetSlot);
+    };
 
-        auto& reelProc = processorRef.getAudioGraph().getReel (targetSlot);
-        reelProc.loadFromBuffer (processorRef.getGrabbedClip(),
-                                 static_cast<double> (processorRef.getSampleRate()));
-
-        // Refresh editor panel if open
-        if (auto* panel = zoneA.getReelPanel (targetSlot))
-        {
-            panel->setProcessor (&reelProc);
-            panel->repaint();
-        }
-
-        const float durSecs = processorRef.getGrabbedClip().getNumSamples()
-                              / static_cast<float> (processorRef.getSampleRate());
-        systemFeed.addMessage ("REEL loaded \xc2\xb7 "
-                               + juce::String (durSecs, 1) + "s \xe2\x86\x92 slot "
-                               + juce::String (targetSlot + 1));
+    historyStrip.onSendToNewReelSlot = [this]
+    {
+        // Load into the next slot (cycling), giving a quick way to fill successive REEL slots.
+        const int base = (m_focusedSlotIndex >= 0) ? m_focusedSlotIndex : 0;
+        loadGrabbedClipToReelSlot ((base + 1) % 8);
     };
 
     historyStrip.onSendToTimeline = [this]
@@ -370,6 +365,19 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     historyStrip.onActiveToggled = [this] (bool active)
     {
         systemFeed.addMessage (juce::String ("History buffer: ") + (active ? "LIVE" : "PAUSED"));
+    };
+
+    historyStrip.onDragStarted = [this]
+    {
+        if (!processorRef.hasGrabbedClip()) { m_dragClip.reset(); return; }
+        CapturedAudioClip clip;
+        clip.buffer.makeCopyOf (processorRef.getGrabbedClip());
+        clip.sampleRate = static_cast<double> (processorRef.getSampleRate());
+        clip.sourceName = (m_focusedSlotIndex >= 0)
+            ? ("SLOT " + juce::String (m_focusedSlotIndex + 1).paddedLeft ('0', 2))
+            : "MIX";
+        clip.sourceSlot = m_focusedSlotIndex;
+        m_dragClip = std::move (clip);
     };
 
     // Wire LooperStrip callbacks
@@ -398,25 +406,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
         ls.onSendToReel = [this]
         {
-            if (!processorRef.hasGrabbedClip())
-                return;
-
             const int targetSlot = (m_focusedSlotIndex >= 0) ? m_focusedSlotIndex : 0;
-            auto& reelProc = processorRef.getAudioGraph().getReel (targetSlot);
-            reelProc.loadFromBuffer (processorRef.getGrabbedClip(),
-                                     processorRef.getSampleRate());
-
-            if (auto* panel = zoneA.getReelPanel (targetSlot))
-            {
-                panel->setProcessor (&reelProc);
-                panel->repaint();
-            }
-
-            const float durSecs = processorRef.getGrabbedClip().getNumSamples()
-                                  / static_cast<float> (processorRef.getSampleRate());
-            systemFeed.addMessage ("REEL loaded \xc2\xb7 "
-                                   + juce::String (durSecs, 1) + "s \xe2\x86\x92 slot "
-                                   + juce::String (targetSlot + 1));
+            loadGrabbedClipToReelSlot (targetSlot);
         };
 
         ls.onSendToTimeline = [this]
@@ -717,6 +708,62 @@ void PluginEditor::recordStateChanged (bool recording)
     processorRef.getAppState().transport.isRecording = recording;
     if (auto* tp = zoneA.getTracksPanel())
         tp->setRecording (recording);
+}
+
+void PluginEditor::loadClipToReelSlot (const CapturedAudioClip& clip, int slotIndex)
+{
+    // 1. Load audio data into the REEL processor
+    auto& reelProc = processorRef.getAudioGraph().getReel (slotIndex);
+    reelProc.loadFromBuffer (clip.buffer,
+                             clip.sampleRate);
+
+    // 2. Ensure DSP graph routes this slot as REEL (type 3) and marks it active
+    processorRef.getAudioGraph().setSlotSynthType (slotIndex, 3);
+    processorRef.setSlotActive (slotIndex, true);
+
+    // 3. Open the REEL editor in Zone A (creates panel if needed)
+    zoneA.switchToModulePanel ("REEL", slotIndex);
+
+    // 4. Bind editor panel to the live processor and wire param callbacks
+    if (auto* panel = zoneA.getReelPanel (slotIndex))
+    {
+        panel->setProcessor (&reelProc);
+        panel->onParamChanged = [this, slotIndex] (const juce::String& paramId, float value)
+        {
+            processorRef.getAudioGraph().getReel (slotIndex).setParam (paramId, value);
+        };
+        panel->repaint();
+    }
+
+    // 5. Focus the destination slot
+    m_focusedSlotIndex = slotIndex;
+    processorRef.setFocusedSlot (slotIndex);
+
+    // 6. Redirect circular buffer and history strip label to follow the slot
+    processorRef.getCircularBuffer().setSource (slotIndex);
+    historyStrip.setSourceInfo ("REEL \xc2\xb7 SLOT "
+                                    + juce::String (slotIndex + 1).paddedLeft ('0', 2),
+                                Theme::Colour::accent);
+
+    // 7. Ensure Zone A content panel is visible
+    m_contentPanelOpen = true;
+    resized();
+
+    // 8. Status
+    const float durSecs = clip.buffer.getNumSamples() / static_cast<float> (clip.sampleRate);
+    systemFeed.addMessage ("REEL loaded \xc2\xb7 "
+                           + juce::String (durSecs, 1) + "s \xe2\x86\x92 slot "
+                           + juce::String (slotIndex + 1));
+}
+
+void PluginEditor::loadGrabbedClipToReelSlot (int slotIndex)
+{
+    if (!processorRef.hasGrabbedClip()) return;
+
+    CapturedAudioClip clip;
+    clip.buffer.makeCopyOf (processorRef.getGrabbedClip());
+    clip.sampleRate = static_cast<double> (processorRef.getSampleRate());
+    loadClipToReelSlot (clip, slotIndex);
 }
 
 void PluginEditor::openTransportSettings()

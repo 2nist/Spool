@@ -154,6 +154,26 @@ void ZoneBComponent::addSlotToGroup (int groupIndex, ModuleRow::ModuleType type)
         resized();
     };
 
+    // DnD drop from AudioHistoryStrip —————————————————————————————————————
+    row->onClipDropped = [this, row, groupIndex] (int)
+    {
+        // If the row was converted from Empty to Reel inside itemDropped,
+        // re-sync the module list and update the row layout.
+        updateSourceNames();
+        layoutRowsContent();
+
+        // Focus the row so Zone A/C/D update consistently with a normal click.
+        focusRow (row, groupIndex);
+
+        // Compute flat slot index using the same formula as focusRow.
+        int flatSlot = row->getRowIndex();
+        for (int g = 0; g < groupIndex; ++g)
+            flatSlot += m_groups[g]->slots.size();
+
+        if (onClipDropped)
+            onClipDropped (flatSlot);
+    };
+
     m_rowsContent.addAndMakeVisible (*row);
     layoutRowsContent();
     updateSourceNames();

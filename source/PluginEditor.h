@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "Theme.h"
+#include "dsp/CapturedAudioClip.h"
 #include "components/ZoneC/ChainState.h"
 #include "components/ZoneB/SlotPattern.h"
 #include "theme/ThemeManager.h"
@@ -97,8 +98,20 @@ private:
     // lazy panels (e.g. MixerPanel) when their tab is first opened.
     juce::StringArray m_lastModuleNames;
 
+    // Transient clip held during an AudioHistoryStrip → ModuleRow drag operation.
+    // Populated in historyStrip.onDragStarted, consumed in zoneB.onClipDropped.
+    std::optional<CapturedAudioClip> m_dragClip;
+
     // Open the TPRT panel (from gear button in transport strip)
     void openTransportSettings();
+
+    /** Load the current grabbed clip into slotIndex as a REEL instrument.
+        Handles DSP type, slot focus, Zone A panel creation, and callback wiring. */
+    void loadGrabbedClipToReelSlot (int slotIndex);
+
+    /** Generalised version of the above — loads any CapturedAudioClip into a slot.
+        Called for both the grab-button path and the drag-and-drop path. */
+    void loadClipToReelSlot (const CapturedAudioClip& clip, int slotIndex);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

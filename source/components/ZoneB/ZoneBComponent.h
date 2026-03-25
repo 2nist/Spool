@@ -59,6 +59,11 @@ public:
     /** Fired when the module list changes — passes flat "<Group>:<Type>" list. */
     std::function<void (const juce::StringArray&)> onModuleListChanged;
 
+    /** Fired when a CapturedAudioClip is dropped onto a module row.
+        The row is already focused (slotSelected fired) before this fires.
+        flatSlotIndex is the 0-based absolute slot index across all groups. */
+    std::function<void (int flatSlotIndex)> onClipDropped;
+
     //==========================================================================
 
     ZoneBComponent();

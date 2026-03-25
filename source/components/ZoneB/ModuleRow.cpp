@@ -511,6 +511,15 @@ void ModuleRow::paintHeader (juce::Graphics& g) const
     // Bottom border
     g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.5f));
     g.fillRect  (kStripeW, kHeaderH - 1, getWidth() - kStripeW, 1);
+
+    // DnD hover highlight — drawn on top of all header content
+    if (m_isDragOver)
+    {
+        g.setColour (Theme::Colour::accent.withAlpha (0.22f));
+        g.fillRect  (hdr);
+        g.setColour (Theme::Colour::accent);
+        g.drawRect  (hdr.toFloat(), 1.5f);
+    }
 }
 
 void ModuleRow::paintParamArea (juce::Graphics& g) const
@@ -673,3 +682,40 @@ void ModuleRow::mouseDown (const juce::MouseEvent& e)
 void ModuleRow::mouseDrag (const juce::MouseEvent&) {}
 
 void ModuleRow::mouseUp (const juce::MouseEvent&) {}
+
+//==============================================================================
+// DragAndDropTarget
+//==============================================================================
+
+bool ModuleRow::isInterestedInDragSource (const SourceDetails& details)
+{
+    if (details.description.toString() != "CapturedAudioClip") return false;
+    // Accept drops onto Reel rows and Empty rows (auto-convert to Reel on drop)
+    return m_type == ModuleType::Reel || m_type == ModuleType::Empty;
+}
+
+void ModuleRow::itemDragEnter (const SourceDetails&)
+{
+    m_isDragOver = true;
+    repaint();
+}
+
+void ModuleRow::itemDragExit (const SourceDetails&)
+{
+    m_isDragOver = false;
+    repaint();
+}
+
+void ModuleRow::itemDropped (const SourceDetails&)
+{
+    m_isDragOver = false;
+
+    // Auto-convert empty rows to REEL before notifying the parent
+    if (m_type == ModuleType::Empty)
+        setModuleType (ModuleType::Reel);
+
+    repaint();
+
+    if (onClipDropped)
+        onClipDropped (m_index);
+}

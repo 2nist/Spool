@@ -24,7 +24,8 @@
       Expanded  : kExpandedH  = kHeaderH + kParamH = 56px
       Collapsed : kCollapsedH = kHeaderH            = 20px
 */
-class ModuleRow : public juce::Component
+class ModuleRow : public juce::Component,
+                  public juce::DragAndDropTarget
 {
 public:
     enum class ModuleType { Empty, Synth, Sampler, Sequencer, Vst3, DrumMachine, Output, Reel };
@@ -93,6 +94,10 @@ public:
     /** Fired when a fader value changes. paramIdx = index into getAllParams(). norm = 0-1. */
     std::function<void (int paramIdx, float norm)> onParamChanged;
 
+    /** Fired when a CapturedAudioClip is dropped onto this row.
+        If the row was Empty it is already converted to Reel before this fires. */
+    std::function<void (int rowIndex)> onClipDropped;
+
     //==========================================================================
     // Component overrides
 
@@ -102,6 +107,14 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp   (const juce::MouseEvent&) override;
 
+    //==========================================================================
+    // DragAndDropTarget overrides
+
+    bool isInterestedInDragSource (const SourceDetails& details)          override;
+    void itemDragEnter            (const SourceDetails& details)          override;
+    void itemDragExit             (const SourceDetails& details)          override;
+    void itemDropped              (const SourceDetails& details)          override;
+
 private:
     int          m_index;
     ModuleType   m_type      { ModuleType::Empty };
@@ -109,6 +122,7 @@ private:
     bool         m_muted     { false };
     bool         m_collapsed { false };
     juce::Colour m_groupColor { 0xFF4B9EDB };
+    bool         m_isDragOver { false };   // true while a valid DnD payload hovers over this row
 
     SlotPattern                      m_pattern;
     std::unique_ptr<DrumMachineData> m_drumData;
