@@ -265,147 +265,233 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
     const auto wr = waveRect();
     if (wr.isEmpty()) return;
 
-    // Tape base background
-    g.setColour (TapeColors::tapeBase);
+    // ─── colour palette (history-strip specific) ────────────────────────────
+    static const juce::Colour kTape   { 0xFFF5F1EC };   // warm off-white tape
+    static const juce::Colour kRim    { 0xFF100C03 };   // dark housing
+    static const juce::Colour kInk    { 0xFF1A0F06 };   // deep ink on white
+    static const juce::Colour kNeedle { 0xFF7B4A1C };   // amber/rust stylus
+
+    // ─── 1  Tape surface ────────────────────────────────────────────────────
+    g.setColour (kTape);
     g.fillRect  (wr);
 
-    // Hard rims (left and right edges — same as CylinderBand)
-    g.setColour (kHousingEdge);
-    g.fillRect  (wr.getX(),              wr.getY(), 4, wr.getHeight());
-    g.fillRect  (wr.getRight() - 4,      wr.getY(), 4, wr.getHeight());
+    g.setColour (kRim);
+    g.fillRect  (wr.getX(),         wr.getY(), 4, wr.getHeight());
+    g.fillRect  (wr.getRight() - 4, wr.getY(), 4, wr.getHeight());
 
-    // Gradient fades (80px each side)
+    // Rim fade-ins (natural edge shadow)
     const int fadeW = juce::jmin (80, wr.getWidth() / 3);
     {
-        juce::ColourGradient leftFade (kHousingEdge.withAlpha (0.7f),
-                                       static_cast<float> (wr.getX() + 4), 0.0f,
-                                       kHousingEdge.withAlpha (0.0f),
-                                       static_cast<float> (wr.getX() + 4 + fadeW), 0.0f,
-                                       false);
-        g.setGradientFill (leftFade);
+        juce::ColourGradient lf (kRim.withAlpha (0.35f), (float)(wr.getX() + 4),           0.f,
+                                  kRim.withAlpha (0.0f),  (float)(wr.getX() + 4 + fadeW),   0.f, false);
+        g.setGradientFill (lf);
         g.fillRect (wr.getX() + 4, wr.getY(), fadeW, wr.getHeight());
 
-        juce::ColourGradient rightFade (kHousingEdge.withAlpha (0.0f),
-                                        static_cast<float> (wr.getRight() - 4 - fadeW), 0.0f,
-                                        kHousingEdge.withAlpha (0.7f),
-                                        static_cast<float> (wr.getRight() - 4), 0.0f,
-                                        false);
-        g.setGradientFill (rightFade);
+        juce::ColourGradient rf (kRim.withAlpha (0.0f),  (float)(wr.getRight() - 4 - fadeW), 0.f,
+                                  kRim.withAlpha (0.18f), (float)(wr.getRight() - 4),          0.f, false);
+        g.setGradientFill (rf);
         g.fillRect (wr.getRight() - 4 - fadeW, wr.getY(), fadeW, wr.getHeight());
     }
 
-    // Waveform path
-    if (m_waveformData.size() > 1)
+    // Age wash — subtle warm tint on oldest signal
     {
-        const float cx   = static_cast<float> (wr.getCentreY());
-        const float maxH = static_cast<float> (wr.getHeight()) * 0.42f;
-        const float waveStartX = static_cast<float> (wr.getX() + 4);
-        const float waveW      = static_cast<float> (wr.getWidth() - 8);
-
-        juce::Path p;
-        const int n = m_waveformData.size();
-        p.startNewSubPath (waveStartX, cx);
-        for (int i = 0; i < n; ++i)
-        {
-            const float x = waveStartX + (static_cast<float> (i) / n) * waveW;
-            p.lineTo (x, cx - m_waveformData[i] * maxH);
-        }
-        for (int i = n - 1; i >= 0; --i)
-        {
-            const float x = waveStartX + (static_cast<float> (i) / n) * waveW;
-            p.lineTo (x, cx + m_waveformData[i] * maxH);
-        }
-        p.closeSubPath();
-
-        g.setColour (m_sourceColor.withAlpha (0.65f));
-        g.fillPath  (p);
-        g.setColour (m_sourceColor.withAlpha (0.85f));
-        g.strokePath (p, juce::PathStrokeType (1.0f));
+        const int ageW = juce::jmin (200, wr.getWidth() * 2 / 3);
+        juce::ColourGradient aw (juce::Colour (0x18C0A870), (float)(wr.getX() + 4),          0.f,
+                                  juce::Colour (0x00C0A870), (float)(wr.getX() + 4 + ageW),  0.f, false);
+        g.setGradientFill (aw);
+        g.fillRect (wr.getX() + 4, wr.getY(), ageW, wr.getHeight());
     }
 
-    // Selection highlight
+    // Centreline reference (very faint)
+    {
+        const float cy = (float)wr.getCentreY();
+        g.setColour (kInk.withAlpha (0.07f));
+        g.drawLine  ((float)(wr.getX() + 4), cy, (float)(wr.getRight() - 4), cy, 0.5f);
+    }
+
+    // ─── 2  Ink trace — seismograph style, dark on white ────────────────────
+    if (m_waveformData.size() > 1)
+    {
+        const float cx         = (float)wr.getCentreY();
+        const float maxH       = (float)wr.getHeight() * 0.40f;
+        const float waveStartX = (float)(wr.getX() + 4);
+        const float waveW      = (float)(wr.getWidth() - 8);
+        const int   n          = m_waveformData.size();
+
+        // Ink colour: very dark, barely tinted towards source
+        const juce::Colour ink = kInk.interpolatedWith (m_sourceColor.withBrightness (0.12f), 0.20f);
+
+        // Closed shape for the subtle fill impression
+        juce::Path fillPath;
+        fillPath.startNewSubPath (waveStartX, cx);
+        for (int i = 0; i < n; ++i)
+            fillPath.lineTo (waveStartX + ((float)i / n) * waveW, cx - m_waveformData[i] * maxH);
+        for (int i = n - 1; i >= 0; --i)
+            fillPath.lineTo (waveStartX + ((float)i / n) * waveW, cx + m_waveformData[i] * maxH);
+        fillPath.closeSubPath();
+        g.setColour (ink.withAlpha (0.07f));
+        g.fillPath  (fillPath);
+
+        // Top contour — the primary ink trace
+        juce::Path topPath;
+        topPath.startNewSubPath (waveStartX, cx);
+        for (int i = 0; i < n; ++i)
+            topPath.lineTo (waveStartX + ((float)i / n) * waveW, cx - m_waveformData[i] * maxH);
+        g.setColour (ink.withAlpha (0.75f));
+        g.strokePath (topPath, juce::PathStrokeType (1.0f));
+
+        // Bottom mirror — lighter supporting line
+        juce::Path botPath;
+        botPath.startNewSubPath (waveStartX, cx);
+        for (int i = 0; i < n; ++i)
+            botPath.lineTo (waveStartX + ((float)i / n) * waveW, cx + m_waveformData[i] * maxH);
+        g.setColour (ink.withAlpha (0.40f));
+        g.strokePath (botPath, juce::PathStrokeType (0.75f));
+
+        // Freshness overlay — denser ink density at the "now" edge
+        const int freshW = juce::jmin (60, wr.getWidth() / 5);
+        {
+            juce::ColourGradient fresh (ink.withAlpha (0.18f), (float)(wr.getRight() - 4),          0.f,
+                                        ink.withAlpha (0.0f),  (float)(wr.getRight() - 4 - freshW), 0.f, false);
+            g.setGradientFill (fresh);
+            g.fillRect (wr.getRight() - 4 - freshW, wr.getY(), freshW, wr.getHeight());
+        }
+    }
+
+    // ─── 3  Selection highlight — material ready to extract ─────────────────
     if (m_hasSelection && m_selStart != m_selEnd)
     {
-        const float x1 = secondsAgoToX (static_cast<float> (juce::jmax (m_selStart, m_selEnd)));
-        const float x2 = secondsAgoToX (static_cast<float> (juce::jmin (m_selStart, m_selEnd)));
-        const auto  selR = juce::Rectangle<float> (x1, static_cast<float> (wr.getY()),
-                                                    x2 - x1, static_cast<float> (wr.getHeight()));
-        g.setColour (Theme::Colour::accent.withAlpha (0.18f));
-        g.fillRect  (selR);
-        g.setColour (Theme::Colour::accent);
-        g.drawLine  (x1, static_cast<float> (wr.getY()),     x1, static_cast<float> (wr.getBottom()), 2.0f);
-        g.drawLine  (x2, static_cast<float> (wr.getY()),     x2, static_cast<float> (wr.getBottom()), 2.0f);
+        const float x1  = secondsAgoToX ((float)juce::jmax (m_selStart, m_selEnd));
+        const float x2  = secondsAgoToX ((float)juce::jmin (m_selStart, m_selEnd));
+        const auto  selR = juce::Rectangle<float> (x1, (float)wr.getY(), x2 - x1, (float)wr.getHeight());
 
-        // Duration label
-        const double len     = std::abs (m_selEnd - m_selStart);
+        g.setColour (juce::Colours::white.withAlpha (0.55f));
+        g.fillRect  (selR);
+        g.setColour (Theme::Colour::accent.withAlpha (0.70f));
+        g.drawLine  (x1, (float)wr.getY(), x1, (float)wr.getBottom(), 1.5f);
+        g.drawLine  (x2, (float)wr.getY(), x2, (float)wr.getBottom(), 1.5f);
+
+        const double len = std::abs (m_selEnd - m_selStart);
         const juce::String lbl = (len < 60.0) ? juce::String (len, 1) + "s"
                                                : juce::String (len / 60.0, 1) + "m";
         const float lblX = (x1 + x2) * 0.5f - 20.0f;
-        const auto  lblR = juce::Rectangle<int> (static_cast<int> (lblX),
-                                                 wr.getY() + 2, 40, 12);
-        g.setColour (Theme::Colour::surface3);
+        const auto  lblR = juce::Rectangle<int> ((int)lblX, wr.getY() + 2, 40, 12);
+        g.setColour (juce::Colour (0xCCF5F1EC));
         g.fillRoundedRectangle (lblR.toFloat().expanded (4.0f, 0.0f), 3.0f);
         g.setFont   (Theme::Font::micro());
-        g.setColour (Theme::Colour::inkLight);
+        g.setColour (juce::Colour (0xFF1A0F06));
         g.drawText  (lbl, lblR, juce::Justification::centred, false);
     }
 
-    // Grabbed region highlight
+    // ─── 4  Grabbed region — "clip material" tile ───────────────────────────
     if (m_hasGrabbedRegion)
     {
-        const float x1 = secondsAgoToX (static_cast<float> (m_grabbedStart + m_grabbedLength));
-        const float x2 = secondsAgoToX (static_cast<float> (m_grabbedStart));
-        const auto  gr = juce::Rectangle<float> (x1, static_cast<float> (wr.getY()),
+        const float x1 = secondsAgoToX ((float)(m_grabbedStart + m_grabbedLength));
+        const float x2 = secondsAgoToX ((float)m_grabbedStart);
+        const auto  gr = juce::Rectangle<float> (x1, (float)wr.getY(),
                                                   juce::jmax (2.0f, x2 - x1),
-                                                  static_cast<float> (wr.getHeight()));
-        g.setColour (Theme::Zone::c.withAlpha (0.20f));
+                                                  (float)wr.getHeight());
+
+        // Lifted clip fill (brighter when drag-pending, approaching object state)
+        g.setColour (juce::Colours::white.withAlpha (m_isGrabDragPending ? 0.86f : 0.68f));
         g.fillRect  (gr);
-        g.setColour (Theme::Zone::c);
-        g.drawLine  (gr.getX(),     static_cast<float> (wr.getY()), gr.getX(),     static_cast<float> (wr.getBottom()), 2.0f);
-        g.drawLine  (gr.getRight(), static_cast<float> (wr.getY()), gr.getRight(), static_cast<float> (wr.getBottom()), 2.0f);
 
+        // Clip-waveform print inside grabbed region (conventional filled form)
+        if (m_waveformData.size() > 1)
+        {
+            g.saveState();
+            g.reduceClipRegion (gr.toNearestInt());
+
+            const float cx         = (float)wr.getCentreY();
+            const float maxH       = (float)wr.getHeight() * 0.38f;
+            const float waveStartX = (float)(wr.getX() + 4);
+            const float waveW      = (float)(wr.getWidth() - 8);
+            const int   n          = m_waveformData.size();
+
+            juce::Path clipFill;
+            clipFill.startNewSubPath (waveStartX, cx);
+            for (int i = 0; i < n; ++i)
+                clipFill.lineTo (waveStartX + ((float)i / n) * waveW, cx - m_waveformData[i] * maxH);
+            for (int i = n - 1; i >= 0; --i)
+                clipFill.lineTo (waveStartX + ((float)i / n) * waveW, cx + m_waveformData[i] * maxH);
+            clipFill.closeSubPath();
+
+            g.setColour (m_sourceColor.withAlpha (0.45f));
+            g.fillPath  (clipFill);
+            g.setColour (m_sourceColor.withAlpha (0.80f));
+            g.strokePath (clipFill, juce::PathStrokeType (0.8f));
+
+            g.restoreState();
+        }
+
+        // Clip frame — four-sided tile identity; stronger border when drag-pending
+        const float bw = m_isGrabDragPending ? 2.0f : 1.5f;
+        const float ba = m_isGrabDragPending ? 1.0f : 0.85f;
+        g.setColour (Theme::Zone::c.withAlpha (ba));
+        g.drawLine  (gr.getX(),     (float)wr.getY(),    gr.getX(),     (float)wr.getBottom(), bw);
+        g.drawLine  (gr.getRight(), (float)wr.getY(),    gr.getRight(), (float)wr.getBottom(), bw);
+        g.setColour (Theme::Zone::c.withAlpha (ba * 0.55f));
+        g.drawLine  (gr.getX(), (float)wr.getY(),    gr.getRight(), (float)wr.getY(),    0.75f);
+        g.drawLine  (gr.getX(), (float)wr.getBottom(), gr.getRight(), (float)wr.getBottom(), 0.75f);
+
+        // Drop shadow hint when drag is starting (tile "lifts" off the tape)
+        if (m_isGrabDragPending)
+        {
+            g.setColour (juce::Colour (0x22080400));
+            g.fillRect  (gr.translated (2.0f, 2.0f));
+        }
+
+        // Label
         g.setFont   (Theme::Font::micro());
         g.setColour (Theme::Zone::c);
-        g.drawText  ("GRABBED", juce::Rectangle<int> (static_cast<int> (gr.getCentreX()) - 24,
-                                                       wr.getY() + 2, 48, 10),
+        g.drawText  ("GRABBED",
+                     juce::Rectangle<int> ((int)gr.getCentreX() - 24, wr.getY() + 2, 48, 10),
                      juce::Justification::centred, false);
     }
 
-    // Playhead at right edge ("NOW")
+    // ─── 5  Write-head needle — small stylus arm at the live write position ─
     {
-        const float px = static_cast<float> (wr.getRight() - 4);
-        g.setColour (kPlayheadColor);
-        g.drawLine  (px, static_cast<float> (wr.getY()), px, static_cast<float> (wr.getBottom()), 1.0f);
+        const float rimX  = (float)(wr.getRight() - 4);
+        const float cy    = (float)wr.getCentreY();
 
-        juce::Path tri;
-        tri.addTriangle (px - 4.0f, static_cast<float> (wr.getY()),
-                         px + 4.0f, static_cast<float> (wr.getY()),
-                         px,        static_cast<float> (wr.getY() + 6));
-        g.fillPath (tri);
+        // Cantilever arm: base just outside the rim, angled down to tape surface
+        const float baseX = rimX + 1.0f;
+        const float baseY = cy - 7.0f;
+        const float tipX  = rimX - 2.0f;
+        const float tipY  = cy;
 
-        g.setFont   (Theme::Font::micro());
-        g.setColour (Theme::Colour::inkGhost);
-        g.drawText  ("NOW", juce::Rectangle<int> (static_cast<int> (px) - 14,
-                                                   wr.getY() + 8, 28, 8),
-                     juce::Justification::centred, false);
+        g.setColour (kNeedle.withAlpha (0.65f));
+        g.drawLine  (baseX, baseY, tipX, tipY, 1.5f);
+
+        // Contact point dot at needle tip
+        g.setColour (kNeedle.withAlpha (0.90f));
+        g.fillEllipse (tipX - 1.75f, tipY - 1.75f, 3.5f, 3.5f);
     }
 
-    // Time labels at bottom
+    // ─── 6  Time markers — dark ink on white ────────────────────────────────
     {
         const int numLabels = 5;
         g.setFont   (Theme::Font::micro());
-        g.setColour (TapeColors::inkOnTape.withAlpha (0.7f));
+        g.setColour (juce::Colour (0x88200E04));
         for (int i = 1; i < numLabels; ++i)
         {
-            const double sAgo = m_windowSeconds * static_cast<double> (i) / numLabels;
-            const float  lx   = secondsAgoToX (static_cast<float> (sAgo));
+            const double sAgo = m_windowSeconds * (double)i / numLabels;
+            const float  lx   = secondsAgoToX ((float)sAgo);
             juce::String lbl;
-            if (sAgo < 60.0)  lbl = juce::String (static_cast<int> (sAgo)) + "s";
-            else               lbl = juce::String (static_cast<int> (sAgo / 60.0)) + "m";
-            g.drawText (lbl, juce::Rectangle<int> (static_cast<int> (lx) - 12,
-                                                    wr.getBottom() - 10, 24, 9),
+            if (sAgo < 60.0)   lbl = juce::String ((int)sAgo) + "s";
+            else                lbl = juce::String ((int)(sAgo / 60.0)) + "m";
+            g.drawText (lbl, juce::Rectangle<int> ((int)lx - 12, wr.getBottom() - 10, 24, 9),
                         juce::Justification::centredLeft, false);
         }
+    }
+
+    // "NOW" label at write position
+    {
+        g.setFont   (Theme::Font::micro());
+        g.setColour (juce::Colour (0x70200E04));
+        g.drawText  ("NOW",
+                     juce::Rectangle<int> ((int)(wr.getRight() - 4) - 14, wr.getY() + 8, 28, 8),
+                     juce::Justification::centred, false);
     }
 }
 
@@ -600,15 +686,66 @@ void AudioHistoryStrip::mouseDrag (const juce::MouseEvent& e)
             // Notify PluginEditor first so it can store the CapturedAudioClip
             if (onDragStarted) onDragStarted();
 
-            // Build a small visual thumbnail for the drag cursor
-            juce::Image img (juce::Image::ARGB, 80, 20, true);
+            // Build clip-object thumbnail for the drag cursor
+            const auto dragWr = waveRect();
+            juce::Image img (juce::Image::ARGB, 80, 24, true);
             {
                 juce::Graphics gfx (img);
-                gfx.setColour (Theme::Colour::accent.withAlpha (0.85f));
-                gfx.fillRoundedRectangle (img.getBounds().toFloat(), 3.0f);
-                gfx.setColour (juce::Colours::white);
-                gfx.setFont   (Theme::Font::micro());
-                gfx.drawText  ("  CLIP", img.getBounds(), juce::Justification::centredLeft, false);
+                const auto ib = img.getBounds().toFloat();
+
+                // White clip tile
+                gfx.setColour (juce::Colour (0xEEF5F1EC));
+                gfx.fillRoundedRectangle (ib, 3.0f);
+                gfx.setColour (Theme::Zone::c);
+                gfx.drawRoundedRectangle (ib.reduced (0.5f), 3.0f, 1.5f);
+
+                // Mini waveform of grabbed region
+                const int n = m_waveformData.size();
+                if (n > 1 && m_hasGrabbedRegion && dragWr.getWidth() > 0)
+                {
+                    const int leftIdx  = juce::jlimit (0, n - 1,
+                        (int)((m_grabbedStart + m_grabbedLength) / m_windowSeconds * n));
+                    const int rightIdx = juce::jlimit (0, n - 1,
+                        (int)(m_grabbedStart / m_windowSeconds * n));
+                    const int span     = juce::jmax (1, rightIdx - leftIdx);
+
+                    const float cx   = ib.getCentreY();
+                    const float maxH = ib.getHeight() * 0.32f;
+                    const float iw   = ib.getWidth() - 8.0f;
+
+                    juce::Path wp;
+                    wp.startNewSubPath (4.0f, cx);
+                    for (int i = leftIdx; i <= rightIdx; ++i)
+                    {
+                        const float x = 4.0f + ((float)(i - leftIdx) / span) * iw;
+                        wp.lineTo (x, cx - m_waveformData[i] * maxH);
+                    }
+                    for (int i = rightIdx; i >= leftIdx; --i)
+                    {
+                        const float x = 4.0f + ((float)(i - leftIdx) / span) * iw;
+                        wp.lineTo (x, cx + m_waveformData[i] * maxH);
+                    }
+                    wp.closeSubPath();
+
+                    gfx.setColour (m_sourceColor.withAlpha (0.50f));
+                    gfx.fillPath  (wp);
+                    gfx.setColour (juce::Colour (0xFF1A0F06).withAlpha (0.70f));
+                    gfx.strokePath (wp, juce::PathStrokeType (0.75f));
+
+                    // Duration label bottom-right
+                    const juce::String dur = juce::String (m_grabbedLength, 1) + "s";
+                    gfx.setFont   (Theme::Font::micro());
+                    gfx.setColour (Theme::Zone::c.withAlpha (0.85f));
+                    gfx.drawText  (dur,
+                                   img.getBounds().withTop (img.getHeight() - 10).withTrimmedRight (3),
+                                   juce::Justification::centredRight, false);
+                }
+                else
+                {
+                    gfx.setFont   (Theme::Font::micro());
+                    gfx.setColour (juce::Colour (0xFF1A0F06));
+                    gfx.drawText  ("CLIP", img.getBounds(), juce::Justification::centred, false);
+                }
             }
 
             if (auto* ddc = juce::DragAndDropContainer::findParentDragContainerFor (this))
