@@ -14,6 +14,9 @@ _deps
 Builds/*
 !Builds/.gitkeep
 
+# CMake build output (local build dir)
+build/
+
 # This should never exist
 Install/*
 
@@ -28,3 +31,23 @@ cmake-build-debug
 cmake-build-release
 cmake-build-relwithdebinfo
 packaging/Output/*
+
+# Claude AI session files
+.claude/
+AGENT_PROMPT_SESSION_*.md
+spool-agent-prompt.md
+
+# Runtime logs and temp output
+build_output.txt
+runtime*.log
+runtime_actions.log
+source.zip
+TODO.md
+
+# Screenshots
+Screenshot*.png
+
+# Root-level working files (not source)
+FontCache.h
+Theme.h
+icons/

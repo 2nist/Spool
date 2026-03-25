@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "patterns": [
+    {
+      "id": 0,
+      "name": "Main Groove",
+      "lengthBeats": 4,
+      "baseSteps": [0, 4, 8, 12],
+      "stepResolution": "1/16"
+    }
+  ],
+  "sections": [
+    {
+      "id": 0,
+      "name": "Verse A",
+      "arrangementRole": "verse",
+      "patternId": 0,
+      "slotMask": 3,
+      "startBeat": 0,
+      "lengthBeats": 4,
+      "repeats": 4,
+      "transpose": 0,
+      "transition": 0
+    }
+  ],
+  "chords": [
+    {
+      "id": 0,
+      "startBeat": 0,
+      "durationBeats": 4,
+      "root": 60,
+      "type": 0,
+      "quality": "maj",
+      "symbol": "C",
+      "romanNumeral": "I"
+    },
+    {
+      "id": 1,
+      "startBeat": 4,
+      "durationBeats": 4,
+      "root": 69,
+      "type": 1,
+      "quality": "min",
+      "symbol": "Am",
+      "romanNumeral": "vi"
+    },
+    {
+      "id": 2,
+      "startBeat": 8,
+      "durationBeats": 4,
+      "root": 65,
+      "type": 0,
+      "quality": "maj",
+      "symbol": "F",
+      "romanNumeral": "IV"
+    },
+    {
+      "id": 3,
+      "startBeat": 12,
+      "durationBeats": 4,
+      "root": 67,
+      "type": 0,
+      "quality": "maj",
+      "symbol": "G",
+      "romanNumeral": "V"
+    }
+  ],
+  "meta": {
+    "globalTranspose": 0,
+    "bpm": 124,
+    "timeSignature": {
+      "numerator": 4,
+      "denominator": 4
+    },
+    "key": {
+      "tonic": "C",
+      "mode": "major"
+    },
+    "title": "Schema Demo"
+  },
+  "arrangement": {
+    "tracks": [
+      {
+        "id": "sections-main",
+        "name": "Sections",
+        "type": "sections",
+        "clips": [
+          {
+            "startBeat": 0,
+            "lengthBeats": 16,
+            "sectionId": 0,
+            "label": "Verse A"
+          }
+        ]
+      }
+    ]
+  },
+  "harmony": {
+    "defaultKey": {
+      "tonic": "C",
+      "mode": "major"
+    },
+    "romanTimeline": [
+      {
+        "startBeat": 0,
+        "durationBeats": 4,
+        "numeral": "I",
+        "function": "tonic"
+      },
+      {
+        "startBeat": 4,
+        "durationBeats": 4,
+        "numeral": "vi",
+        "function": "tonic"
+      },
+      {
+        "startBeat": 8,
+        "durationBeats": 4,
+        "numeral": "IV",
+        "function": "subdominant"
+      },
+      {
+        "startBeat": 12,
+        "durationBeats": 4,
+        "numeral": "V",
+        "function": "dominant"
+      }
+    ]
+  }
+}

@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://2nist.local/schemas/spool/song-structure.schema.json",
+  "title": "Spool Song Structure",
+  "description": "Versioned song arrangement schema for patterns, sections, chords, and harmonic analysis.",
+  "type": "object",
+  "required": ["patterns", "sections", "chords", "meta"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Schema revision. Keep at 1 unless the top-level contract changes."
+    },
+    "patterns": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pattern" }
+    },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "chords": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/chordEvent" }
+    },
+    "meta": {
+      "$ref": "#/$defs/meta"
+    },
+    "arrangement": {
+      "$ref": "#/$defs/arrangement"
+    },
+    "harmony": {
+      "$ref": "#/$defs/harmony"
+    }
+  },
+  "patternProperties": {
+    "^x-": {}
+  },
+  "unevaluatedProperties": false,
+  "$defs": {
+    "beat": {
+      "type": "number",
+      "minimum": 0
+    },
+    "midiNote": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 127
+    },
+    "pitchClass": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 11
+    },
+    "timeSignature": {
+      "type": "object",
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": { "type": "integer", "minimum": 1 },
+        "denominator": { "type": "integer", "enum": [1, 2, 4, 8, 16, 32] }
+      },
+      "patternProperties": {
+        "^x-": {}
+      },
+      "unevaluatedProperties": false
+    },
+    "key": {
+      "type": "object",
+      "required": ["tonic", "mode"],
+      "properties": {
+        "tonic": {
+          "type": "string",
+          "enum": [
+            "C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "aeolian", "locrian", "chromatic", "custom"]
+        },
+        "label": { "type": "string" }
+      },
+      "patternProperties": {
+        "^x-": {}
+      },
+      "unevaluatedProperties": false
+    },
+    "pattern": {
+      "type": "object",
+      "required": ["id", "name", "lengthBeats", "baseSteps"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string", "minLength": 1 },
+        "lengthBeats": { "$ref": "#/$defs/beat" },
+        "baseSteps": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "uniqueItems": true
+        },
+        "stepResolution": {
+          "type": "string",
+          "enum": ["1/4", "1/8", "1/16", "1/32", "triplet", "custom"],
+          "default": "1/16"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "variationOf": { "type": "integer", "minimum": 0 }
+      },
+      "patternProperties": {
+        "^x-": {}
+      },
+      "unevaluatedProperties": false
+    },
+    "section": {
+      "type": "object",
+      "required": ["id", "patternId", "slotMask", "startBeat", "lengthBeats", "repeats", "transpose", "transition"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "arrangementRole": {
+          "type": "string",
+          "enum": ["intro", "verse", "pre", "chorus", "bridge", "break", "outro", "custom"]
+        },
+        "patternId": { "type": "integer", "minimum": 0 },
+        "slotMask": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "startBeat": { "$ref": "#/$defs/beat" },
+        "lengthBeats": { "$ref": "#/$defs/beat" },
+        "repeats": { "type": "integer", "minimum": 1 },
+        "transpose": { "type": "integer", "minimum": -36, "maximum": 36 },
+        "transition": { "type": "number", "minimum": 0, "maximum": 1 },
+        "harmonyRef": {
+          "type": "string",
+          "description": "Optional key into harmony.romanTimeline entries."
+        }
+      },
+      "patternProperties": {
+        "^x-": {}
+      },
+      "unevaluatedProperties": false
+    },
+    "chordEvent": {
+      "type": "object",
+      "required": ["id", "startBeat", "durationBeats", "root", "type"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "startBeat": { "$ref": "#/$defs/beat" },
+        "durationBeats": { "$ref": "#/$defs/beat" },
+        "root": { "$ref": "#/$defs/midiNote" },
+        "type": {
+          "type": "integer",
+          "description": "Legacy numeric chord type field retained for compatibility."
+        },
+        "pitchClass": { "$ref": "#/$defs/pitchClass" },
+        "octave": { "type": "integer", "minimum": -2, "maximum": 8 },
+        "quality": {
+          "type": "string",
+          "enum": ["maj", "min", "dim", "aug", "sus2", "sus4", "dom7", "maj7", "min7", "half-dim", "custom"]
+        },
+        "symbol": { "type": "string" },
+        "extensions": {
+          "type": "array",
+          "items": { "type": "integer", "enum": [6, 7, 9, 11, 13] },
+          "uniqueItems": true
+        },
+        "alterations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[#b](5|9|11|13)$"
+          },
+          "uniqueItems": true
+        },
+        "inversion": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "bass": { "$ref": "#/$defs/midiNote" },
+        "romanNumeral": {
+          "type": "string",
+          "pattern": "^(b|#)?[ivIV]+(o|\+)?(7|9|11|13)?(/[ivIV]+)?$"
+        },
+        "secondaryOf": {
+          "type": "string",
+          "description": "Example: V/ii"
+        },
+        "borrowedFrom": {
+          "type": "string",
+          "enum": ["parallel-major", "parallel-minor", "mode-mixture", "none"]
+        },
+        "keyContext": { "$ref": "#/$defs/key" }
+      },
+      "patternProperties": {
+        "^x-": {}
+      },
+      "unevaluatedProperties": false
+    },
+    "meta": {
+      "type": "object",
+      "required": ["globalTranspose"],
+      "properties": {
+        "globalTranspose": { "type": "integer", "minimum": -36, "maximum": 36 },
+        "bpm": { "type": "number", "minimum": 20, "maximum": 999 },
+        "timeSignature": { "$ref": "#/$defs/timeSignature" },
+        "key": { "$ref": "#/$defs/key" },
+        "title": { "type": "string" },
+        "artist": { "type": "string" },
+        "composer": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "patternProperties": {
+        "^x-": {}
+      },
+      "unevaluatedProperties": false
+    },
+    "arrangement": {
+      "type": "object",
+      "properties": {
+        "tracks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/arrangementTrack" }
+        },
+        "markers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["startBeat", "name"],
+            "properties": {
+              "startBeat": { "$ref": "#/$defs/beat" },
+              "name": { "type": "string" },
+              "color": { "type": "string", "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$" }
+            },
+            "patternProperties": {
+              "^x-": {}
+            },
+            "unevaluatedProperties": false
+          }
+        }
+      },
+      "patternProperties": {
+        "^x-": {}
+      },
+      "unevaluatedProperties": false
+    },
+    "arrangementTrack": {
+      "type": "object",
+      "required": ["id", "name", "type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "enum": ["sections", "chords", "automation", "markers", "custom"] },
+        "clips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["startBeat", "lengthBeats"],
+            "properties": {
+              "startBeat": { "$ref": "#/$defs/beat" },
+              "lengthBeats": { "$ref": "#/$defs/beat" },
+              "sectionId": { "type": "integer", "minimum": 0 },
+              "chordId": { "type": "integer", "minimum": 0 },
+              "label": { "type": "string" }
+            },
+            "patternProperties": {
+              "^x-": {}
+            },
+            "unevaluatedProperties": false
+          }
+        }
+      },
+      "patternProperties": {
+        "^x-": {}
+      },
+      "unevaluatedProperties": false
+    },
+    "harmony": {
+      "type": "object",
+      "properties": {
+        "defaultKey": { "$ref": "#/$defs/key" },
+        "keyTimeline": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["startBeat", "durationBeats", "key"],
+            "properties": {
+              "startBeat": { "$ref": "#/$defs/beat" },
+              "durationBeats": { "$ref": "#/$defs/beat" },
+              "key": { "$ref": "#/$defs/key" }
+            },
+            "patternProperties": {
+              "^x-": {}
+            },
+            "unevaluatedProperties": false
+          }
+        },
+        "romanTimeline": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/romanEvent" }
+        }
+      },
+      "patternProperties": {
+        "^x-": {}
+      },
+      "unevaluatedProperties": false
+    },
+    "romanEvent": {
+      "type": "object",
+      "required": ["startBeat", "durationBeats", "numeral"],
+      "properties": {
+        "startBeat": { "$ref": "#/$defs/beat" },
+        "durationBeats": { "$ref": "#/$defs/beat" },
+        "numeral": {
+          "type": "string",
+          "pattern": "^(b|#)?[ivIV]+(o|\+)?(7|9|11|13)?(/[ivIV]+)?$"
+        },
+        "quality": {
+          "type": "string",
+          "enum": ["major", "minor", "diminished", "augmented", "dominant", "custom"]
+        },
+        "degree": { "type": "integer", "minimum": 1, "maximum": 7 },
+        "accidental": { "type": "integer", "minimum": -2, "maximum": 2 },
+        "function": {
+          "type": "string",
+          "enum": ["tonic", "subdominant", "dominant", "predominant", "chromatic", "custom"]
+        },
+        "secondaryOf": { "type": "string" },
+        "borrowedFrom": {
+          "type": "string",
+          "enum": ["parallel-major", "parallel-minor", "mode-mixture", "none"]
+        }
+      },
+      "patternProperties": {
+        "^x-": {}
+      },
+      "unevaluatedProperties": false
+    }
+  }
+}

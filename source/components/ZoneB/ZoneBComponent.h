@@ -1,0 +1,196 @@
+#pragma once
+
+#include "../../Theme.h"
+#include "ModuleGroup.h"
+#include "GroupHeader.h"
+#include "ModuleLoadDialog.h"
+#include "SequencerHeader.h"
+#include "StepGridSingle.h"
+#include "StepGridDrum.h"
+#include "LooperStrip.h"
+
+//==============================================================================
+/**
+    ZoneBComponent — module row list + sequencer + looper.
+
+    Zone B vertical layout (top to bottom):
+      Zone stripe:         3px  (Theme::Space::zoneStripeHeight)
+      Module rows area:    elastic — fills middle, scrollable via Viewport
+        Group header:      20px  (GroupHeader::kHeight)  ← inline divider
+        Module row:        56px expanded / 20px collapsed (ModuleRow)
+      Split handle:        6px   (draggable)
+      Sequencer header:    16px  (SequencerHeader::kHeight)
+      Step grid:           140px synth / 200px drum  (dynamic)
+      Looper strip:        72px  (LooperStrip::kHeight)
+*/
+class ZoneBComponent : public juce::Component
+{
+public:
+    //==========================================================================
+    // Listener (backward-compatible with PluginEditor)
+
+    class Listener
+    {
+    public:
+        virtual ~Listener() = default;
+        virtual void slotSelected   (int slotIndex, const juce::String& moduleType) = 0;
+        virtual void slotDeselected () = 0;
+    };
+
+    void addListener    (Listener* l) { m_listeners.add (l);    }
+    void removeListener (Listener* l) { m_listeners.remove (l); }
+
+    //==========================================================================
+    // DSP sync callbacks
+
+    /** Fired after any step is edited in the focused row's step grid. */
+    std::function<void (int slotIdx, const SlotPattern& pattern)> onPatternModified;
+
+    /** Fired when a drum machine row is focused.  Use to load kit into DSP. */
+    std::function<void (int slotIdx, DrumMachineData*)> onDrumSlotFocused;
+
+    /** Fired after any drum step or step-count changes. */
+    std::function<void (int slotIdx, DrumMachineData*)> onDrumPatternModified;
+
+    /** Called by PluginEditor when the sequencer advances a step. */
+    void setPlayheadStep (int step);
+    void seedPatternForSlot (int flatSlotIndex, int stepCount, const std::initializer_list<int>& activeSteps);
+
+    /** Fired when the module list changes — passes flat "<Group>:<Type>" list. */
+    std::function<void (const juce::StringArray&)> onModuleListChanged;
+
+    //==========================================================================
+
+    ZoneBComponent();
+    ~ZoneBComponent() override;
+
+    LooperStrip& getLooperStrip() noexcept { return m_looperStrip; }
+
+    void paint   (juce::Graphics&) override;
+    void resized () override;
+
+private:
+    //==========================================================================
+    // Data
+
+    juce::OwnedArray<ModuleGroup>  m_groups;
+    juce::OwnedArray<GroupHeader>  m_groupHeaders;
+
+    ModuleRow* m_focusedRow      { nullptr };
+    int        m_focusedGroupIdx { -1 };
+
+    SlotPattern m_patternClipboard;
+    bool        m_hasClipboard { false };
+
+    //==========================================================================
+    // Scrollable row-list content component
+
+    struct RowsContent : public juce::Component
+    {
+        std::function<void()> onResized;
+        void resized() override { if (onResized) onResized(); }
+    };
+
+    RowsContent      m_rowsContent;
+    juce::Viewport   m_rowsViewport;
+    juce::TextButton m_addGroupBtn { "+  GROUP" };
+
+    //==========================================================================
+    // Fixed-bottom components
+
+    SequencerHeader  m_seqHeader;
+    StepGridSingle   m_stepGridSingle;
+    StepGridDrum     m_stepGridDrum;
+    LooperStrip      m_looperStrip;
+
+    //==========================================================================
+    // Split handle — drag to resize rows area vs. bottom section
+
+    struct SplitHandle : public juce::Component
+    {
+        std::function<void()>    onDragStarted;
+        std::function<void(int)> onDrag;    // arg = delta-from-drag-start px
+
+        void paint      (juce::Graphics& g) override;
+        void mouseDown  (const juce::MouseEvent& e) override;
+        void mouseDrag  (const juce::MouseEvent& e) override;
+        juce::MouseCursor getMouseCursor() override
+        {
+            return juce::MouseCursor::UpDownResizeCursor;
+        }
+    };
+
+    SplitHandle m_splitHandle;
+    int         m_splitY          { -1 };  // -1 = uninitialized
+    int         m_splitDragStartY {  0 };
+
+    //==========================================================================
+    // Load dialog
+
+    std::unique_ptr<ModuleLoadDialog> m_loadDialog;
+    juce::ListenerList<Listener>      m_listeners;
+
+    //==========================================================================
+    // Layout constants
+
+    static constexpr int kStripeH     = static_cast<int> (Theme::Space::zoneStripeHeight);
+    static constexpr int kSeqHdrH     = SequencerHeader::kHeight;
+    static constexpr int kMinGridH    = StepGridSingle::kHeight;  // minimum step grid height
+    static constexpr int kLooperH     = LooperStrip::kHeight;
+    static constexpr int kHandleH     = 6;
+    static constexpr int kMinRowsH    = 40;
+    static constexpr int kMinBottomH  = kSeqHdrH + kMinGridH + kLooperH;
+    static constexpr int kRowGap      = 0;   // rows are flush
+
+    int m_gridH { 0 };  // computed dynamically in resized()
+
+    // Derived positions — all depend on m_splitY
+    int rowsAreaTop()  const noexcept { return kStripeH; }
+    int rowsAreaH()    const noexcept
+    {
+        if (m_splitY < 0)
+            return juce::jmax (0, getHeight() - kStripeH - kHandleH - kMinBottomH);
+        return juce::jmax (0, m_splitY - kStripeH);
+    }
+    int bottomStart()  const noexcept { return (m_splitY < 0 ? kStripeH + rowsAreaH() : m_splitY) + kHandleH; }
+    int seqHeaderY()   const noexcept { return bottomStart(); }
+
+    //==========================================================================
+    // Initialisation
+
+    void createDefaultGroups();
+
+    //==========================================================================
+    // Group / row management
+
+    void addGroup           (const juce::String& name, juce::Colour color);
+    void addSlotToGroup     (int groupIndex, ModuleRow::ModuleType type = ModuleRow::ModuleType::Empty);
+    void removeGroup        (int groupIndex);
+    void connectGroupHeader (int groupIndex);
+
+    //==========================================================================
+    // Layout
+
+    int  calculateRowsContentH () const noexcept;
+    void layoutRowsContent     ();
+    void updateSourceNames     ();
+
+    //==========================================================================
+    // Focus
+
+    void focusRow   (ModuleRow* row, int groupIndex);
+    void defocusRow ();
+
+    //==========================================================================
+    // Row interactions
+
+    void onRowClicked     (ModuleRow* row, int groupIndex);
+    void onEmptyClicked   (ModuleRow* row, int groupIndex);
+    void onRightClick     (ModuleRow* row, int groupIndex);
+    void onRowTypeChosen  (ModuleRow* row, ModuleRow::ModuleType type);
+
+    void showLoadDialog    (ModuleRow* row, juce::Rectangle<int> boundsInContent);
+    void dismissLoadDialog ();
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ZoneBComponent)
+};

@@ -17,7 +17,7 @@ include(JUCEDefaults)
 # This is the internal name of the project and the name of JUCE's shared code target
 # Note: This cannot have spaces (it may be 2024, but you can't have it all!)
 # Worry not, JUCE's PRODUCT_NAME can have spaces (and is what DAWs display)
-set(PROJECT_NAME "Pamplejuce")
+set(PROJECT_NAME "SPOOL")
 
 # Worry not, JUCE's PRODUCT_NAME can have spaces (and is what DAWs will display)
 # You can also just have it be the same thing as PROJECT_NAME
@@ -25,17 +25,17 @@ set(PROJECT_NAME "Pamplejuce")
 #   set(PROJECT_NAME "MyPlugin_v${MAJOR_VERSION}")
 # Doing so enables major versions to show up in IDEs and DAWs as separate plugins
 # allowing you to change parameters and behavior without breaking existing user projects
-set(PRODUCT_NAME "Pamplejuce Demo")
+set(PRODUCT_NAME "Spool")
 
 # Change me! Used for the MacOS bundle name and Installers
-set(COMPANY_NAME "Pamplejuce Company")
+set(COMPANY_NAME "2nist")
 
 # Change me! Used for the MacOS bundle identifier (and signing)
-set(BUNDLE_ID "com.pamplejuce.pamplejuce")
+set(BUNDLE_ID "com.2nist.spool")
 
 # Change me! Set the plugin formats you want built
 # Valid choices: AAX Unity VST VST3 AU AUv3 Standalone
-set(FORMATS Standalone AU VST3 AUv3)
+set(FORMATS Standalone)
 
 # Force JUCE to work with sccache
 # instruct MSVC to embed debug info (/Z7) instead of emitting a .pdb
@@ -54,14 +54,36 @@ include(PamplejuceLog)
 # On Github Actions, this is done as a part of actions/checkout
 add_subdirectory(JUCE)
 
-# Add CLAP format
-add_subdirectory(modules/clap-juce-extensions EXCLUDE_FROM_ALL)
-
 # Add any other modules you want modules here, before the juce_add_plugin call
 # juce_add_module(modules/my_module)
 
 # This adds the melatonin inspector module
 add_subdirectory (modules/melatonin_inspector)
+
+# ── Optional submodules ──────────────────────────────────────────────────────
+# Run before first CMake configure:
+#   git submodule add https://github.com/FigBug/Gin.git modules/gin
+#   git submodule add https://github.com/bliston/Bach.git modules/bach
+#   git submodule add https://github.com/BOBONA/Just-a-Sample.git modules/just-a-sample
+#   git submodule add https://github.com/Chowdhury-DSP/chowdsp_utils.git modules/chowdsp
+#   git submodule update --init --recursive
+
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/modules/gin/CMakeLists.txt")
+    add_subdirectory (modules/gin)
+endif ()
+
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/modules/bach/CMakeLists.txt")
+    add_subdirectory (modules/bach)
+endif ()
+
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/modules/just-a-sample/CMakeLists.txt")
+    add_subdirectory (modules/just-a-sample)
+endif ()
+
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/modules/chowdsp/CMakeLists.txt")
+    add_subdirectory (modules/chowdsp)
+endif ()
+# ─────────────────────────────────────────────────────────────────────────────
 
 # See `docs/CMake API.md` in the JUCE repo for all config options
 juce_add_plugin("${PROJECT_NAME}"
@@ -78,12 +100,12 @@ juce_add_plugin("${PROJECT_NAME}"
     # Change me!
     # A four-character plugin id
     # First character MUST be uppercase for AU formats
-    PLUGIN_MANUFACTURER_CODE Pamp
+    PLUGIN_MANUFACTURER_CODE Spol
 
     # Change me!
     # A unique four-character plugin id
     # Note: this must have at least one upper-case character
-    PLUGIN_CODE P001
+    PLUGIN_CODE Spl1
     FORMATS "${FORMATS}"
 
     # The name of your final executable
@@ -96,10 +118,6 @@ juce_add_plugin("${PROJECT_NAME}"
 # Without running into ODR violations
 add_library(SharedCode INTERFACE)
 
-clap_juce_extensions_plugin(TARGET "${PROJECT_NAME}"
-    CLAP_ID "${BUNDLE_ID}"
-    CLAP_FEATURES audio-effect)
-
 # Enable fast math, C++20 and a few other target defaults
 include(SharedCodeDefaults)
 
@@ -109,7 +127,7 @@ include(SharedCodeDefaults)
 # Just ensure you employ CONFIGURE_DEPENDS so the build system picks up changes
 # If you want to appease the CMake gods and avoid globs, manually add files like so:
 # set(SourceFiles Source/PluginEditor.h Source/PluginProcessor.h Source/PluginEditor.cpp Source/PluginProcessor.cpp)
-file(GLOB_RECURSE SourceFiles CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/source/*.h")
+file(GLOB_RECURSE SourceFiles CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/source/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/source/dsp/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/source/dsp/*.h")
 target_sources(SharedCode INTERFACE ${SourceFiles})
 
 # Adds a BinaryData target for embedding assets into the binary
@@ -135,7 +153,7 @@ target_compile_definitions(SharedCode
     VERSION="${CURRENT_VERSION}"
 
     # JucePlugin_Name is for some reason doesn't use the nicer PRODUCT_NAME
-    PRODUCT_NAME_WITHOUT_VERSION="Pamplejuce"
+    PRODUCT_NAME_WITHOUT_VERSION="Spool"
 )
 
 # Link to any other modules you added (with juce_add_module) here!
@@ -155,6 +173,11 @@ target_link_libraries(SharedCode
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+
+# Link Gin modules if the submodule has been added
+if (TARGET gin)
+    target_link_libraries (SharedCode INTERFACE gin gin_dsp gin_gui)
+endif ()
 
 # Link the JUCE plugin targets our SharedCode target
 target_link_libraries("${PROJECT_NAME}" PRIVATE SharedCode)
