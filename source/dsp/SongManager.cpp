@@ -47,7 +47,9 @@ SongManager::SongManager()
 void SongManager::publishRtSnapshot()
 {
     auto snapshot = std::make_shared<SongData> (m_editData);
-    m_rtData.store (std::static_pointer_cast<const SongData> (snapshot), std::memory_order_release);
+    auto constSnapshot = std::static_pointer_cast<const SongData> (snapshot);
+    const juce::SpinLock::ScopedLockType sl (m_rtLock);
+    m_rtData = std::move (constSnapshot);
 }
 
 bool SongManager::loadFromFile (const juce::File& file)
@@ -361,7 +363,11 @@ bool SongManager::removeChord (int id)
 
 ActiveSongState SongManager::query (double songBeat) const
 {
-    auto data = m_rtData.load (std::memory_order_acquire);
+    std::shared_ptr<const SongData> data;
+    {
+        const juce::SpinLock::ScopedLockType sl (m_rtLock);
+        data = m_rtData;
+    }
     if (! data)
         return {};
 

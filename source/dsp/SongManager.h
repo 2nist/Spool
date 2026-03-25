@@ -2,7 +2,6 @@
 
 #include <juce_core/juce_core.h>
 #include <juce_data_structures/juce_data_structures.h>
-#include <atomic>
 #include <array>
 #include <memory>
 #include <mutex>
@@ -86,7 +85,8 @@ private:
     void publishRtSnapshot();
 
     SongData m_editData;
-    std::atomic<std::shared_ptr<const SongData>> m_rtData;
+    std::shared_ptr<const SongData> m_rtData;
+    mutable juce::SpinLock m_rtLock;
     mutable std::mutex m_editLock;
 };
 
