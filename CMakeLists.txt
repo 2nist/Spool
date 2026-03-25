@@ -35,7 +35,7 @@ set(BUNDLE_ID "com.2nist.spool")
 
 # Change me! Set the plugin formats you want built
 # Valid choices: AAX Unity VST VST3 AU AUv3 Standalone
-set(FORMATS Standalone)
+set(FORMATS VST3 AU CLAP Standalone)
 
 # Force JUCE to work with sccache
 # instruct MSVC to embed debug info (/Z7) instead of emitting a .pdb
