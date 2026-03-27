@@ -24,8 +24,7 @@ void ModuleSlot::setModuleType (ModuleType type)
     // Create / destroy drum machine data
     if (type == ModuleType::DrumMachine)
     {
-        m_drumData = std::make_unique<DrumMachineData>();
-        m_drumData->initDefaults();
+        m_drumData = std::make_unique<DrumMachineData> (DrumMachineData::makeDefault());
     }
     else
     {
@@ -380,7 +379,7 @@ void ModuleSlot::paintFaceDrumMachine (juce::Graphics& g) const
     g.setColour (Theme::Colour::surface3.withAlpha (alpha));
     g.fillRect  (faceR);
 
-    if (m_drumData == nullptr || m_drumData->voices.isEmpty())
+    if (m_drumData == nullptr || m_drumData->voices.empty())
     {
         g.setFont   (Theme::Font::micro());
         g.setColour (Theme::Colour::inkGhost.withAlpha (alpha));
@@ -389,24 +388,24 @@ void ModuleSlot::paintFaceDrumMachine (juce::Graphics& g) const
     }
 
     // Mini pattern grid: one 1px-tall color bar per voice
-    const int numVoices = m_drumData->voices.size();
+    const int numVoices = static_cast<int> (m_drumData->voices.size());
     const int gridX     = faceR.getX() + 2;
     const int gridW     = faceR.getWidth() - 4;
     const int barH      = juce::jmax (1, (faceR.getHeight() - 4) / numVoices);
 
     for (int vi = 0; vi < numVoices; ++vi)
     {
-        const auto* voice    = m_drumData->voices[vi];
-        const int   nSteps   = voice->pattern.activeStepCount();
+        const auto& voice    = m_drumData->voices[static_cast<size_t> (vi)];
+        const int   nSteps   = voice.stepCount;
         const float stepW    = nSteps > 0 ? static_cast<float> (gridW) / nSteps : 0.0f;
         const int   barY     = faceR.getY() + 2 + vi * barH;
 
         for (int s = 0; s < nSteps; ++s)
         {
             const float sx = static_cast<float> (gridX) + s * stepW;
-            if (voice->pattern.stepActive (s))
+            if (voice.stepActive (s))
             {
-                g.setColour (voice->color.withAlpha (alpha));
+                g.setColour (juce::Colour (voice.colorArgb).withAlpha (alpha));
                 g.fillRect (juce::Rectangle<float> (sx + 0.5f, static_cast<float> (barY),
                                                     juce::jmax (1.0f, stepW - 1.0f),
                                                     static_cast<float> (barH)));

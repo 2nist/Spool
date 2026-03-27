@@ -7,6 +7,15 @@
 
 namespace
 {
+enum class CadenceTemplate
+{
+    leadingToneToRoot = 0,
+    upperNeighborToTarget,
+    chromaticPickup,
+    fifthToRoot,
+    twoFiveLike
+};
+
 double wrapBeatToStructure (double beat, const StructureState& structure)
 {
     const auto totalBars = juce::jmax (0, structure.totalBars);
@@ -44,6 +53,159 @@ int snapToNearestPitchClass (const std::vector<int>& allowedPitchClasses, int in
 
     return best;
 }
+
+int rootToPitchClass (const juce::String& root)
+{
+    const auto r = root.trim();
+    if (r.equalsIgnoreCase ("C")) return 0;
+    if (r.equalsIgnoreCase ("C#") || r.equalsIgnoreCase ("Db")) return 1;
+    if (r.equalsIgnoreCase ("D")) return 2;
+    if (r.equalsIgnoreCase ("D#") || r.equalsIgnoreCase ("Eb")) return 3;
+    if (r.equalsIgnoreCase ("E")) return 4;
+    if (r.equalsIgnoreCase ("F")) return 5;
+    if (r.equalsIgnoreCase ("F#") || r.equalsIgnoreCase ("Gb")) return 6;
+    if (r.equalsIgnoreCase ("G")) return 7;
+    if (r.equalsIgnoreCase ("G#") || r.equalsIgnoreCase ("Ab")) return 8;
+    if (r.equalsIgnoreCase ("A")) return 9;
+    if (r.equalsIgnoreCase ("A#") || r.equalsIgnoreCase ("Bb")) return 10;
+    if (r.equalsIgnoreCase ("B")) return 11;
+    return 0;
+}
+
+int nearestNoteForPitchClass (int aroundNote, int targetPc)
+{
+    return snapToNearestPitchClass ({ (targetPc % 12 + 12) % 12 }, aroundNote);
+}
+
+int clampNoteToRangeByOctave (int note, int low, int high)
+{
+    int result = note;
+    while (result < low)
+        result += 12;
+    while (result > high)
+        result -= 12;
+
+    if (result < low)
+        result = low;
+    if (result > high)
+        result = high;
+    return juce::jlimit (0, 127, result);
+}
+
+int roleRegisterCenter (SlotPattern::StepRole role, int baseNote)
+{
+    switch (role)
+    {
+        case SlotPattern::StepRole::bass:       return juce::jlimit (36, 52, baseNote - 12);
+        case SlotPattern::StepRole::chord:      return juce::jlimit (48, 72, baseNote + 2);
+        case SlotPattern::StepRole::lead:       return juce::jlimit (55, 84, baseNote + 12);
+        case SlotPattern::StepRole::fill:       return juce::jlimit (52, 88, baseNote + 7);
+        case SlotPattern::StepRole::transition: return juce::jlimit (40, 76, baseNote + 5);
+    }
+
+    return baseNote;
+}
+
+std::pair<int, int> roleRegisterRange (SlotPattern::StepRole role, int baseNote)
+{
+    switch (role)
+    {
+        case SlotPattern::StepRole::bass:       return { juce::jlimit (24, 48, baseNote - 24), juce::jlimit (36, 60, baseNote - 4) };
+        case SlotPattern::StepRole::chord:      return { juce::jlimit (42, 60, baseNote - 8), juce::jlimit (60, 84, baseNote + 16) };
+        case SlotPattern::StepRole::lead:       return { juce::jlimit (50, 72, baseNote + 2), juce::jlimit (67, 96, baseNote + 28) };
+        case SlotPattern::StepRole::fill:       return { juce::jlimit (48, 70, baseNote - 2), juce::jlimit (72, 98, baseNote + 30) };
+        case SlotPattern::StepRole::transition: return { juce::jlimit (36, 60, baseNote - 12), juce::jlimit (60, 88, baseNote + 20) };
+    }
+
+    return { 36, 84 };
+}
+
+int moveTowardTargetBySemitone (int current, int target)
+{
+    if (current == target)
+        return target;
+    return current < target ? target - 1 : target + 1;
+}
+
+int steerTowardPrevious (int candidate, int previous, int maxDistance)
+{
+    if (std::abs (candidate - previous) <= maxDistance)
+        return candidate;
+
+    return candidate > previous ? previous + maxDistance
+                                : previous - maxDistance;
+}
+
+int chooseClosestNote (const std::vector<int>& candidates, int aroundNote)
+{
+    if (candidates.empty())
+        return aroundNote;
+
+    int best = candidates.front();
+    int bestDistance = std::abs (best - aroundNote);
+    for (const auto candidate : candidates)
+    {
+        const int distance = std::abs (candidate - aroundNote);
+        if (distance < bestDistance)
+        {
+            best = candidate;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
+std::vector<int> chordIntervalsForType (const juce::String& type)
+{
+    auto lowerType = type.toLowerCase();
+    if (lowerType.isEmpty())
+        lowerType = "maj";
+
+    if (lowerType == "min" || lowerType == "m")
+        return { 0, 3, 7 };
+    if (lowerType == "dim")
+        return { 0, 3, 6 };
+    if (lowerType == "aug")
+        return { 0, 4, 8 };
+    if (lowerType == "sus2")
+        return { 0, 2, 7 };
+    if (lowerType == "sus4")
+        return { 0, 5, 7 };
+    if (lowerType == "7" || lowerType == "dom7")
+        return { 0, 4, 7, 10 };
+    if (lowerType == "maj7")
+        return { 0, 4, 7, 11 };
+    if (lowerType == "min7" || lowerType == "m7")
+        return { 0, 3, 7, 10 };
+
+    return { 0, 4, 7 };
+}
+
+Chord nextChordForBeat (const StructureState& structure, double beat)
+{
+    const auto barFloat = beat / 4.0;
+
+    for (const auto& section : structure.sections)
+    {
+        const auto start = static_cast<double> (section.startBar);
+        const auto end = static_cast<double> (section.startBar + section.lengthBars);
+        if (barFloat < start || barFloat >= end)
+            continue;
+
+        if (section.progression.empty())
+            return { "C", "maj" };
+
+        const auto sectionLocalBars = juce::jmax (0.0, barFloat - start);
+        const auto barsPerChord = static_cast<double> (section.lengthBars) / static_cast<double> (section.progression.size());
+        const auto slot = juce::jlimit (0,
+                                        static_cast<int> (section.progression.size() - 1),
+                                        static_cast<int> (sectionLocalBars / juce::jmax (0.0001, barsPerChord)));
+        const auto nextSlot = juce::jmin (slot + 1, static_cast<int> (section.progression.size() - 1));
+        return section.progression[(size_t) nextSlot];
+    }
+
+    return { "C", "maj" };
+}
 } // namespace
 
 //==============================================================================
@@ -73,10 +235,22 @@ PluginProcessor::PluginProcessor()
         m_slotNote [s].store (60);  // Default: middle C
         m_drumVoiceCount[s].store (0);
         m_lastNotePlayed[s] = 60;
+        m_runtimePatterns[s] = compileRuntimePattern (SlotPattern {});
+        resetPhraseMemory (s);
 
         auto& slotState = m_appState.slots[(size_t) s];
         slotState.slotIndex = s;
         slotState.name = "Slot " + juce::String (s + 1);
+
+        for (int v = 0; v < kMaxDrumVoices; ++v)
+        {
+            for (int step = 0; step < kMaxDrumStepsPerVoice; ++step)
+            {
+                m_drumVoices[s][v].stepVelocitiesNorm[(size_t) step].store (100);
+                m_drumVoices[s][v].stepRatchets[(size_t) step].store (1);
+                m_drumVoices[s][v].stepDivisions[(size_t) step].store (4);
+            }
+        }
     }
 
     for (auto& mapped : m_midiNoteMap)
@@ -84,6 +258,441 @@ PluginProcessor::PluginProcessor()
 }
 
 PluginProcessor::~PluginProcessor() {}
+
+void PluginProcessor::resetPhraseMemory (int slot)
+{
+    if (slot < 0 || slot >= SpoolAudioGraph::kNumSlots)
+        return;
+
+    auto& memory = m_phraseMemory[slot];
+    memory = {};
+    memory.previousNote = m_slotNote[slot].load();
+    memory.recentLow = memory.previousNote;
+    memory.recentHigh = memory.previousNote;
+    memory.previousChordRootPc = 0;
+    memory.previousRole = SlotPattern::StepRole::lead;
+    memory.previousChordVoiceIndex = 0;
+    memory.previousChordTopNote = memory.previousNote;
+    memory.preferOpenChordVoicing = false;
+    memory.cadenceTemplate = (int) CadenceTemplate::leadingToneToRoot;
+    memory.cadenceEventCounter = 0;
+}
+
+void PluginProcessor::updatePhraseMemory (int slot, int realizedNote, SlotPattern::StepRole role, const Chord& currentChord)
+{
+    if (slot < 0 || slot >= SpoolAudioGraph::kNumSlots)
+        return;
+
+    auto& memory = m_phraseMemory[slot];
+    if (memory.hasPreviousNote)
+    {
+        const int delta = realizedNote - memory.previousNote;
+        memory.previousDirection = delta > 0 ? 1 : delta < 0 ? -1 : memory.previousDirection;
+        memory.recentLow = juce::jmin (memory.recentLow, realizedNote);
+        memory.recentHigh = juce::jmax (memory.recentHigh, realizedNote);
+    }
+    else
+    {
+        memory.recentLow = realizedNote;
+        memory.recentHigh = realizedNote;
+    }
+
+    const int chordRootPc = rootToPitchClass (currentChord.root);
+    if (memory.previousChordRootPc != chordRootPc)
+    {
+        memory.notesSinceChordChange = 0;
+        memory.cadenceEventCounter = 0;
+        memory.previousChordTopNote = realizedNote;
+    }
+    else
+    {
+        memory.notesSinceChordChange += 1;
+        memory.cadenceEventCounter += (role == SlotPattern::StepRole::transition) ? 1 : 0;
+    }
+
+    memory.previousChordRootPc = chordRootPc;
+    memory.previousNote = realizedNote;
+    memory.previousRole = role;
+    memory.hasPreviousNote = true;
+    if (role == SlotPattern::StepRole::chord)
+        memory.previousChordTopNote = juce::jmax (memory.previousChordTopNote, realizedNote);
+}
+
+PluginProcessor::RuntimeSlotPattern PluginProcessor::compileRuntimePattern (const SlotPattern& pattern)
+{
+    RuntimeSlotPattern compiled;
+    compiled.laneContext = pattern.current().laneContext;
+    compiled.patternLengthTicks = juce::jmax (1, pattern.patternLength() * kSequencerTicksPerStep);
+
+    for (int stepIndex = 0; stepIndex < pattern.activeStepCount(); ++stepIndex)
+    {
+        const auto* step = pattern.getStep (stepIndex);
+        if (step == nullptr
+            || step->gateMode == SlotPattern::GateMode::rest
+            || step->microEventCount <= 0)
+            continue;
+
+        const int stepStartTick = step->start * kSequencerTicksPerStep;
+        const int stepLengthTicks = juce::jmax (1, step->duration * kSequencerTicksPerStep);
+
+        for (int eventIndex = 0; eventIndex < step->microEventCount; ++eventIndex)
+        {
+            if (compiled.eventCount >= kMaxSequencerEventsPerSlot)
+                break;
+
+            const auto& src = step->microEvents[(size_t) eventIndex];
+            auto& dst = compiled.events[(size_t) compiled.eventCount++];
+            dst.startTick = juce::jlimit (0,
+                                          compiled.patternLengthTicks - 1,
+                                          stepStartTick + juce::roundToInt (src.timeOffset * (float) stepLengthTicks));
+            dst.lengthTicks = juce::jmax (1, juce::roundToInt (src.length * (float) stepLengthTicks));
+            dst.pitchValue = juce::jlimit (SlotPattern::kMinTheoryValue, SlotPattern::kMaxTheoryValue, src.pitchValue);
+            dst.anchorValue = juce::jlimit (SlotPattern::kUseSlotBasePitch, SlotPattern::kMaxTheoryValue, step->anchorValue);
+            dst.stepIndex = stepIndex;
+            dst.eventOrdinalInStep = eventIndex;
+            dst.eventsInStep = step->microEventCount;
+            dst.velocity = static_cast<uint8_t> (juce::jlimit (1, 127, (int) src.velocity));
+            dst.noteMode = step->noteMode;
+            dst.role = step->role;
+            dst.harmonicSource = step->harmonicSource;
+            dst.lookAheadToNextChord = step->lookAheadToNextChord;
+        }
+    }
+
+    compiled.hasEvents = compiled.eventCount > 0;
+    return compiled;
+}
+
+void PluginProcessor::releaseFinishedSlotNotes (int slot, int sampleOffset)
+{
+    bool anyHeld = false;
+
+    for (auto& held : m_heldNotes[slot])
+    {
+        if (! held.active)
+            continue;
+
+        held.ticksRemaining -= 1;
+        if (held.ticksRemaining <= 0)
+        {
+            m_slotMidi[slot].addEvent (juce::MidiMessage::noteOff (1, held.note), sampleOffset);
+            held.active = false;
+            held.note = -1;
+            held.ticksRemaining = 0;
+            continue;
+        }
+
+        anyHeld = true;
+    }
+
+    m_noteHeld[slot] = anyHeld;
+}
+
+void PluginProcessor::pushHeldNote (int slot, int note, int lengthTicks)
+{
+    auto* freeSlot = &m_heldNotes[slot][0];
+
+    for (auto& held : m_heldNotes[slot])
+    {
+        if (held.active && held.note == note)
+        {
+            held.ticksRemaining = juce::jmax (1, lengthTicks);
+            m_noteHeld[slot] = true;
+            m_lastNotePlayed[slot] = note;
+            return;
+        }
+
+        if (! held.active)
+        {
+            freeSlot = &held;
+            break;
+        }
+    }
+
+    freeSlot->active = true;
+    freeSlot->note = note;
+    freeSlot->ticksRemaining = juce::jmax (1, lengthTicks);
+    m_noteHeld[slot] = true;
+    m_lastNotePlayed[slot] = note;
+}
+
+int PluginProcessor::realizeRuntimePitch (int slot,
+                                          const RuntimeMicroEvent& event,
+                                          int baseNote,
+                                          const juce::String& keyRoot,
+                                          const juce::String& keyScale,
+                                          const Chord& currentChord,
+                                          const Chord& nextChord,
+                                          bool structureFollow,
+                                          const std::vector<int>& structureChordPcs)
+{
+    auto& memory = m_phraseMemory[slot];
+    const int anchorNote = event.anchorValue < 0 ? baseNote : event.anchorValue;
+    const auto [roleLow, roleHigh] = roleRegisterRange (event.role, baseNote);
+    const int roleCenter = roleRegisterCenter (event.role, baseNote);
+    const auto scalePcs = m_theoryAdapter.getScalePitchClasses (keyRoot, keyScale);
+    const auto currentChordPcs = m_theoryAdapter.getChordPitchClasses (currentChord, &m_structureEngine);
+    const auto nextChordPcs = m_theoryAdapter.getChordPitchClasses (nextChord, &m_structureEngine);
+    const bool targetNextHarmony = event.harmonicSource == SlotPattern::HarmonicSource::nextChord || event.lookAheadToNextChord;
+    const int currentRootPc = rootToPitchClass (currentChord.root);
+    const int nextRootPc = rootToPitchClass (nextChord.root);
+
+    auto chooseCadenceTemplate = [&] () -> CadenceTemplate
+    {
+        const int delta = (nextRootPc - currentRootPc + 12) % 12;
+        if (delta == 7)
+            return CadenceTemplate::fifthToRoot;
+        if (delta == 2 || delta == 10)
+            return CadenceTemplate::twoFiveLike;
+        if (delta == 1 || delta == 11)
+            return CadenceTemplate::chromaticPickup;
+        if (delta == 0)
+            return CadenceTemplate::upperNeighborToTarget;
+        return CadenceTemplate::leadingToneToRoot;
+    };
+
+    if (event.role == SlotPattern::StepRole::transition)
+        memory.cadenceTemplate = (int) chooseCadenceTemplate();
+
+    auto realizeCadenceTemplate = [&] (int seedNote) -> int
+    {
+        const auto templateId = static_cast<CadenceTemplate> (memory.cadenceTemplate);
+        const int targetRoot = nearestNoteForPitchClass (roleCenter, nextRootPc);
+        const int cadenceIndex = juce::jmax (0, event.eventOrdinalInStep);
+
+        switch (templateId)
+        {
+            case CadenceTemplate::leadingToneToRoot:
+                return cadenceIndex == juce::jmax (0, event.eventsInStep - 1) ? targetRoot : targetRoot - 1;
+
+            case CadenceTemplate::upperNeighborToTarget:
+                if (cadenceIndex == 0) return targetRoot + 2;
+                return targetRoot;
+
+            case CadenceTemplate::chromaticPickup:
+                if (cadenceIndex == 0) return targetRoot - 2;
+                if (cadenceIndex == 1 && event.eventsInStep > 2) return targetRoot - 1;
+                return targetRoot;
+
+            case CadenceTemplate::fifthToRoot:
+                if (cadenceIndex == 0) return nearestNoteForPitchClass (seedNote, (nextRootPc + 7) % 12);
+                return targetRoot;
+
+            case CadenceTemplate::twoFiveLike:
+                if (cadenceIndex == 0) return nearestNoteForPitchClass (seedNote, (nextRootPc + 2) % 12);
+                if (cadenceIndex == 1 && event.eventsInStep > 2) return nearestNoteForPitchClass (seedNote, (nextRootPc + 7) % 12);
+                return targetRoot;
+        }
+
+        return targetRoot;
+    };
+
+    auto roleAdjust = [&] (int note) -> int
+    {
+        int adjusted = note;
+        const int previousNote = memory.hasPreviousNote ? memory.previousNote : roleCenter;
+
+        switch (event.role)
+        {
+            case SlotPattern::StepRole::bass:
+            {
+                const std::vector<int> bassTargets = targetNextHarmony && ! nextChordPcs.empty()
+                                                   ? std::vector<int> { nextChordPcs.front(), nextChordPcs.size() > 2 ? nextChordPcs[2] : nextChordPcs.front() }
+                                                   : std::vector<int> { currentChordPcs.empty() ? rootToPitchClass (currentChord.root) : currentChordPcs.front(),
+                                                                        currentChordPcs.size() > 2 ? currentChordPcs[2] : ((currentChordPcs.empty() ? rootToPitchClass (currentChord.root) : currentChordPcs.front()) + 7) % 12 };
+                adjusted = snapToNearestPitchClass (bassTargets,
+                                                   clampNoteToRangeByOctave (memory.hasPreviousNote ? previousNote : adjusted,
+                                                                             roleLow,
+                                                                             roleHigh));
+                if (targetNextHarmony && ! nextChordPcs.empty() && memory.hasPreviousNote)
+                    adjusted = moveTowardTargetBySemitone (adjusted, nearestNoteForPitchClass (adjusted, nextChordPcs.front()));
+                adjusted = clampNoteToRangeByOctave (adjusted, roleLow, roleHigh);
+                break;
+            }
+
+            case SlotPattern::StepRole::chord:
+            {
+                adjusted = clampNoteToRangeByOctave (memory.hasPreviousNote ? steerTowardPrevious (adjusted, previousNote, 5) : adjusted,
+                                                     juce::jmax (46, roleLow),
+                                                     roleHigh);
+                const int closeTop = juce::jlimit (roleCenter + 3, roleHigh - 2, memory.previousChordTopNote);
+                if (memory.preferOpenChordVoicing && adjusted < roleCenter)
+                    adjusted = juce::jmin (roleHigh, adjusted + 12);
+                if (! memory.preferOpenChordVoicing && adjusted > closeTop)
+                    adjusted = juce::jmax (juce::jmax (46, roleLow), adjusted - 12);
+                if (adjusted < roleCenter - 5)
+                    adjusted += 12;
+                break;
+            }
+
+            case SlotPattern::StepRole::lead:
+                adjusted = clampNoteToRangeByOctave (memory.hasPreviousNote ? steerTowardPrevious (adjusted, previousNote, 4) : adjusted,
+                                                     roleLow,
+                                                     roleHigh);
+                if (memory.hasPreviousNote && memory.previousDirection != 0)
+                    adjusted = steerTowardPrevious (adjusted, previousNote + memory.previousDirection * 2, 5);
+                if (currentChordPcs.size() >= 3 && std::find (currentChordPcs.begin(), currentChordPcs.end(), adjusted % 12) != currentChordPcs.end())
+                    adjusted += ((event.pitchValue >= 0 && (event.pitchValue % 2) == 1) ? 2 : 0);
+                break;
+
+            case SlotPattern::StepRole::fill:
+                adjusted = clampNoteToRangeByOctave (memory.hasPreviousNote ? steerTowardPrevious (adjusted, previousNote + memory.previousDirection * 4, 9) : adjusted,
+                                                     roleLow,
+                                                     roleHigh);
+                adjusted = clampNoteToRangeByOctave (adjusted + ((event.pitchValue >= 0 && (event.pitchValue % 2) == 1) ? 12 : 0),
+                                                     roleLow,
+                                                     roleHigh);
+                if (targetNextHarmony && ! nextChordPcs.empty())
+                    adjusted = snapToNearestPitchClass (nextChordPcs, adjusted);
+                break;
+
+            case SlotPattern::StepRole::transition:
+            {
+                adjusted = clampNoteToRangeByOctave (realizeCadenceTemplate (memory.hasPreviousNote ? previousNote : adjusted),
+                                                     roleLow,
+                                                     roleHigh);
+                break;
+            }
+        }
+
+        return juce::jlimit (0, 127, adjusted);
+    };
+
+    switch (event.noteMode)
+    {
+        case SlotPattern::NoteMode::absolute:
+        {
+            int note = event.pitchValue < 0 ? baseNote : event.pitchValue;
+            if (structureFollow && ! structureChordPcs.empty())
+                note = snapToNearestPitchClass (structureChordPcs, note);
+            return juce::jlimit (0, 127, note);
+        }
+
+        case SlotPattern::NoteMode::degree:
+        {
+            const int raw = event.pitchValue < 0 ? 0 : event.pitchValue;
+            const int octaveOffset = raw / 12;
+            const int degreePc = (rootToPitchClass (keyRoot) + (raw % 12 + 12) % 12) % 12;
+            const int contourCenter = memory.hasPreviousNote ? memory.previousNote + memory.previousDirection * 2 : anchorNote;
+            const int center = event.role == SlotPattern::StepRole::bass ? roleCenter
+                             : event.role == SlotPattern::StepRole::lead ? contourCenter + octaveOffset * 12
+                             : anchorNote + octaveOffset * 12;
+            int note = nearestNoteForPitchClass (center, degreePc);
+            if (! scalePcs.empty() && std::find (scalePcs.begin(), scalePcs.end(), degreePc) == scalePcs.end())
+                note = nearestNoteForPitchClass (note, degreePc);
+            return roleAdjust (note);
+        }
+
+        case SlotPattern::NoteMode::chordTone:
+        {
+            const auto& chordForEvent = (event.harmonicSource == SlotPattern::HarmonicSource::nextChord || event.lookAheadToNextChord)
+                                      ? nextChord
+                                      : currentChord;
+            const auto intervals = chordIntervalsForType (chordForEvent.type);
+            int toneIndex = juce::jmax (0, event.pitchValue < 0 ? 0 : event.pitchValue);
+
+            if (event.role == SlotPattern::StepRole::bass)
+            {
+                static constexpr int bassChordToneMap[4] = { 0, 2, 0, 1 };
+                const int mapped = bassChordToneMap[toneIndex % 4];
+                toneIndex = mapped + ((toneIndex / 4) * 2);
+            }
+            else if (event.role == SlotPattern::StepRole::lead)
+            {
+                toneIndex = toneIndex % juce::jmax (1, (int) intervals.size());
+            }
+            else if (event.role == SlotPattern::StepRole::fill)
+            {
+                toneIndex += 1;
+            }
+            else if (event.role == SlotPattern::StepRole::chord)
+            {
+                const int chordSize = juce::jmax (1, (int) intervals.size());
+                const int continuityIndex = memory.hasPreviousNote ? memory.previousChordVoiceIndex : toneIndex % chordSize;
+                toneIndex = memory.preferOpenChordVoicing
+                          ? continuityIndex + ((toneIndex % 2) * chordSize)
+                          : continuityIndex;
+            }
+            else if (event.role == SlotPattern::StepRole::transition)
+            {
+                memory.cadenceTemplate = (int) chooseCadenceTemplate();
+            }
+
+            int octaveOffset = toneIndex / juce::jmax (1, (int) intervals.size());
+            int intervalIndex = toneIndex % juce::jmax (1, (int) intervals.size());
+            int rootAnchor = event.role == SlotPattern::StepRole::chord ? roleCenter
+                          : event.role == SlotPattern::StepRole::lead && memory.hasPreviousNote ? memory.previousNote
+                          : anchorNote;
+            int rootNote = nearestNoteForPitchClass (rootAnchor,
+                                                     rootToPitchClass (chordForEvent.root));
+            int note = rootNote + intervals[(size_t) intervalIndex] + octaveOffset * 12;
+            if (event.role == SlotPattern::StepRole::chord)
+            {
+                memory.previousChordVoiceIndex = intervalIndex;
+                memory.preferOpenChordVoicing = event.eventsInStep >= 3 || memory.recentHigh - memory.recentLow > 9;
+            }
+            return roleAdjust (note);
+        }
+
+        case SlotPattern::NoteMode::interval:
+        default:
+        {
+            int semitoneOffset = event.pitchValue < 0 ? 0 : event.pitchValue;
+            if (event.role == SlotPattern::StepRole::fill)
+                semitoneOffset += ((semitoneOffset & 1) ? 12 : 0);
+            if (event.role == SlotPattern::StepRole::bass)
+                semitoneOffset = juce::jlimit (-12, 12, semitoneOffset);
+
+            return roleAdjust (anchorNote + semitoneOffset);
+        }
+    }
+}
+
+void PluginProcessor::triggerRuntimePatternEvents (int slot,
+                                                   int patternTick,
+                                                   int sampleOffset,
+                                                   bool structureFollow,
+                                                   const juce::String& keyRoot,
+                                                   const juce::String& keyScale,
+                                                   const Chord& currentChord,
+                                                   const Chord& nextChord,
+                                                   const std::vector<int>& structureChordPcs)
+{
+    juce::SpinLock::ScopedTryLockType lock (m_runtimePatternLocks[slot]);
+    if (! lock.isLocked())
+        return;
+
+    const auto pattern = m_runtimePatterns[slot];
+    if (! pattern.hasEvents || pattern.patternLengthTicks <= 0)
+        return;
+
+    for (int i = 0; i < pattern.eventCount; ++i)
+    {
+        const auto& event = pattern.events[(size_t) i];
+        if (event.startTick != patternTick)
+            continue;
+
+        const int baseNote = m_slotNote[slot].load();
+        const int note = realizeRuntimePitch (slot, event, baseNote, keyRoot, keyScale, currentChord, nextChord, structureFollow, structureChordPcs);
+
+        for (auto& held : m_heldNotes[slot])
+        {
+            if (held.active && held.note == note)
+            {
+                m_slotMidi[slot].addEvent (juce::MidiMessage::noteOff (1, held.note), sampleOffset);
+                held.active = false;
+                held.note = -1;
+                held.ticksRemaining = 0;
+            }
+        }
+
+        m_slotMidi[slot].addEvent (
+            juce::MidiMessage::noteOn (1, note, static_cast<juce::uint8> (event.velocity)),
+            sampleOffset);
+        pushHeldNote (slot, note, event.lengthTicks);
+        updatePhraseMemory (slot, note, event.role, currentChord);
+    }
+}
 
 //==============================================================================
 const juce::String PluginProcessor::getName() const  { return JucePlugin_Name; }
@@ -137,6 +746,9 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     for (auto& mb : m_slotMidi)
         mb.clear();
+
+    for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
+        resetPhraseMemory (slot);
 
     DBG ("PluginProcessor: prepared at " << sampleRate
          << " Hz, " << samplesPerBlock << " buf");
@@ -218,13 +830,18 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
         {
-            if (m_noteHeld[slot])
+            for (auto& held : m_heldNotes[slot])
             {
-                m_slotMidi[slot].addEvent (
-                    juce::MidiMessage::noteOff (1, m_lastNotePlayed[slot]),
-                    0);
-                m_noteHeld[slot] = false;
+                if (! held.active)
+                    continue;
+
+                m_slotMidi[slot].addEvent (juce::MidiMessage::noteOff (1, held.note), 0);
+                held.active = false;
+                held.note = -1;
+                held.ticksRemaining = 0;
             }
+
+            m_noteHeld[slot] = false;
         }
     }
 
@@ -254,15 +871,15 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
         juce::ignoreUnused (activeSection, activeChord);
 
-        // Per-sample step advance (16th note resolution)
-        const double samplesPerStep16th = samplesPerBeat / 4.0;
+        // Per-sample tick advance so micro-events can land inside each step.
+        const double samplesPerTick = samplesPerBeat / static_cast<double> (kSequencerTicksPerBeat);
         for (int i = 0; i < numSamples; ++i)
         {
             m_samplePos += 1.0;
-            if (m_samplePos >= samplesPerStep16th)
+            if (m_samplePos >= samplesPerTick)
             {
-                m_samplePos -= samplesPerStep16th;
-                advanceSongBeat(i);  // new song-aware advance
+                m_samplePos -= samplesPerTick;
+                advanceSequencerTick (i);
             }
         }
     }
@@ -300,82 +917,130 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 }
 
 //==============================================================================
-void PluginProcessor::advanceSongBeat (int sampleOffset)
+void PluginProcessor::advanceSequencerTick (int sampleOffset)
 {
     bool structureActive = false;
     double structureBeat = 0.0;
     std::vector<int> structureChordPcs;
+    Chord currentChord { "C", "maj" };
+    Chord nextChord { "C", "maj" };
     {
         const juce::ScopedReadLock structureRead (m_structureLock);
         structureActive = ! m_appState.structure.sections.empty();
         if (structureActive)
         {
             structureBeat = wrapBeatToStructure (m_currentSongBeat, m_appState.structure);
+            currentChord = m_structureEngine.getChordAtBeat (structureBeat);
+            nextChord = nextChordForBeat (m_appState.structure, structureBeat);
             structureChordPcs = m_structureEngine.resolveChordAtBeat (structureBeat);
         }
     }
-    
-    // Note-off previous notes
+
     for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
+        releaseFinishedSlotNotes (slot, sampleOffset);
+
+    const double activeBeat = structureActive ? structureBeat : m_currentSongBeat;
+    const int activeTick = juce::jmax (0, static_cast<int> (std::floor (activeBeat * (double) kSequencerTicksPerBeat + 1.0e-6)));
+    const int step16 = activeTick / kSequencerTicksPerStep;
+
+    // Drum machine slots: check every sequencer tick so ratchets/divisions can retrigger within the step.
     {
-        if (m_noteHeld[slot])
+        const int stepSubTick = activeTick % kSequencerTicksPerStep;
+        for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
         {
-            m_slotMidi[slot].addEvent (
-                juce::MidiMessage::noteOff (1, m_lastNotePlayed[slot]),
-                sampleOffset);
-            m_noteHeld[slot] = false;
+            if (! m_audioGraph.isSlotActive (slot)) continue;
+            if (m_audioGraph.getSlotSynthType (slot) != 2) continue;
+
+            const int voiceCount = m_drumVoiceCount[slot].load (std::memory_order_relaxed);
+            for (int v = 0; v < voiceCount; ++v)
+            {
+                const int vsc = juce::jmax (1, m_drumVoices[slot][v].stepCount.load (std::memory_order_relaxed));
+                const int voiceStep = step16 % vsc;
+                const uint64_t vbit = 1ULL << juce::jlimit (0, 63, voiceStep);
+                if ((m_drumVoices[slot][v].stepBits.load (std::memory_order_relaxed) & vbit) == 0)
+                    continue;
+
+                const int division = juce::jlimit (1, 8, m_drumVoices[slot][v].stepDivisions[(size_t) voiceStep].load (std::memory_order_relaxed));
+                const int ratchetCount = juce::jlimit (1,
+                                                       division,
+                                                       m_drumVoices[slot][v].stepRatchets[(size_t) voiceStep].load (std::memory_order_relaxed));
+                const int velocityNorm = juce::jlimit (5, 100, m_drumVoices[slot][v].stepVelocitiesNorm[(size_t) voiceStep].load (std::memory_order_relaxed));
+                const int intervalTicks = juce::jmax (1, kSequencerTicksPerStep / division);
+
+                for (int repeat = 0; repeat < ratchetCount; ++repeat)
+                {
+                    const int triggerTick = repeat * intervalTicks;
+                    if (stepSubTick == triggerTick)
+                    {
+                        const float velocity = juce::jlimit (0.05f, 1.0f, velocityNorm / 100.0f);
+                        m_audioGraph.getDrumMachine (slot).triggerVoice (v, velocity);
+                        break;
+                    }
+                }
+            }
         }
     }
 
-    // Structure-driven thin-slice sequencing path: generate quarter-note pulses
-    // across the full structure loop so users hear harmonic movement immediately.
-    if (m_useStructureForTracks.load() && structureActive && ! structureChordPcs.empty())
+    const bool structureFollow = m_useStructureForTracks.load() && structureActive && ! structureChordPcs.empty();
+
+    // Hybrid slot patterns: variable-length steps with micro note events.
+    for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
     {
-        const int step16 = juce::jmax (0, static_cast<int> (std::floor (structureBeat * 4.0 + 1.0e-6)));
-        const int chordRootPc = structureChordPcs.front();
+        if (! m_audioGraph.isSlotActive (slot)) continue;
+        if (m_audioGraph.getSlotSynthType (slot) == 2) continue;
 
-        for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
+        const int patternLengthTicks = [&]
         {
-            if (! m_audioGraph.isSlotActive (slot))
-                continue;
+            juce::SpinLock::ScopedTryLockType lock (m_runtimePatternLocks[slot]);
+            return lock.isLocked() ? m_runtimePatterns[slot].patternLengthTicks : 0;
+        }();
 
-            const int stepCount = juce::jmax (1, m_stepCount[slot].load (std::memory_order_relaxed));
-            const int slotStep = step16 % stepCount;
-            const uint64_t bit = 1ULL << juce::jlimit (0, 63, slotStep);
-            const bool slotStepActive = (m_stepBits[slot].load (std::memory_order_relaxed) & bit) != 0;
+        if (patternLengthTicks <= 0)
+            continue;
 
-            if (! slotStepActive)
-                continue;
-
-            int note = m_slotNote[slot].load();
-            note = snapToNearestPitchClass ({ chordRootPc }, note);
-            m_slotMidi[slot].addEvent (
-                juce::MidiMessage::noteOn (1, note, static_cast<juce::uint8> (100)),
-                sampleOffset);
-            m_noteHeld[slot] = true;
-            m_lastNotePlayed[slot] = note;
-        }
-
-        m_currentStep.store(step16 % 64);
-        triggerAsyncUpdate();
-        return;
+        triggerRuntimePatternEvents (slot,
+                                     activeTick % patternLengthTicks,
+                                     sampleOffset,
+                                     structureFollow,
+                                     m_appState.song.keyRoot,
+                                     m_appState.song.keyScale,
+                                     currentChord,
+                                     nextChord,
+                                     structureChordPcs);
     }
 
     auto state = m_songMgr.query (m_currentSongBeat);
-    if (state.sectionId < 0) return;  // no active section
+    if (state.sectionId < 0)
+    {
+        if ((activeTick % kSequencerTicksPerStep) == 0)
+        {
+            m_currentStep.store (step16 % 64);
+            triggerAsyncUpdate();
+        }
+        return;
+    }
 
     const auto& sec = m_songMgr.getSections()[state.sectionId];
     const auto& pat = m_songMgr.getPatterns()[sec.patternId];
 
-    const int stepsPerBeat = 4;  // 16th notes
-    const int totalPatternSteps = juce::jmax (1, static_cast<int> (pat.lengthBeats * stepsPerBeat));
-    const int step = static_cast<int> (state.localBeat * stepsPerBeat) % totalPatternSteps;
+    if ((activeTick % kSequencerTicksPerStep) != 0)
+        return;
+
+    const int totalPatternSteps = juce::jmax (1, static_cast<int> (pat.lengthBeats * 4.0));
+    const int step = static_cast<int> (state.localBeat * 4.0) % totalPatternSteps;
 
     // Dispatch to active slots
     for (int i = 0; i < state.numActiveSlots; ++i)
     {
         const int slot = state.activeSlots[i];
         if (! m_audioGraph.isSlotActive (slot)) continue;
+        if (m_audioGraph.getSlotSynthType (slot) == 2) continue;
+
+        {
+            juce::SpinLock::ScopedTryLockType lock (m_runtimePatternLocks[slot]);
+            if (lock.isLocked() && m_runtimePatterns[slot].hasEvents)
+                continue;
+        }
 
         // Check pattern step active
         if (pat.baseSteps.contains(step))
@@ -386,15 +1051,26 @@ void PluginProcessor::advanceSongBeat (int sampleOffset)
             if (state.hasActiveChord)
                 note = state.activeChord.root;
 
-            m_slotMidi[slot].addEvent (
-                juce::MidiMessage::noteOn (1, note, static_cast<juce::uint8> (100)),
-                sampleOffset);
-            m_noteHeld[slot] = true;
-            m_lastNotePlayed[slot] = note;
+            note = juce::jlimit (0, 127, note);
+
+            for (auto& held : m_heldNotes[slot])
+            {
+                if (held.active && held.note == note)
+                {
+                    m_slotMidi[slot].addEvent (juce::MidiMessage::noteOff (1, held.note), sampleOffset);
+                    held.active = false;
+                    held.note = -1;
+                    held.ticksRemaining = 0;
+                }
+            }
+
+            m_slotMidi[slot].addEvent (juce::MidiMessage::noteOn (1, note, static_cast<juce::uint8> (100)),
+                                       sampleOffset);
+            pushHeldNote (slot, note, kSequencerTicksPerStep);
         }
     }
 
-    m_currentStep.store(step);  // legacy UI
+    m_currentStep.store (step16 % 64);
     triggerAsyncUpdate();
 }
 
@@ -413,7 +1089,11 @@ void PluginProcessor::setPlaying (bool playing) noexcept
     m_playing.store (playing);
     m_appState.transport.isPlaying = playing;
     if (! playing)
+    {
         m_flushAllNotes.store (true);
+        for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
+            resetPhraseMemory (slot);
+    }
 }
 
 void PluginProcessor::setBpm (float bpm) noexcept
@@ -454,6 +1134,8 @@ void PluginProcessor::seekTransport (double beat) noexcept
     m_currentBeat = clamped;
     m_appState.transport.playheadBeats = clamped;
     m_currentStep.store (static_cast<int> (std::floor (clamped * 4.0)) % 64);
+    for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
+        resetPhraseMemory (slot);
 }
 
 void PluginProcessor::setConstraintNotePolicy (MidiConstraintEngine::NotePolicy policy) noexcept
@@ -509,6 +1191,16 @@ void PluginProcessor::setStepCount (int slot, int count) noexcept
 {
     if (slot >= 0 && slot < SpoolAudioGraph::kNumSlots)
         m_stepCount[slot].store (juce::jlimit (1, 64, count));
+}
+
+void PluginProcessor::setSlotPattern (int slot, const SlotPattern& pattern) noexcept
+{
+    if (slot < 0 || slot >= SpoolAudioGraph::kNumSlots)
+        return;
+
+    const auto compiled = compileRuntimePattern (pattern);
+    const juce::SpinLock::ScopedLockType lock (m_runtimePatternLocks[slot]);
+    m_runtimePatterns[slot] = compiled;
 }
 
 void PluginProcessor::setSlotNote (int slot, int note) noexcept
@@ -607,6 +1299,30 @@ void PluginProcessor::setDrumVoiceCount (int slot, int count) noexcept
 {
     if (slot < 0 || slot >= SpoolAudioGraph::kNumSlots) return;
     m_drumVoiceCount[slot].store (juce::jlimit (0, kMaxDrumVoices, count));
+}
+
+void PluginProcessor::setDrumStepVelocity (int slot, int voice, int step, float velocity) noexcept
+{
+    if (slot < 0 || slot >= SpoolAudioGraph::kNumSlots) return;
+    if (voice < 0 || voice >= kMaxDrumVoices) return;
+    if (step < 0 || step >= kMaxDrumStepsPerVoice) return;
+    m_drumVoices[slot][voice].stepVelocitiesNorm[(size_t) step].store (juce::jlimit (5, 100, juce::roundToInt (velocity * 100.0f)));
+}
+
+void PluginProcessor::setDrumStepRatchet (int slot, int voice, int step, int count) noexcept
+{
+    if (slot < 0 || slot >= SpoolAudioGraph::kNumSlots) return;
+    if (voice < 0 || voice >= kMaxDrumVoices) return;
+    if (step < 0 || step >= kMaxDrumStepsPerVoice) return;
+    m_drumVoices[slot][voice].stepRatchets[(size_t) step].store (juce::jlimit (1, 8, count));
+}
+
+void PluginProcessor::setDrumStepDivision (int slot, int voice, int step, int division) noexcept
+{
+    if (slot < 0 || slot >= SpoolAudioGraph::kNumSlots) return;
+    if (voice < 0 || voice >= kMaxDrumVoices) return;
+    if (step < 0 || step >= kMaxDrumStepsPerVoice) return;
+    m_drumVoices[slot][voice].stepDivisions[(size_t) step].store (juce::jlimit (1, 8, division));
 }
 
 uint64_t PluginProcessor::getDrumVoiceStepBits (int slot, int voice) const noexcept

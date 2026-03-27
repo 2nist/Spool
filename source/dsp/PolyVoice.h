@@ -30,6 +30,12 @@ struct PolyVoice
     double osc2Phase { 0.0 };
 
     //==========================================================================
+    // Drift oscillator state (slow per-voice LFO, set on noteOn by processor)
+
+    double driftOscPhase { 0.0 };
+    double driftOscInc   { 0.0 };
+
+    //==========================================================================
     // Envelopes
 
     juce::ADSR ampEnv;
@@ -66,9 +72,11 @@ struct PolyVoice
 
     void reset()
     {
-        osc1Phase  = 0.0;
-        osc2Phase  = 0.0;
-        active     = false;
+        osc1Phase      = 0.0;
+        osc2Phase      = 0.0;
+        driftOscPhase  = 0.0;
+        driftOscInc    = 0.0;
+        active         = false;
         releasing  = false;
         note       = -1;
         velocity   = 0.0f;

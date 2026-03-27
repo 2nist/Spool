@@ -1,27 +1,33 @@
 #include "StepGridSingle.h"
 
-//==============================================================================
+#include <cmath>
 
 StepGridSingle::StepGridSingle()
 {
     setRepaintsOnMouseActivity (false);
+    setWantsKeyboardFocus (true);
 }
-
-//==============================================================================
-// State
-//==============================================================================
 
 void StepGridSingle::setPattern (SlotPattern* pattern, juce::Colour groupColor)
 {
-    m_pattern    = pattern;
+    m_pattern = pattern;
     m_groupColor = groupColor;
+    m_selectedStep = 0;
+    m_selectedEvent = -1;
+    ensureSelectionValid();
     repaint();
 }
 
-void StepGridSingle::clearPattern()
+void StepGridSingle::clearPattern ()
 {
-    m_pattern  = nullptr;
+    m_pattern = nullptr;
     m_playhead = -1;
+    m_selectedStep = 0;
+    m_selectedEvent = -1;
+    m_dragMode = DragMode::none;
+    m_hoverStep = -1;
+    m_hoverEvent = -1;
+    m_hoverStepResizeHandle = false;
     repaint();
 }
 
@@ -31,117 +37,248 @@ void StepGridSingle::setPlayhead (int stepIndex)
     repaint();
 }
 
-//==============================================================================
-// Layout helpers
-//==============================================================================
-
-int StepGridSingle::numRows() const noexcept
+juce::Rectangle<int> StepGridSingle::stepLaneRect() const noexcept
 {
-    if (m_pattern == nullptr) return 2;
-    const int n = m_pattern->activeStepCount();
-    if (n <= 16)  return 1;
-    if (n <= 32)  return 2;
-    return 3;   // 33–64 steps: 3 rows (TODO: inner scroll for >48)
+    return { kPad, kPad, getWidth() - (kPad * 3) - kCtrlW, kLaneH };
 }
 
-int StepGridSingle::stepsPerRow() const noexcept
+juce::Rectangle<int> StepGridSingle::detailRect() const noexcept
 {
-    if (m_pattern == nullptr) return 16;
-    const int n = m_pattern->activeStepCount();
-    return juce::jmin (n, 16);   // at most 16 per row
+    const auto lane = stepLaneRect();
+    return { lane.getX(), lane.getBottom() + kGap, lane.getWidth(), getHeight() - lane.getBottom() - kGap - kPad };
 }
 
-int StepGridSingle::stepW() const noexcept
+juce::Rectangle<int> StepGridSingle::ctrlRect() const noexcept
 {
-    // Constrain to the smaller of width-based and height-based cell size so steps stay square
-    const int spr  = stepsPerRow();
-    const int byW  = (gridArea().getWidth()  - (spr - 1) * kGap) / spr;
-    const int rows = numRows();
-    const int byH  = (gridArea().getHeight() - (rows - 1) * kGap) / rows;
-    return juce::jmax (4, juce::jmin (byW, byH));
+    return { getWidth() - kCtrlW - kPad, kPad, kCtrlW, getHeight() - (kPad * 2) };
 }
 
-int StepGridSingle::stepH() const noexcept
+juce::Rectangle<int> StepGridSingle::patternShorterRect() const noexcept
 {
-    return stepW();  // always square
+    const auto c = ctrlRect();
+    return { c.getX(), c.getY(), c.getWidth() / 2 - 2, kBtnH };
 }
 
-juce::Rectangle<int> StepGridSingle::gridArea() const noexcept
+juce::Rectangle<int> StepGridSingle::patternLongerRect() const noexcept
 {
-    return { kPad, kPad, getWidth() - kPad * 2 - kCtrlW - kPad, getHeight() - kPad * 2 };
+    return patternShorterRect().translated (ctrlRect().getWidth() / 2 + 2, 0);
 }
 
-juce::Rectangle<int> StepGridSingle::ctrlArea() const noexcept
+juce::Rectangle<int> StepGridSingle::stepShorterRect() const noexcept
 {
-    return { getWidth() - kCtrlW - kPad, kPad, kCtrlW, getHeight() - kPad * 2 };
+    const auto c = ctrlRect();
+    return patternShorterRect().translated (0, kBtnH + kBtnGap + 18);
 }
 
-juce::Rectangle<int> StepGridSingle::decBtnRect() const noexcept
+juce::Rectangle<int> StepGridSingle::stepLongerRect() const noexcept
 {
-    const auto a = ctrlArea();
-    return { a.getX(), a.getY(), kBtnW, kBtnH };
+    return patternLongerRect().translated (0, kBtnH + kBtnGap + 18);
 }
 
-juce::Rectangle<int> StepGridSingle::incBtnRect() const noexcept
+juce::Rectangle<int> StepGridSingle::addStepRect() const noexcept
 {
-    const auto d = decBtnRect();
-    return d.translated (kBtnW + 2, 0);
+    const auto c = ctrlRect();
+    return patternShorterRect().translated (0, (kBtnH + kBtnGap) * 2 + 36);
 }
 
-juce::Rectangle<int> StepGridSingle::countLblRect() const noexcept
+juce::Rectangle<int> StepGridSingle::removeStepRect() const noexcept
 {
-    const auto a = ctrlArea();
-    return { a.getX(), a.getY() + kBtnH + 3, kCtrlW, a.getHeight() - kBtnH - 3 };
+    return patternLongerRect().translated (0, (kBtnH + kBtnGap) * 2 + 36);
 }
 
-juce::Rectangle<int> StepGridSingle::stepRect (int idx) const noexcept
+juce::Rectangle<int> StepGridSingle::modeRect() const noexcept
 {
-    if (m_pattern == nullptr || idx < 0 || idx >= m_pattern->activeStepCount())
+    const auto c = ctrlRect();
+    return { c.getX(), removeStepRect().getBottom() + 20, c.getWidth(), kBtnH };
+}
+
+juce::Rectangle<int> StepGridSingle::roleRect() const noexcept
+{
+    return modeRect().translated (0, kBtnH + kBtnGap + 10);
+}
+
+SlotPattern::Step* StepGridSingle::selectedStepData() noexcept
+{
+    return m_pattern != nullptr ? m_pattern->getStep (m_selectedStep) : nullptr;
+}
+
+const SlotPattern::Step* StepGridSingle::selectedStepData() const noexcept
+{
+    return m_pattern != nullptr ? m_pattern->getStep (m_selectedStep) : nullptr;
+}
+
+void StepGridSingle::ensureSelectionValid()
+{
+    if (m_pattern == nullptr)
+        return;
+
+    m_selectedStep = juce::jlimit (0, m_pattern->activeStepCount() - 1, m_selectedStep);
+    const auto* step = selectedStepData();
+    if (step == nullptr)
+    {
+        m_selectedEvent = -1;
+        return;
+    }
+
+    if (step->microEventCount <= 0)
+        m_selectedEvent = -1;
+    else
+        m_selectedEvent = juce::jlimit (0, step->microEventCount - 1, m_selectedEvent < 0 ? 0 : m_selectedEvent);
+}
+
+juce::Rectangle<float> StepGridSingle::stepRect (int index) const noexcept
+{
+    if (m_pattern == nullptr)
         return {};
 
-    const int spr = stepsPerRow();
-    const int sw  = stepW();
-    const int sh  = stepH();
-    const int row = idx / spr;
-    const int col = idx % spr;
-    const auto ga = gridArea();
+    const auto* step = m_pattern->getStep (index);
+    if (step == nullptr)
+        return {};
 
-    const int x = ga.getX() + col * (sw + kGap);
-    const int y = ga.getY() + row * (sh + kGap);
-    return { x, y, sw, sh };
+    const auto lane = stepLaneRect().toFloat();
+    const float units = (float) juce::jmax (1, m_pattern->patternLength());
+    const float x = lane.getX() + lane.getWidth() * ((float) step->start / units);
+    const float w = juce::jmax (8.0f, lane.getWidth() * ((float) step->duration / units) - 1.0f);
+    return { x, lane.getY(), w, lane.getHeight() };
 }
 
-int StepGridSingle::stepAtPos (juce::Point<int> pos) const noexcept
+juce::Rectangle<float> StepGridSingle::stepResizeHandleRect (int stepIndex) const noexcept
 {
-    if (m_pattern == nullptr) return -1;
-    const int n   = m_pattern->activeStepCount();
-    const int spr = stepsPerRow();
-    const int sw  = stepW();
-    const int sh  = stepH();
-    const auto ga = gridArea();
+    const auto rect = stepRect (stepIndex).reduced (1.0f, 2.0f);
+    if (rect.isEmpty())
+        return {};
 
-    if (!ga.contains (pos)) return -1;
-
-    const int col = (pos.x - ga.getX()) / (sw + kGap);
-    if (col < 0 || col >= spr) return -1;
-
-    // Check not in column gap
-    if ((pos.x - ga.getX()) - col * (sw + kGap) >= sw) return -1;
-
-    const int row = (pos.y - ga.getY()) / (sh + kGap);
-    const int nr  = numRows();
-    if (row < 0 || row >= nr) return -1;
-
-    // Check not in row gap
-    if ((pos.y - ga.getY()) - row * (sh + kGap) >= sh) return -1;
-
-    const int idx = row * spr + col;
-    return (idx < n) ? idx : -1;
+    return { rect.getRight() - 10.0f, rect.getY() + 3.0f, 8.0f, rect.getHeight() - 6.0f };
 }
 
-//==============================================================================
-// Paint
-//==============================================================================
+juce::Rectangle<float> StepGridSingle::microEventRect (int eventIndex) const noexcept
+{
+    const auto* step = selectedStepData();
+    if (step == nullptr || ! juce::isPositiveAndBelow (eventIndex, step->microEventCount))
+        return {};
+
+    const auto detail = detailRect().toFloat();
+    const auto& event = step->microEvents[(size_t) eventIndex];
+    const float x = detail.getX() + detail.getWidth() * juce::jlimit (0.0f, 0.98f, event.timeOffset);
+    const float w = juce::jmax (6.0f, detail.getWidth() * juce::jlimit (0.05f, 1.0f, event.length));
+    const int value = event.pitchValue < 0 ? valueForRow (kPitchRows / 2) : event.pitchValue;
+    const int row = rowForValue (value);
+    const float rowH = detail.getHeight() / (float) kPitchRows;
+    const float y = detail.getY() + row * rowH + 1.0f;
+    return { x, y, juce::jmin (detail.getRight() - x, w), juce::jmax (6.0f, rowH - 2.0f) };
+}
+
+int StepGridSingle::stepAt (juce::Point<int> pos) const noexcept
+{
+    if (m_pattern == nullptr || ! stepLaneRect().contains (pos))
+        return -1;
+
+    for (int i = 0; i < m_pattern->activeStepCount(); ++i)
+        if (stepRect (i).contains ((float) pos.x, (float) pos.y))
+            return i;
+
+    return -1;
+}
+
+int StepGridSingle::microEventAt (juce::Point<int> pos) const noexcept
+{
+    const auto* step = selectedStepData();
+    if (step == nullptr || ! detailRect().contains (pos))
+        return -1;
+
+    for (int i = step->microEventCount - 1; i >= 0; --i)
+        if (microEventRect (i).contains ((float) pos.x, (float) pos.y))
+            return i;
+
+    return -1;
+}
+
+float StepGridSingle::normalizedTimeFromDetailX (int x) const noexcept
+{
+    const auto detail = detailRect();
+    if (detail.getWidth() <= 1)
+        return 0.0f;
+
+    return juce::jlimit (0.0f, 0.98f, (float) (x - detail.getX()) / (float) detail.getWidth());
+}
+
+int StepGridSingle::valueForRow (int row) const noexcept
+{
+    const auto* step = selectedStepData();
+    const auto mode = step != nullptr ? step->noteMode : SlotPattern::NoteMode::absolute;
+    const int clampedRow = juce::jlimit (0, kPitchRows - 1, row);
+
+    switch (mode)
+    {
+        case SlotPattern::NoteMode::absolute:  return juce::jlimit (0, 127, (m_pitchBase + kPitchRows - 1) - clampedRow);
+        case SlotPattern::NoteMode::degree:    return kPitchRows - 1 - clampedRow;
+        case SlotPattern::NoteMode::chordTone: return kPitchRows - 1 - clampedRow;
+        case SlotPattern::NoteMode::interval:  return 6 - clampedRow;
+    }
+
+    return 60;
+}
+
+int StepGridSingle::rowForValue (int value) const noexcept
+{
+    const auto* step = selectedStepData();
+    const auto mode = step != nullptr ? step->noteMode : SlotPattern::NoteMode::absolute;
+
+    switch (mode)
+    {
+        case SlotPattern::NoteMode::absolute:
+            return juce::jlimit (0, kPitchRows - 1, (m_pitchBase + kPitchRows - 1) - juce::jlimit (0, 127, value));
+        case SlotPattern::NoteMode::degree:
+        case SlotPattern::NoteMode::chordTone:
+            return juce::jlimit (0, kPitchRows - 1, (kPitchRows - 1) - juce::jlimit (0, kPitchRows - 1, value));
+        case SlotPattern::NoteMode::interval:
+            return juce::jlimit (0, kPitchRows - 1, 6 - juce::jlimit (-5, 6, value));
+    }
+
+    return 0;
+}
+
+juce::String StepGridSingle::noteValueLabel (int value) const
+{
+    const auto* step = selectedStepData();
+    const auto mode = step != nullptr ? step->noteMode : SlotPattern::NoteMode::absolute;
+
+    switch (mode)
+    {
+        case SlotPattern::NoteMode::absolute:
+            return juce::MidiMessage::getMidiNoteName (juce::jlimit (0, 127, value), true, true, 3);
+        case SlotPattern::NoteMode::degree:
+        {
+            static const char* labels[12] = { "1", "b2", "2", "b3", "3", "4", "#4", "5", "b6", "6", "b7", "7" };
+            const int wrapped = (value % 12 + 12) % 12;
+            const int octave = value / 12;
+            auto label = juce::String (labels[wrapped]);
+            if (octave > 0)
+                label << "+" << octave;
+            return label;
+        }
+        case SlotPattern::NoteMode::chordTone:
+        {
+            static const char* tones[12] = { "R", "3", "5", "7", "9", "11", "13", "R+", "3+", "5+", "7+", "9+" };
+            return juce::String (tones[juce::jlimit (0, 11, value)]);
+        }
+        case SlotPattern::NoteMode::interval:
+            return value >= 0 ? "+" + juce::String (value) : juce::String (value);
+    }
+
+    return {};
+}
+
+int StepGridSingle::pitchFromDetailY (int y) const noexcept
+{
+    const auto detail = detailRect();
+    if (detail.getHeight() <= 0)
+        return 60;
+
+    const float rowH = detail.getHeight() / (float) kPitchRows;
+    const int row = juce::jlimit (0, kPitchRows - 1, (int) std::floor ((float) (y - detail.getY()) / rowH));
+    return valueForRow (row);
+}
 
 void StepGridSingle::paint (juce::Graphics& g)
 {
@@ -149,177 +286,950 @@ void StepGridSingle::paint (juce::Graphics& g)
 
     if (m_pattern == nullptr)
     {
-        g.setFont   (Theme::Font::micro());
-        g.setColour (Theme::Colour::inkGhost);
-        g.drawText  ("click a slot to edit steps",
-                     getLocalBounds(), juce::Justification::centred, false);
+        paintEmpty (g);
         return;
     }
 
-    paintGrid     (g);
-    paintDividers (g);
-    paintCtrl     (g);
+    ensureSelectionValid();
+    paintStepLane (g);
+    paintDetail (g);
+    paintControls (g);
 }
 
-void StepGridSingle::paintGrid (juce::Graphics& g) const
+void StepGridSingle::paintEmpty (juce::Graphics& g) const
 {
-    const int n    = m_pattern->activeStepCount();
-    const int sw   = stepW();
-    const int sh   = stepH();
-    const int spr  = stepsPerRow();
+    g.setFont (Theme::Font::micro());
+    g.setColour (Theme::Colour::inkGhost);
+    g.drawText ("select a slot to edit hybrid steps", getLocalBounds(), juce::Justification::centred, false);
+}
 
-    for (int i = 0; i < n; ++i)
+void StepGridSingle::paintStepLane (juce::Graphics& g) const
+{
+    auto lane = stepLaneRect();
+    g.setColour (Theme::Colour::surface2);
+    g.fillRect (lane);
+    g.setColour (Theme::Colour::surfaceEdge);
+    g.drawRect (lane, 1);
+
+    for (int i = 0; i < m_pattern->activeStepCount(); ++i)
     {
-        const auto r = stepRect (i);
-        if (r.isEmpty()) continue;
+        const auto rect = stepRect (i).reduced (1.0f, 2.0f);
+        const auto* step = m_pattern->getStep (i);
+        if (step == nullptr)
+            continue;
 
-        const bool active   = m_pattern->stepActive   (i);
-        const bool accented = m_pattern->stepAccented (i);
+        juce::Colour fill = Theme::Colour::surface3;
+        if (step->microEventCount > 0)
+            fill = step->accent ? m_groupColor.brighter (0.22f) : m_groupColor.withMultipliedSaturation (0.9f);
+        if (i == m_selectedStep)
+            fill = fill.brighter (0.2f);
+        if (i == m_hoverStep && i != m_selectedStep)
+            fill = fill.brighter (0.1f);
 
-        juce::Colour col;
-        if (active)
-            col = accented ? m_groupColor.brighter (0.25f) : m_groupColor;
-        else
-            col = Theme::Colour::surface3;
+        const bool selected = (i == m_selectedStep);
+        const bool hovered = (i == m_hoverStep);
+        g.setColour (fill);
+        g.fillRoundedRectangle (rect, 4.0f);
 
-        g.setColour (col);
-        g.fillRect  (r);
+        if (selected)
+        {
+            g.setColour (m_groupColor.withAlpha (0.18f));
+            g.fillRoundedRectangle (rect.expanded (2.5f, 2.5f), 5.5f);
+        }
 
-        // Playhead marker
-        if (i == m_playhead)
+        g.setColour (selected ? Theme::Colour::inkLight
+                              : hovered ? m_groupColor.brighter (0.35f)
+                                        : Theme::Colour::surfaceEdge);
+        g.drawRoundedRectangle (rect, 4.0f, selected ? 2.0f : 1.0f);
+
+        const bool playheadInsideStep = m_playhead >= 0
+            && m_playhead >= step->start
+            && m_playhead < step->start + step->duration;
+        if (playheadInsideStep)
         {
             g.setColour (Theme::Colour::error);
-            g.fillRect  (r.withWidth (1));
+            g.fillRoundedRectangle ({ rect.getX(), rect.getY(), 2.0f, rect.getHeight() }, 1.0f);
         }
-    }
 
-    juce::ignoreUnused (sw, sh, spr);
-}
+        g.setColour (i == m_selectedStep ? Theme::Colour::inkLight : Theme::Colour::inkMid);
+        g.setFont (Theme::Font::micro());
+        g.drawText (juce::String (i + 1), rect.toNearestInt().reduced (4, 2), juce::Justification::topLeft, false);
 
-void StepGridSingle::paintDividers (juce::Graphics& g) const
-{
-    if (m_pattern == nullptr) return;
+        const juce::String badge = step->microEventCount > 1 ? juce::String (step->microEventCount) + "n" : juce::String();
+        if (badge.isNotEmpty())
+            g.drawText (badge, rect.toNearestInt().reduced (4, 2), juce::Justification::bottomRight, false);
 
-    const int n   = m_pattern->activeStepCount();
-    const int spr = stepsPerRow();
-    const int sw  = stepW();
-    const int sh  = stepH();
-    const int nr  = numRows();
-    const auto ga = gridArea();
+        auto badgeRect = rect.toNearestInt().reduced (4, 2);
+        g.setColour (selected ? Theme::Colour::inkLight.withAlpha (0.95f) : Theme::Colour::inkGhost.withAlpha (0.85f));
+        g.drawText (SlotPattern::shortLabel (step->noteMode),
+                    badgeRect.removeFromBottom (10),
+                    juce::Justification::bottomLeft,
+                    false);
+        g.drawText (SlotPattern::shortLabel (step->role),
+                    badgeRect.removeFromBottom (10),
+                    juce::Justification::bottomLeft,
+                    false);
 
-    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.6f));
-
-    for (int row = 0; row < nr; ++row)
-    {
-        const int rowY = ga.getY() + row * (sh + kGap);
-
-        for (int beat = 1; beat * 4 < spr; ++beat)
+        if (selected || hovered)
         {
-            const int col = beat * 4;
-            if (col >= n) break;
-            const int lineX = ga.getX() + col * (sw + kGap) - kGap;
-            g.fillRect (lineX, rowY, 1, sh);
+            const auto handle = stepResizeHandleRect (i);
+            g.setColour ((selected || m_hoverStepResizeHandle) ? Theme::Colour::inkLight
+                                                               : Theme::Colour::inkMid.withAlpha (0.9f));
+            g.fillRoundedRectangle (handle, 2.0f);
+            g.setColour (Theme::Colour::inkDark.withAlpha (0.75f));
+            const auto handleInt = handle.toNearestInt();
+            for (int x = handleInt.getX() + 1; x < handleInt.getRight() - 1; x += 2)
+                g.drawVerticalLine (x, (float) handleInt.getY() + 2.0f, (float) handleInt.getBottom() - 2.0f);
         }
+    }
+
+    g.setFont (Theme::Font::micro());
+    g.setColour (Theme::Colour::inkGhost);
+    g.drawText ("phrase steps", lane.removeFromTop (12), juce::Justification::centredLeft, false);
+}
+
+void StepGridSingle::paintDetail (juce::Graphics& g) const
+{
+    auto detail = detailRect();
+    g.setColour (Theme::Colour::surface2);
+    g.fillRect (detail);
+    g.setColour (Theme::Colour::surfaceEdge);
+    g.drawRect (detail, 1);
+
+    const auto* step = selectedStepData();
+    if (step == nullptr)
+        return;
+
+    const float rowH = detail.getHeight() / (float) kPitchRows;
+    for (int row = 0; row < kPitchRows; ++row)
+    {
+        const bool strong = (row == 0 || row == kPitchRows - 1 || valueForRow (row) == 0);
+        g.setColour ((strong ? Theme::Colour::surfaceEdge : Theme::Colour::surface3).withAlpha (0.8f));
+        g.fillRect (detail.getX(), juce::roundToInt ((float) detail.getY() + row * rowH), detail.getWidth(), 1);
+        g.setColour (Theme::Colour::inkGhost.withAlpha (0.7f));
+        g.setFont (Theme::Font::micro());
+        g.drawText (noteValueLabel (valueForRow (row)),
+                    detail.getX() + 2,
+                    juce::roundToInt ((float) detail.getY() + row * rowH),
+                    28,
+                    juce::jmax (10, juce::roundToInt (rowH)),
+                    juce::Justification::centredLeft,
+                    false);
+    }
+
+    for (int div = 1; div < 8; ++div)
+    {
+        const int x = detail.getX() + (detail.getWidth() * div) / 8;
+        g.setColour (Theme::Colour::surfaceEdge.withAlpha (div % 2 == 0 ? 0.65f : 0.35f));
+        g.fillRect (x, detail.getY(), 1, detail.getHeight());
+    }
+
+    for (int i = 0; i < step->microEventCount; ++i)
+    {
+        const auto rect = microEventRect (i);
+        const bool selected = (i == m_selectedEvent);
+        const bool hovered = (i == m_hoverEvent);
+        g.setColour (selected ? m_groupColor.brighter (0.35f)
+                              : hovered ? m_groupColor.brighter (0.18f)
+                                        : m_groupColor);
+        g.fillRoundedRectangle (rect, 3.0f);
+        g.setColour (selected ? Theme::Colour::inkLight
+                              : hovered ? Theme::Colour::inkMid
+                                        : Theme::Colour::surfaceEdge);
+        g.drawRoundedRectangle (rect, 3.0f, selected ? 2.0f : 1.0f);
+        g.setColour (Theme::Colour::inkDark);
+        g.setFont (Theme::Font::micro());
+        const auto& event = step->microEvents[(size_t) i];
+        const int value = event.pitchValue < 0 ? valueForRow (kPitchRows / 2) : event.pitchValue;
+        g.drawText (noteValueLabel (value),
+                    rect.toNearestInt().reduced (3, 1),
+                    juce::Justification::centredLeft,
+                    false);
+    }
+
+    if (step->microEventCount == 0)
+    {
+        g.setColour (Theme::Colour::inkGhost.withAlpha (0.8f));
+        g.setFont (Theme::Font::micro());
+        g.drawText ("click to add note  |  double-click for quick note  |  right-click note for actions",
+                    detail.reduced (32, 18),
+                    juce::Justification::centred,
+                    false);
+    }
+
+    g.setFont (Theme::Font::micro());
+    g.setColour (Theme::Colour::inkGhost);
+    g.drawText ("micro note editor  " + juce::String (SlotPattern::shortLabel (step->noteMode)),
+                detail.removeFromTop (12),
+                juce::Justification::centredLeft,
+                false);
+}
+
+void StepGridSingle::paintControls (juce::Graphics& g) const
+{
+    const auto drawBtn = [&] (juce::Rectangle<int> r, const juce::String& label)
+    {
+        g.setColour (Theme::Colour::surface2);
+        g.fillRect (r);
+        g.setColour (Theme::Colour::surfaceEdge);
+        g.drawRect (r, 1);
+        g.setColour (Theme::Colour::inkLight);
+        g.setFont (Theme::Font::micro());
+        g.drawText (label, r, juce::Justification::centred, false);
+    };
+
+    const auto c = ctrlRect();
+    g.setColour (Theme::Colour::surface1);
+    g.fillRect (c);
+
+    g.setColour (Theme::Colour::inkGhost);
+    g.setFont (Theme::Font::micro());
+    g.drawText ("pattern", c.getX(), c.getY(), c.getWidth(), 12, juce::Justification::centredLeft, false);
+    drawBtn (patternShorterRect(), "shorter");
+    drawBtn (patternLongerRect(), "longer");
+
+    g.drawText ("step", c.getX(), stepShorterRect().getY() - 12, c.getWidth(), 12, juce::Justification::centredLeft, false);
+    drawBtn (stepShorterRect(), "shorter");
+    drawBtn (stepLongerRect(), "longer");
+
+    g.drawText ("containers", c.getX(), addStepRect().getY() - 12, c.getWidth(), 12, juce::Justification::centredLeft, false);
+    drawBtn (addStepRect(), "+ step");
+    drawBtn (removeStepRect(), "- step");
+    drawBtn (modeRect(), selectedStepData() != nullptr ? "mode  " + juce::String (SlotPattern::shortLabel (selectedStepData()->noteMode)) : "mode");
+    drawBtn (roleRect(), selectedStepData() != nullptr ? "role  " + juce::String (SlotPattern::shortLabel (selectedStepData()->role)) : "role");
+
+    if (m_pattern != nullptr)
+    {
+        g.setColour (Theme::Colour::inkMid);
+        g.drawText ("len " + juce::String (m_pattern->patternLength()) + "u",
+                    c.withTrimmedTop (roleRect().getBottom() + 8 - c.getY()).removeFromTop (14),
+                    juce::Justification::centredLeft,
+                    false);
+
+        if (const auto* step = selectedStepData())
+        {
+            g.drawText ("step " + juce::String (m_selectedStep + 1) + " / " + juce::String (m_pattern->activeStepCount()),
+                        c.withTrimmedTop (roleRect().getBottom() + 24 - c.getY()).removeFromTop (14),
+                        juce::Justification::centredLeft,
+                        false);
+            g.drawText ("dur " + juce::String (step->duration) + "u",
+                        c.withTrimmedTop (roleRect().getBottom() + 40 - c.getY()).removeFromTop (14),
+                        juce::Justification::centredLeft,
+                        false);
+            g.drawText ("notes " + juce::String (step->microEventCount),
+                        c.withTrimmedTop (roleRect().getBottom() + 56 - c.getY()).removeFromTop (14),
+                        juce::Justification::centredLeft,
+                        false);
+            g.drawText ("ctx " + juce::String (SlotPattern::shortLabel (step->harmonicSource)),
+                        c.withTrimmedTop (roleRect().getBottom() + 72 - c.getY()).removeFromTop (14),
+                        juce::Justification::centredLeft,
+                        false);
+            g.drawText (m_hasStepClipboard ? "step clip ready" : "no step clip",
+                        c.withTrimmedTop (roleRect().getBottom() + 88 - c.getY()).removeFromTop (14),
+                        juce::Justification::centredLeft,
+                        false);
+        }
+
+        g.setColour (Theme::Colour::inkGhost);
+        g.drawFittedText ("right-click for fast actions. ctrl+c / ctrl+v copies steps. ctrl+d duplicates step. alt+up/down transposes selected step.",
+                          c.withTrimmedTop (roleRect().getBottom() + 108 - c.getY()),
+                          juce::Justification::topLeft,
+                          5);
     }
 }
 
-void StepGridSingle::paintCtrl (juce::Graphics& g) const
+void StepGridSingle::commitChange()
 {
-    // Buttons bar
-    const auto decR = decBtnRect();
-    const auto incR = incBtnRect();
+    if (m_pattern != nullptr)
+        m_pattern->normalizeStepLayout();
 
-    // "-" button
-    g.setColour (Theme::Colour::surface2);
-    g.fillRect  (decR);
-    g.setColour (Theme::Colour::surfaceEdge);
-    g.drawRect  (decR, 1);
-    g.setFont   (Theme::Font::heading());
-    g.setColour (Theme::Colour::inkMid);
-    g.drawText  ("-", decR, juce::Justification::centred, false);
-
-    // "+" button
-    g.setColour (Theme::Colour::surface2);
-    g.fillRect  (incR);
-    g.setColour (Theme::Colour::surfaceEdge);
-    g.drawRect  (incR, 1);
-    g.setFont   (Theme::Font::heading());
-    g.setColour (Theme::Colour::inkMid);
-    g.drawText  ("+", incR, juce::Justification::centred, false);
-
-    // Count label
-    g.setFont   (Theme::Font::value());
-    g.setColour (Theme::Colour::inkLight);
-    g.drawText  ("[" + juce::String (m_pattern->activeStepCount()) + "]",
-                 countLblRect(), juce::Justification::centredTop, false);
-
-    g.setFont   (Theme::Font::micro());
-    g.setColour (Theme::Colour::inkGhost);
-    g.drawText  ("steps",
-                 countLblRect().withTrimmedTop (12), juce::Justification::centredTop, false);
+    ensureSelectionValid();
+    repaint();
+    if (onModified)
+        onModified();
 }
 
-//==============================================================================
-// Mouse
-//==============================================================================
+void StepGridSingle::clearStepContents (int stepIndex)
+{
+    if (m_pattern == nullptr)
+        return;
+
+    auto* step = m_pattern->getStep (stepIndex);
+    if (step == nullptr)
+        return;
+
+    step->microEventCount = 0;
+    step->gateMode = SlotPattern::GateMode::rest;
+    step->accent = false;
+}
+
+void StepGridSingle::duplicateStep (int stepIndex)
+{
+    if (m_pattern == nullptr || ! juce::isPositiveAndBelow (stepIndex, m_pattern->activeStepCount()))
+        return;
+
+    if (m_pattern->activeStepCount() >= SlotPattern::MAX_STEPS)
+        return;
+
+    auto& pat = m_pattern->current();
+    const auto source = pat.steps[(size_t) stepIndex];
+    m_pattern->addStepAfter (stepIndex, source.duration);
+    pat.steps[(size_t) (stepIndex + 1)] = source;
+    m_selectedStep = juce::jmin (stepIndex + 1, m_pattern->activeStepCount() - 1);
+}
+
+void StepGridSingle::splitStep (int stepIndex)
+{
+    if (m_pattern == nullptr)
+        return;
+
+    auto* step = m_pattern->getStep (stepIndex);
+    if (step == nullptr || step->duration < 2 || m_pattern->activeStepCount() >= SlotPattern::MAX_STEPS)
+        return;
+
+    const int firstDuration = juce::jmax (1, step->duration / 2);
+    const int secondDuration = juce::jmax (1, step->duration - firstDuration);
+    const auto original = *step;
+
+    step->duration = firstDuration;
+    m_pattern->addStepAfter (stepIndex, secondDuration);
+
+    auto& pat = m_pattern->current();
+    auto& newStep = pat.steps[(size_t) (stepIndex + 1)];
+    newStep = original;
+    newStep.duration = secondDuration;
+    newStep.microEventCount = 0;
+    newStep.gateMode = SlotPattern::GateMode::rest;
+    m_selectedStep = stepIndex + 1;
+}
+
+void StepGridSingle::joinStepWithNext (int stepIndex)
+{
+    if (m_pattern == nullptr)
+        return;
+
+    auto* step = m_pattern->getStep (stepIndex);
+    auto* next = m_pattern->getStep (stepIndex + 1);
+    if (step == nullptr || next == nullptr)
+        return;
+
+    const int originalCount = step->microEventCount;
+    for (int i = 0; i < next->microEventCount && step->microEventCount < SlotPattern::MAX_MICRO_EVENTS; ++i)
+    {
+        const auto& src = next->microEvents[(size_t) i];
+        const float absoluteUnits = (float) next->duration * src.timeOffset + (float) step->duration;
+        auto& dst = step->microEvents[(size_t) step->microEventCount++];
+        dst = src;
+        dst.timeOffset = juce::jlimit (0.0f,
+                                       0.98f,
+                                       absoluteUnits / (float) juce::jmax (1, step->duration + next->duration));
+    }
+
+    step->duration = juce::jmin (SlotPattern::MAX_STEP_DURATION, step->duration + next->duration);
+    if (originalCount > 0 && next->microEventCount > 0)
+        step->gateMode = SlotPattern::GateMode::tie;
+
+    m_pattern->removeStep (stepIndex + 1);
+    m_selectedStep = juce::jlimit (0, m_pattern->activeStepCount() - 1, stepIndex);
+}
+
+void StepGridSingle::showStepContextMenu (int stepIndex)
+{
+    if (m_pattern == nullptr || ! juce::isPositiveAndBelow (stepIndex, m_pattern->activeStepCount()))
+        return;
+
+    juce::PopupMenu menu;
+    menu.addItem (1, "Delete Step");
+    menu.addItem (2, "Duplicate Step");
+    menu.addItem (3, "Split Step", selectedStepData() != nullptr && selectedStepData()->duration > 1);
+    menu.addItem (4, "Join/Tie With Next", m_pattern->getStep (stepIndex + 1) != nullptr);
+    menu.addItem (8, "Copy Step");
+    menu.addItem (9, "Paste Step", m_hasStepClipboard);
+    menu.addSeparator();
+    menu.addItem (5, "Shorten");
+    menu.addItem (6, "Lengthen");
+    menu.addItem (10, "Transpose Up");
+    menu.addItem (11, "Transpose Down");
+    menu.addSeparator();
+    menu.addItem (7, "Clear Contents");
+    juce::PopupMenu roleMenu;
+    roleMenu.addItem (20, "Bass");
+    roleMenu.addItem (21, "Chord");
+    roleMenu.addItem (22, "Lead");
+    roleMenu.addItem (23, "Fill");
+    roleMenu.addItem (24, "Transition");
+    menu.addSubMenu ("Role", roleMenu);
+
+    juce::PopupMenu modeMenu;
+    modeMenu.addItem (30, "Absolute");
+    modeMenu.addItem (31, "Degree");
+    modeMenu.addItem (32, "Chord Tone");
+    modeMenu.addItem (33, "Interval");
+    menu.addSubMenu ("Note Mode", modeMenu);
+
+    juce::Component::SafePointer<StepGridSingle> safeThis (this);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                        [safeThis, stepIndex] (int result)
+                        {
+                            if (safeThis == nullptr || safeThis->m_pattern == nullptr || result == 0)
+                                return;
+
+                            safeThis->m_selectedStep = stepIndex;
+                            switch (result)
+                            {
+                                case 1: safeThis->m_pattern->removeStep (stepIndex); break;
+                                case 2: safeThis->duplicateStep (stepIndex); break;
+                                case 3: safeThis->splitStep (stepIndex); break;
+                                case 4: safeThis->joinStepWithNext (stepIndex); break;
+                                case 5:
+                                    if (const auto* step = safeThis->m_pattern->getStep (stepIndex))
+                                        safeThis->m_pattern->setStepDuration (stepIndex, step->duration - 1);
+                                    break;
+                                case 6:
+                                    if (const auto* step = safeThis->m_pattern->getStep (stepIndex))
+                                        safeThis->m_pattern->setStepDuration (stepIndex, step->duration + 1);
+                                    break;
+                                case 7: safeThis->clearStepContents (stepIndex); break;
+                                case 8: safeThis->copySelectedStep(); return;
+                                case 9: safeThis->pasteStepToSelection(); return;
+                                case 10: safeThis->transposeSelectedStepContents (1); return;
+                                case 11: safeThis->transposeSelectedStepContents (-1); return;
+                                case 20: safeThis->selectedStepData()->role = SlotPattern::StepRole::bass; break;
+                                case 21: safeThis->selectedStepData()->role = SlotPattern::StepRole::chord; break;
+                                case 22: safeThis->selectedStepData()->role = SlotPattern::StepRole::lead; break;
+                                case 23: safeThis->selectedStepData()->role = SlotPattern::StepRole::fill; break;
+                                case 24: safeThis->selectedStepData()->role = SlotPattern::StepRole::transition; break;
+                                case 30: safeThis->selectedStepData()->noteMode = SlotPattern::NoteMode::absolute; break;
+                                case 31: safeThis->selectedStepData()->noteMode = SlotPattern::NoteMode::degree; break;
+                                case 32: safeThis->selectedStepData()->noteMode = SlotPattern::NoteMode::chordTone; break;
+                                case 33: safeThis->selectedStepData()->noteMode = SlotPattern::NoteMode::interval; break;
+                                default: break;
+                            }
+
+                            safeThis->commitChange();
+                        });
+}
+
+void StepGridSingle::showNoteContextMenu (int eventIndex)
+{
+    if (m_pattern == nullptr || eventIndex < 0)
+        return;
+
+    juce::PopupMenu menu;
+    menu.addItem (1, "Delete Note");
+    menu.addItem (2, "Duplicate Note");
+    menu.addItem (3, "Nudge Left");
+    menu.addItem (4, "Nudge Right");
+    menu.addItem (5, "Shorten");
+    menu.addItem (6, "Lengthen");
+    menu.addItem (7, "Velocity +10");
+    menu.addItem (8, "Velocity -10");
+
+    juce::Component::SafePointer<StepGridSingle> safeThis (this);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                        [safeThis, eventIndex] (int result)
+                        {
+                            if (safeThis == nullptr || safeThis->m_pattern == nullptr || result == 0)
+                                return;
+
+                            safeThis->m_selectedEvent = eventIndex;
+                            switch (result)
+                            {
+                                case 1:
+                                    safeThis->m_pattern->removeMicroEvent (safeThis->m_selectedStep, eventIndex);
+                                    safeThis->m_selectedEvent = -1;
+                                    safeThis->commitChange();
+                                    return;
+                                case 2: safeThis->duplicateNote (eventIndex); break;
+                                case 3: safeThis->nudgeSelectedEvent (-0.03125f); return;
+                                case 4: safeThis->nudgeSelectedEvent (0.03125f); return;
+                                case 5: safeThis->adjustSelectedEventLength (-0.05f); return;
+                                case 6: safeThis->adjustSelectedEventLength (0.05f); return;
+                                case 7: safeThis->adjustSelectedEventVelocity (10); return;
+                                case 8: safeThis->adjustSelectedEventVelocity (-10); return;
+                                default: return;
+                            }
+
+                            safeThis->commitChange();
+                        });
+}
+
+void StepGridSingle::showModeMenu()
+{
+    if (selectedStepData() == nullptr)
+        return;
+
+    juce::PopupMenu menu;
+    menu.addItem (1, "Absolute");
+    menu.addItem (2, "Degree");
+    menu.addItem (3, "Chord Tone");
+    menu.addItem (4, "Interval");
+
+    juce::Component::SafePointer<StepGridSingle> safeThis (this);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                        [safeThis] (int result)
+                        {
+                            if (safeThis == nullptr || safeThis->m_pattern == nullptr || result == 0)
+                                return;
+
+                            if (auto* step = safeThis->selectedStepData())
+                            {
+                                step->noteMode = static_cast<SlotPattern::NoteMode> (result - 1);
+                                step->harmonicSource = step->noteMode == SlotPattern::NoteMode::chordTone
+                                                     ? SlotPattern::HarmonicSource::chord
+                                                     : SlotPattern::HarmonicSource::key;
+                                safeThis->commitChange();
+                            }
+                        });
+}
+
+void StepGridSingle::showRoleMenu()
+{
+    if (selectedStepData() == nullptr)
+        return;
+
+    juce::PopupMenu menu;
+    menu.addItem (1, "Bass");
+    menu.addItem (2, "Chord");
+    menu.addItem (3, "Lead");
+    menu.addItem (4, "Fill");
+    menu.addItem (5, "Transition");
+
+    juce::Component::SafePointer<StepGridSingle> safeThis (this);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                        [safeThis] (int result)
+                        {
+                            if (safeThis == nullptr || safeThis->m_pattern == nullptr || result == 0)
+                                return;
+
+                            if (auto* step = safeThis->selectedStepData())
+                            {
+                                step->role = static_cast<SlotPattern::StepRole> (result - 1);
+                                safeThis->commitChange();
+                            }
+                        });
+}
+
+void StepGridSingle::deleteSelection()
+{
+    if (m_pattern == nullptr)
+        return;
+
+    if (m_selectedEvent >= 0)
+    {
+        m_pattern->removeMicroEvent (m_selectedStep, m_selectedEvent);
+        m_selectedEvent = -1;
+        commitChange();
+        return;
+    }
+
+    clearStepContents (m_selectedStep);
+    commitChange();
+}
+
+void StepGridSingle::copySelectedStep()
+{
+    if (const auto* step = selectedStepData())
+    {
+        m_stepClipboard = *step;
+        m_hasStepClipboard = true;
+        repaint();
+    }
+}
+
+void StepGridSingle::pasteStepToSelection()
+{
+    auto* step = selectedStepData();
+    if (step == nullptr || ! m_hasStepClipboard)
+        return;
+
+    const int preservedStart = step->start;
+    const int preservedDuration = step->duration;
+    *step = m_stepClipboard;
+    step->start = preservedStart;
+    step->duration = preservedDuration;
+    commitChange();
+}
+
+void StepGridSingle::duplicateNote (int eventIndex)
+{
+    auto* step = selectedStepData();
+    if (step == nullptr || ! juce::isPositiveAndBelow (eventIndex, step->microEventCount)
+        || step->microEventCount >= SlotPattern::MAX_MICRO_EVENTS)
+        return;
+
+    const auto src = step->microEvents[(size_t) eventIndex];
+    const int newIndex = m_pattern->addMicroEvent (m_selectedStep,
+                                                   juce::jlimit (0.0f, 0.98f, src.timeOffset + 0.06f),
+                                                   src.length,
+                                                   src.pitchValue,
+                                                   src.velocity);
+    if (newIndex >= 0)
+        m_selectedEvent = newIndex;
+}
+
+void StepGridSingle::transposeSelectedStepContents (int semitones)
+{
+    auto* step = selectedStepData();
+    if (step == nullptr)
+        return;
+
+    for (int i = 0; i < step->microEventCount; ++i)
+    {
+        auto& event = step->microEvents[(size_t) i];
+        if (step->noteMode == SlotPattern::NoteMode::absolute)
+            event.pitchValue = juce::jlimit (0, 127, event.pitchValue + semitones);
+        else
+            event.pitchValue = juce::jlimit (SlotPattern::kMinTheoryValue, SlotPattern::kMaxTheoryValue, event.pitchValue + semitones);
+    }
+
+    commitChange();
+}
+
+void StepGridSingle::nudgeSelectedEvent (float delta)
+{
+    auto* step = selectedStepData();
+    if (step == nullptr || ! juce::isPositiveAndBelow (m_selectedEvent, step->microEventCount))
+        return;
+
+    auto& event = step->microEvents[(size_t) m_selectedEvent];
+    event.timeOffset = juce::jlimit (0.0f, 0.98f, event.timeOffset + delta);
+    commitChange();
+}
+
+void StepGridSingle::adjustSelectedEventLength (float delta)
+{
+    auto* step = selectedStepData();
+    if (step == nullptr || ! juce::isPositiveAndBelow (m_selectedEvent, step->microEventCount))
+        return;
+
+    auto& event = step->microEvents[(size_t) m_selectedEvent];
+    event.length = juce::jlimit (0.05f, 1.0f, event.length + delta);
+    commitChange();
+}
+
+void StepGridSingle::adjustSelectedEventVelocity (int delta)
+{
+    auto* step = selectedStepData();
+    if (step == nullptr || ! juce::isPositiveAndBelow (m_selectedEvent, step->microEventCount))
+        return;
+
+    auto& event = step->microEvents[(size_t) m_selectedEvent];
+    event.velocity = (uint8_t) juce::jlimit (1, 127, (int) event.velocity + delta);
+    commitChange();
+}
+
+void StepGridSingle::updateHoverState (juce::Point<int> pos)
+{
+    const int oldHoverStep = m_hoverStep;
+    const int oldHoverEvent = m_hoverEvent;
+    const bool oldHoverHandle = m_hoverStepResizeHandle;
+
+    m_hoverStep = stepAt (pos);
+    m_hoverEvent = microEventAt (pos);
+    m_hoverStepResizeHandle = m_hoverStep >= 0 && stepResizeHandleRect (m_hoverStep).contains ((float) pos.x, (float) pos.y);
+
+    if (oldHoverStep != m_hoverStep || oldHoverEvent != m_hoverEvent || oldHoverHandle != m_hoverStepResizeHandle)
+        repaint();
+}
+
+void StepGridSingle::mouseMove (const juce::MouseEvent& e)
+{
+    updateHoverState (e.getPosition());
+}
 
 void StepGridSingle::mouseDown (const juce::MouseEvent& e)
 {
+    if (m_pattern == nullptr)
+        return;
+
+    grabKeyboardFocus();
+    ensureSelectionValid();
     const auto pos = e.getPosition();
+    updateHoverState (pos);
 
-    // Step count buttons
-    if (m_pattern != nullptr)
+    if (patternShorterRect().contains (pos))
     {
-        if (decBtnRect().contains (pos))
-        {
-            m_pattern->setStepCount (m_pattern->activeStepCount() - 1);
-            repaint();
-            if (onModified) onModified();
-            return;
-        }
-        if (incBtnRect().contains (pos))
-        {
-            m_pattern->setStepCount (m_pattern->activeStepCount() + 1);
-            repaint();
-            if (onModified) onModified();
-            return;
-        }
+        m_pattern->setPatternLength (m_pattern->patternLength() - 1);
+        commitChange();
+        return;
     }
 
-    // Step toggle
-    const int idx = stepAtPos (pos);
-    if (idx >= 0 && m_pattern != nullptr)
+    if (patternLongerRect().contains (pos))
     {
-        m_paintMode       = !m_pattern->stepActive (idx);
-        m_lastPaintedStep = idx;
-        m_pattern->toggleStep (idx);
+        m_pattern->setPatternLength (m_pattern->patternLength() + 1);
+        commitChange();
+        return;
+    }
+
+    if (stepShorterRect().contains (pos))
+    {
+        if (const auto* step = selectedStepData())
+            m_pattern->setStepDuration (m_selectedStep, step->duration - 1);
+        commitChange();
+        return;
+    }
+
+    if (stepLongerRect().contains (pos))
+    {
+        if (const auto* step = selectedStepData())
+            m_pattern->setStepDuration (m_selectedStep, step->duration + 1);
+        commitChange();
+        return;
+    }
+
+    if (addStepRect().contains (pos))
+    {
+        const int duration = selectedStepData() != nullptr ? selectedStepData()->duration : 1;
+        m_pattern->addStepAfter (m_selectedStep, duration);
+        m_selectedStep = juce::jmin (m_selectedStep + 1, m_pattern->activeStepCount() - 1);
+        commitChange();
+        return;
+    }
+
+    if (removeStepRect().contains (pos))
+    {
+        m_pattern->removeStep (m_selectedStep);
+        m_selectedStep = juce::jlimit (0, m_pattern->activeStepCount() - 1, m_selectedStep);
+        commitChange();
+        return;
+    }
+
+    if (modeRect().contains (pos))
+    {
+        showModeMenu();
+        return;
+    }
+
+    if (roleRect().contains (pos))
+    {
+        showRoleMenu();
+        return;
+    }
+
+    const int laneStep = stepAt (pos);
+    if (laneStep >= 0)
+    {
+        m_selectedStep = laneStep;
+        m_selectedEvent = -1;
+        ensureSelectionValid();
+
+        if (e.mods.isRightButtonDown())
+        {
+            showStepContextMenu (laneStep);
+            repaint();
+            return;
+        }
+
+        if (stepResizeHandleRect (laneStep).contains ((float) pos.x, (float) pos.y))
+        {
+            m_dragMode = DragMode::resizeStep;
+            m_dragStartPos = pos;
+            m_dragStepDurationStart = selectedStepData() != nullptr ? selectedStepData()->duration : 1;
+            repaint();
+            return;
+        }
+
         repaint();
-        if (onModified) onModified();
+        return;
     }
+
+    if (! detailRect().contains (pos))
+        return;
+
+    auto* step = selectedStepData();
+    if (step == nullptr)
+        return;
+
+    const int hitEvent = microEventAt (pos);
+    if (hitEvent >= 0)
+    {
+        m_selectedEvent = hitEvent;
+        if (e.mods.isRightButtonDown())
+        {
+            showNoteContextMenu (hitEvent);
+            return;
+        }
+
+        const auto rect = microEventRect (hitEvent);
+        m_dragMode = std::abs (pos.x - juce::roundToInt (rect.getRight())) <= 6 ? DragMode::resizeEvent
+                                                                                 : DragMode::moveEvent;
+        m_dragStartPos = pos;
+        m_dragEventOffsetStart = step->microEvents[(size_t) hitEvent].timeOffset;
+        m_dragEventLengthStart = step->microEvents[(size_t) hitEvent].length;
+        m_dragEventPitchStart = step->microEvents[(size_t) hitEvent].pitchValue < 0 ? valueForRow (kPitchRows / 2)
+                                                                                     : step->microEvents[(size_t) hitEvent].pitchValue;
+        repaint();
+        return;
+    }
+
+    const int pitch = pitchFromDetailY (pos.y);
+    m_selectedEvent = m_pattern->addMicroEvent (m_selectedStep,
+                                                normalizedTimeFromDetailX (pos.x),
+                                                0.18f,
+                                                pitch,
+                                                100);
+    m_dragMode = DragMode::moveEvent;
+    m_dragStartPos = pos;
+    m_dragEventOffsetStart = normalizedTimeFromDetailX (pos.x);
+    m_dragEventLengthStart = 0.18f;
+    m_dragEventPitchStart = pitch;
+    commitChange();
 }
 
 void StepGridSingle::mouseDrag (const juce::MouseEvent& e)
 {
-    if (m_pattern == nullptr) return;
-    const int idx = stepAtPos (e.getPosition());
-    if (idx >= 0 && idx != m_lastPaintedStep)
+    if (m_pattern == nullptr || m_dragMode == DragMode::none)
+        return;
+
+    const int dx = e.getPosition().x - m_dragStartPos.x;
+    const int dy = e.getPosition().y - m_dragStartPos.y;
+    const float deltaNorm = detailRect().getWidth() > 1 ? (float) dx / (float) detailRect().getWidth() : 0.0f;
+
+    if (m_dragMode == DragMode::resizeStep)
     {
-        m_lastPaintedStep = idx;
-        if (m_pattern->stepActive (idx) != m_paintMode)
-        {
-            m_pattern->toggleStep (idx);
-            repaint();
-            if (onModified) onModified();
-        }
+        const auto lane = stepLaneRect();
+        const auto* selectedStep = selectedStepData();
+        if (selectedStep == nullptr || lane.getWidth() <= 0)
+            return;
+
+        const float unitsPerPixel = (float) juce::jmax (1, m_pattern->patternLength()) / (float) lane.getWidth();
+        const int deltaUnits = juce::roundToInt ((float) dx * unitsPerPixel);
+        m_pattern->setStepDuration (m_selectedStep, m_dragStepDurationStart + deltaUnits);
+        commitChange();
+        return;
     }
+
+    auto* step = selectedStepData();
+    if (step == nullptr || ! juce::isPositiveAndBelow (m_selectedEvent, step->microEventCount))
+        return;
+
+    float offset = m_dragEventOffsetStart;
+    float length = m_dragEventLengthStart;
+    int pitch = m_dragEventPitchStart;
+
+    if (m_dragMode == DragMode::moveEvent)
+    {
+        offset = juce::jlimit (0.0f, 0.98f, m_dragEventOffsetStart + deltaNorm);
+        pitch = juce::jlimit (0, 127, m_dragEventPitchStart - (int) std::round ((float) dy / (detailRect().getHeight() / (float) kPitchRows)));
+    }
+    else if (m_dragMode == DragMode::resizeEvent)
+    {
+        length = juce::jlimit (0.05f, 1.0f, m_dragEventLengthStart + deltaNorm);
+    }
+
+    m_pattern->updateMicroEvent (m_selectedStep, m_selectedEvent, offset, length, pitch, step->microEvents[(size_t) m_selectedEvent].velocity);
+    commitChange();
 }
 
 void StepGridSingle::mouseUp (const juce::MouseEvent&)
 {
-    m_lastPaintedStep = -1;
+    m_dragMode = DragMode::none;
+}
+
+void StepGridSingle::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (m_pattern == nullptr)
+        return;
+
+    grabKeyboardFocus();
+    const auto pos = e.getPosition();
+    const int hitEvent = microEventAt (pos);
+
+    if (hitEvent >= 0)
+    {
+        m_selectedEvent = hitEvent;
+        duplicateNote (hitEvent);
+        commitChange();
+        return;
+    }
+
+    const int laneStep = stepAt (pos);
+    if (laneStep >= 0)
+    {
+        m_selectedStep = laneStep;
+        const auto* step = selectedStepData();
+        if (step != nullptr && step->microEventCount > 0)
+        {
+            m_selectedEvent = 0;
+            repaint();
+        }
+        else
+        {
+            m_selectedEvent = m_pattern->addMicroEvent (m_selectedStep, 0.15f, 0.22f, valueForRow (kPitchRows / 2), 108);
+            commitChange();
+        }
+        return;
+    }
+
+    if (detailRect().contains (pos))
+    {
+        m_selectedEvent = m_pattern->addMicroEvent (m_selectedStep,
+                                                    normalizedTimeFromDetailX (pos.x),
+                                                    0.24f,
+                                                    pitchFromDetailY (pos.y),
+                                                    110);
+        commitChange();
+    }
+}
+
+bool StepGridSingle::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
+    {
+        deleteSelection();
+        return true;
+    }
+
+    if (key.getModifiers().isCommandDown() && key.getTextCharacter() == 'c')
+    {
+        copySelectedStep();
+        return true;
+    }
+
+    if (key.getModifiers().isCommandDown() && key.getTextCharacter() == 'v')
+    {
+        pasteStepToSelection();
+        return true;
+    }
+
+    if (key.getModifiers().isCommandDown() && key.getTextCharacter() == 'd')
+    {
+        duplicateStep (m_selectedStep);
+        commitChange();
+        return true;
+    }
+
+    if (key.getModifiers().isAltDown() && key.getKeyCode() == juce::KeyPress::upKey)
+    {
+        transposeSelectedStepContents (1);
+        return true;
+    }
+
+    if (key.getModifiers().isAltDown() && key.getKeyCode() == juce::KeyPress::downKey)
+    {
+        transposeSelectedStepContents (-1);
+        return true;
+    }
+
+    if (key.getKeyCode() == juce::KeyPress::leftKey)
+    {
+        nudgeSelectedEvent (-0.03125f);
+        return true;
+    }
+
+    if (key.getKeyCode() == juce::KeyPress::rightKey)
+    {
+        nudgeSelectedEvent (0.03125f);
+        return true;
+    }
+
+    return false;
 }
 
 juce::MouseCursor StepGridSingle::getMouseCursor()
 {
+    if (m_hoverStepResizeHandle)
+        return juce::MouseCursor::LeftRightResizeCursor;
     return juce::MouseCursor::CrosshairCursor;
 }

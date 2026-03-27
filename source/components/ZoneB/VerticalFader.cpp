@@ -446,6 +446,13 @@ void VerticalFader::showContextMenu()
     menu.addItem (40, m_status == Status::bypassed ? "Un-bypass parameter"
                                                    : "Bypass parameter");
 
+    // Extra items injected by the parent (e.g. FaceplatePanel slot assignment)
+    if (onBuildExtraMenuItems)
+    {
+        menu.addSeparator();
+        onBuildExtraMenuItems (menu);
+    }
+
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
         [this] (int result)
         {
@@ -473,6 +480,10 @@ void VerticalFader::showContextMenu()
                                                 "Filter Envelope", "Amp Envelope" };
                         setStatus (Status::modulated);
                         setStatusLabel (names[result - 200]);
+                    }
+                    else if (result >= kExtraMenuBase && onExtraMenuItemSelected)
+                    {
+                        onExtraMenuItemSelected (result);
                     }
                     break;
             }

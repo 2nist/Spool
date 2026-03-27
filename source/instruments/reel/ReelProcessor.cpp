@@ -130,13 +130,13 @@ void ReelProcessor::setMode (ReelMode mode)
 }
 
 //==============================================================================
-void ReelProcessor::setParam (const juce::String& paramId, float value)
+void ReelProcessor::setParam (juce::StringRef paramId, float value) noexcept
 {
     m_params.setFloat (paramId, value);
     // syncParams() called at next process() block start
 }
 
-float ReelProcessor::getParam (const juce::String& paramId) const noexcept
+float ReelProcessor::getParam (juce::StringRef paramId) const noexcept
 {
     return m_params.getFloat (paramId);
 }
@@ -209,14 +209,14 @@ void ReelProcessor::getState (juce::MemoryBlock& destData) const
     s.writeFloat (m_params.out.pan);
 }
 
-void ReelProcessor::setState (const void* data, int sizeInBytes)
+bool ReelProcessor::setState (const void* data, int sizeInBytes)
 {
     if (data == nullptr || sizeInBytes < 8)
-        return;
+        return false;
 
     juce::MemoryInputStream s (data, static_cast<size_t> (sizeInBytes), false);
-    if (static_cast<uint32_t> (s.readInt()) != kReelStateMagic)   return;
-    if (static_cast<uint32_t> (s.readInt()) != kReelStateVersion)  return;
+    if (static_cast<uint32_t> (s.readInt()) != kReelStateMagic)   return false;
+    if (static_cast<uint32_t> (s.readInt()) != kReelStateVersion)  return false;
 
     m_params.mode               = static_cast<ReelMode> (s.readInt());
     m_params.play.start         = s.readFloat();
@@ -243,4 +243,5 @@ void ReelProcessor::setState (const void* data, int sizeInBytes)
     m_params.out.pan            = s.readFloat();
 
     syncParams();
+    return true;
 }

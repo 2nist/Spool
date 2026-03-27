@@ -1,4 +1,5 @@
 #include "ModuleRow.h"
+#include "FaceplatePanel.h"
 #include "../../instruments/reel/ReelParams.h"
 
 //==============================================================================
@@ -20,13 +21,27 @@ void ModuleRow::setModuleType (ModuleType type)
     if (type == ModuleType::DrumMachine)
     {
         m_drumData = std::make_unique<DrumMachineData>();
-        m_drumData->initDefaults();
+        *m_drumData = DrumMachineData::makeDefault();
     }
     else
     {
         m_drumData.reset();
     }
 
+    repaint();
+}
+
+void ModuleRow::setDrumData (const DrumMachineData& data)
+{
+    if (m_type != ModuleType::DrumMachine)
+        return;
+
+    if (!m_drumData)
+        m_drumData = std::make_unique<DrumMachineData>();
+
+    *m_drumData = data;
+    if (m_drumData)
+        m_drumData->clamp();
     repaint();
 }
 
@@ -45,6 +60,8 @@ void ModuleRow::setMuted (bool muted)
 void ModuleRow::setGroupColor (juce::Colour c)
 {
     m_groupColor = c;
+    if (m_faceplate)
+        m_faceplate->setGroupColor (c);
     repaint();
 }
 
@@ -109,33 +126,19 @@ void ModuleRow::initParams()
     switch (m_type)
     {
         case ModuleType::Synth:
-            // Row 1: OSC · FILTER  (9 params)
-            m_params.add ({ "OSC1",  0.0f,   3.0f,  0.0f });   // wave shape 0=sin 1=saw 2=sq 3=tri
-            m_params.add ({ "DET1", -50.0f,  50.0f, 0.0f });   // osc1 detune (cents)
-            m_params.add ({ "OSC2",  0.0f,   3.0f,  1.0f });   // wave shape
-            m_params.add ({ "DET2", -50.0f,  50.0f, 0.0f });   // osc2 detune
-            m_params.add ({ "OCT2", -2.0f,   2.0f,  0.0f });   // osc2 octave offset
-            m_params.add ({ "MIX2",  0.0f,   1.0f,  0.5f });   // osc2 level
-            m_params.add ({ "CUT",  20.0f, 20000.0f, 1200.0f });// filter cutoff
-            m_params.add ({ "RES",   0.0f,   1.0f,  0.3f });   // filter resonance
-            m_params.add ({ "ENVA", -1.0f,   1.0f,  0.5f });   // filter env amount
-
-            m_paramRow2Start = m_params.size();                 // = 9
-
-            // Row 2: AMP ENV · FILT ENV · LFO  (10 params)
-            m_params.add ({ "ATK",   0.0f,   2.0f,  0.01f });  // amp attack  (s)
-            m_params.add ({ "DEC",   0.0f,   2.0f,  0.1f  });  // amp decay
-            m_params.add ({ "SUS",   0.0f,   1.0f,  0.7f  });  // amp sustain
-            m_params.add ({ "REL",   0.0f,   3.0f,  0.3f  });  // amp release
-            m_params.add ({ "FATK",  0.0f,   2.0f,  0.01f });  // filt attack
-            m_params.add ({ "FDEC",  0.0f,   2.0f,  0.2f  });  // filt decay
-            m_params.add ({ "FSUS",  0.0f,   1.0f,  0.5f  });  // filt sustain
-            m_params.add ({ "FREL",  0.0f,   3.0f,  0.2f  });  // filt release
-            m_params.add ({ "LFRT",  0.1f,  20.0f,  1.0f  });  // LFO rate (Hz)
-            m_params.add ({ "LFDP",  0.0f,   1.0f,  0.0f  });  // LFO depth
-
-            m_row1Label = "OSC \xc2\xb7 FILTER";
-            m_row2Label = "AMP ENV \xc2\xb7 FILT ENV \xc2\xb7 LFO";
+            // Curated 8-control performance surface.
+            // Full synthesis editing lives in Zone A (PolySynthEditorComponent).
+            // Defaults mirror PolySynthProcessor initial values.
+            m_params.add ({ "CUT",  20.0f, 20000.0f, 4000.0f });  // filter cutoff (Hz)
+            m_params.add ({ "RES",   0.0f,    1.0f,    0.3f  });  // resonance
+            m_params.add ({ "ENVA", -1.0f,    1.0f,    0.5f  });  // filter env amount
+            m_params.add ({ "DET2", -50.0f,  50.0f,    7.0f  });  // osc2 detune (cents)
+            m_params.add ({ "MIX2",  0.0f,    1.0f,    0.7f  });  // osc2 level
+            m_params.add ({ "ATK",   0.0f,    2.0f,    0.01f });  // amp attack (s)
+            m_params.add ({ "REL",   0.0f,    3.0f,    0.3f  });  // amp release (s)
+            m_params.add ({ "LFDP",  0.0f,    1.0f,    0.0f  });  // LFO depth
+            // m_paramRow2Start stays -1 (single fader row)
+            m_row1Label = "FILTER \xc2\xb7 OSC \xc2\xb7 ENV \xc2\xb7 LFO";
             m_inPorts  = {};
             m_outPorts = { "AUDIO" };
             break;
@@ -364,11 +367,48 @@ VerticalFader::FormatFn ModuleRow::makeFormatter (const InlineEditor::Param& p)
 
 void ModuleRow::initFaders()
 {
-    // Remove old faders from this component
-    for (auto* f : m_faders)
-        removeChildComponent (f);
+    // ---- Tear down any previous state ----
+    for (auto* f : m_faders)  removeChildComponent (f);
     m_faders.clear();
+    if (m_faceplate)          removeChildComponent (m_faceplate.get());
+    m_faceplate.reset();
 
+    // ---- SYNTH and DRUM use the assignable FaceplatePanel ----
+    if (m_type == ModuleType::Synth || m_type == ModuleType::DrumMachine)
+    {
+        m_faceplate = std::make_unique<FaceplatePanel>();
+        m_faceplate->setGroupColor (m_groupColor);
+
+        if (m_type == ModuleType::Synth)
+        {
+            m_faceplate->setSlots (
+                QuickFaceplateDefaults::synthSliders(),
+                QuickFaceplateDefaults::synthKnobs(),
+                QuickFaceplateDefaults::synthButtons(),
+                QuickFaceplateDefaults::synthAvailable(),
+                "FILTER \xc2\xb7 OSC \xc2\xb7 ENV \xc2\xb7 LFO");
+        }
+        else // DrumMachine
+        {
+            m_faceplate->setSlots (
+                QuickFaceplateDefaults::drumSliders(),
+                QuickFaceplateDefaults::drumKnobs(),
+                QuickFaceplateDefaults::drumButtons(),
+                QuickFaceplateDefaults::drumAvailable(),
+                "KICK \xc2\xb7 SNARE \xc2\xb7 HAT \xc2\xb7 PERC");
+        }
+
+        m_faceplate->onControlChanged = [this] (const juce::String& paramId, float value)
+        {
+            if (onFaceplateChanged) onFaceplateChanged (paramId, value);
+        };
+
+        addAndMakeVisible (*m_faceplate);
+        resized();
+        return;
+    }
+
+    // ---- All other types use the legacy VerticalFader row ----
     for (int i = 0; i < m_params.size(); ++i)
     {
         const auto& p     = m_params[i];
@@ -524,6 +564,9 @@ void ModuleRow::paintHeader (juce::Graphics& g) const
 
 void ModuleRow::paintParamArea (juce::Graphics& g) const
 {
+    // FaceplatePanel paints itself — skip all param-area painting.
+    if (m_faceplate) return;
+
     const auto area = paramAreaRect();
 
     // Background
@@ -588,6 +631,13 @@ void ModuleRow::paintEmptyHint (juce::Graphics& g) const
 
 void ModuleRow::resized()
 {
+    // FaceplatePanel fills the entire param area and handles its own layout.
+    if (m_faceplate)
+    {
+        m_faceplate->setBounds (paramAreaRect());
+        return;
+    }
+
     if (m_faders.isEmpty())
         return;
 

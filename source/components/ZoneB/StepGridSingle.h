@@ -4,14 +4,10 @@
 
 //==============================================================================
 /**
-    StepGridSingle — step grid for one focused slot.
+    StepGridSingle — hybrid step sequencer editor for one focused slot.
 
-    Shows only the active step count (1–64 steps).
-    Two rows when stepCount > 16; three rows when > 32 (with inner scroll).
-
-    Step count control [N] − + on the right side.
-    Beat group dividers every 4 steps.
-    Click / drag to toggle steps.
+    Top: variable-length step containers.
+    Bottom: compact micro piano-roll for the selected step.
 */
 class StepGridSingle : public juce::Component
 {
@@ -19,60 +15,110 @@ public:
     StepGridSingle();
     ~StepGridSingle() override = default;
 
-    /** Attach to a slot pattern.  Pointer must remain valid while displayed. */
     void setPattern   (SlotPattern* pattern, juce::Colour groupColor);
     void clearPattern ();
-
-    /** Advance playhead (−1 = none). */
     void setPlayhead  (int stepIndex);
 
-    /** Fired after any step is toggled or step count changes.
-        ZoneBComponent sets this to sync the pattern to the processor. */
     std::function<void()> onModified;
 
-    void paint    (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;
-    void mouseDrag (const juce::MouseEvent&) override;
-    void mouseUp   (const juce::MouseEvent&) override;
+    void paint      (juce::Graphics&) override;
+    void mouseMove  (const juce::MouseEvent&) override;
+    void mouseDown  (const juce::MouseEvent&) override;
+    void mouseDrag  (const juce::MouseEvent&) override;
+    void mouseUp    (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    bool keyPressed (const juce::KeyPress&) override;
     juce::MouseCursor getMouseCursor() override;
 
-    static constexpr int kHeight = 80;
+    static constexpr int kHeight = 176;
 
 private:
     SlotPattern* m_pattern    { nullptr };
     juce::Colour m_groupColor { 0xFF4B9EDB };
     int          m_playhead   { -1 };
+    int          m_selectedStep { 0 };
+    int          m_selectedEvent { -1 };
+    int          m_pitchBase { 48 };
+    SlotPattern::Step m_stepClipboard;
+    bool         m_hasStepClipboard { false };
 
-    bool m_paintMode       { false };
-    int  m_lastPaintedStep { -1 };
+    enum class DragMode
+    {
+        none = 0,
+        resizeStep,
+        moveEvent,
+        resizeEvent
+    };
 
-    // Layout constants
-    static constexpr int kPad      = 6;   // outer padding
-    static constexpr int kGap      = 3;   // between steps
-    static constexpr int kCtrlW    = 60;  // right-hand step count controls width
-    static constexpr int kBtnW     = 16;  // square buttons
-    static constexpr int kBtnH     = 16;
+    DragMode m_dragMode { DragMode::none };
+    int      m_hoverStep { -1 };
+    int      m_hoverEvent { -1 };
+    bool     m_hoverStepResizeHandle { false };
+    float    m_dragEventOffsetStart { 0.0f };
+    float    m_dragEventLengthStart { 0.0f };
+    int      m_dragEventPitchStart  { 60 };
+    int      m_dragStepDurationStart { 1 };
+    juce::Point<int> m_dragStartPos;
 
-    /** Rows needed for given step count. */
-    int  numRows()         const noexcept;
-    int  stepsPerRow()     const noexcept;
-    int  stepW()           const noexcept;
-    int  stepH()           const noexcept;
+    static constexpr int kPad       = 6;
+    static constexpr int kGap       = 4;
+    static constexpr int kCtrlW     = 128;
+    static constexpr int kBtnH      = 18;
+    static constexpr int kBtnGap    = 4;
+    static constexpr int kLaneH     = 42;
+    static constexpr int kPitchRows = 12;
 
-    /** Available rect for the step grid (excluding control area). */
-    juce::Rectangle<int> gridArea()      const noexcept;
-    /** Right-side step count control area. */
-    juce::Rectangle<int> ctrlArea()      const noexcept;
-    juce::Rectangle<int> decBtnRect()    const noexcept;
-    juce::Rectangle<int> incBtnRect()    const noexcept;
-    juce::Rectangle<int> countLblRect()  const noexcept;
+    juce::Rectangle<int> stepLaneRect() const noexcept;
+    juce::Rectangle<int> detailRect() const noexcept;
+    juce::Rectangle<int> ctrlRect() const noexcept;
 
-    juce::Rectangle<int> stepRect        (int stepIndex) const noexcept;
-    int                  stepAtPos       (juce::Point<int> pos) const noexcept;
+    juce::Rectangle<int> patternShorterRect() const noexcept;
+    juce::Rectangle<int> patternLongerRect() const noexcept;
+    juce::Rectangle<int> stepShorterRect() const noexcept;
+    juce::Rectangle<int> stepLongerRect() const noexcept;
+    juce::Rectangle<int> addStepRect() const noexcept;
+    juce::Rectangle<int> removeStepRect() const noexcept;
+    juce::Rectangle<int> modeRect() const noexcept;
+    juce::Rectangle<int> roleRect() const noexcept;
+    juce::Rectangle<float> stepResizeHandleRect (int stepIndex) const noexcept;
 
-    void paintGrid      (juce::Graphics& g) const;
-    void paintDividers  (juce::Graphics& g) const;
-    void paintCtrl      (juce::Graphics& g) const;
+    int stepAt (juce::Point<int> pos) const noexcept;
+    juce::Rectangle<float> stepRect (int index) const noexcept;
+    juce::Rectangle<float> microEventRect (int eventIndex) const noexcept;
+    int microEventAt (juce::Point<int> pos) const noexcept;
+
+    SlotPattern::Step* selectedStepData() noexcept;
+    const SlotPattern::Step* selectedStepData() const noexcept;
+
+    void ensureSelectionValid();
+    void paintEmpty (juce::Graphics& g) const;
+    void paintStepLane (juce::Graphics& g) const;
+    void paintDetail (juce::Graphics& g) const;
+    void paintControls (juce::Graphics& g) const;
+    void commitChange();
+    void showStepContextMenu (int stepIndex);
+    void showNoteContextMenu (int eventIndex);
+    void showModeMenu();
+    void showRoleMenu();
+    void deleteSelection();
+    void copySelectedStep();
+    void pasteStepToSelection();
+    void duplicateStep (int stepIndex);
+    void duplicateNote (int eventIndex);
+    void splitStep (int stepIndex);
+    void joinStepWithNext (int stepIndex);
+    void clearStepContents (int stepIndex);
+    void transposeSelectedStepContents (int semitones);
+    void nudgeSelectedEvent (float delta);
+    void adjustSelectedEventLength (float delta);
+    void adjustSelectedEventVelocity (int delta);
+    void updateHoverState (juce::Point<int> pos);
+    int valueForRow (int row) const noexcept;
+    int rowForValue (int value) const noexcept;
+    juce::String noteValueLabel (int value) const;
+
+    float normalizedTimeFromDetailX (int x) const noexcept;
+    int pitchFromDetailY (int y) const noexcept;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StepGridSingle)
 };

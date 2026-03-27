@@ -3,6 +3,8 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "DrumVoiceDSP.h"
 #include "DrumKitPatch.h"
+#include "DrumModuleState.h"
+#include "../../module/ModuleProcessor.h"
 
 //==============================================================================
 /**
@@ -16,12 +18,28 @@
     All voice setup (addVoice, setVoiceParams) must be called off the audio thread
     (e.g. from the message thread when the UI changes a preset).
 */
-class DrumMachineProcessor
+class DrumMachineProcessor : public ModuleProcessor
 {
 public:
     static constexpr int MAX_VOICES = 16;
 
     DrumMachineProcessor() = default;
+
+    //==========================================================================
+    // ModuleProcessor identity + stubs
+
+    const char* getModuleId()   const noexcept override { return "com.spool.drummachine"; }
+    const char* getModuleName() const noexcept override { return "DrumMachine"; }
+
+    // No manifest yet — drum voices are managed imperatively
+    const ParamDef* getParamDefs()  const noexcept override { return nullptr; }
+    int             getNumParams()  const noexcept override { return 0; }
+
+    void  setParam (juce::StringRef, float)       noexcept override {}
+    float getParam (juce::StringRef) const noexcept override { return 0.f; }
+
+    void getState (juce::MemoryBlock&) const override;
+    bool setState (const void*, int) override;
 
     //==========================================================================
     // Lifecycle
@@ -49,6 +67,12 @@ public:
 
     /** Load a full kit (replaces all voices). */
     void loadKit (const DrumKitPatch& kit);
+
+    /** Apply a full drum module state snapshot to the DSP engine. */
+    void applyState (const DrumModuleState& state);
+
+    /** Capture the current DSP-facing drum state. */
+    DrumModuleState captureState() const;
 
     //==========================================================================
     // Direct trigger — safe from audio thread (used by step sequencer)

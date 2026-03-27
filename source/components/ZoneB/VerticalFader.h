@@ -70,12 +70,25 @@ public:
     std::function<void (float)> onValueChanged;
 
     //==========================================================================
+    // Extra context-menu injection (used by FaceplatePanel for slot reassignment).
+    // Items added by onBuildExtraMenuItems must use IDs >= kExtraMenuBase to
+    // avoid conflicting with the built-in menu IDs (1-203).
+
+    static constexpr int kExtraMenuBase = 300;
+
+    /** If set, called just before the menu is shown.  Caller appends extra items. */
+    std::function<void (juce::PopupMenu&)> onBuildExtraMenuItems;
+
+    /** If set, called when a result ID >= kExtraMenuBase is selected. */
+    std::function<void (int)>              onExtraMenuItemSelected;
+
+    //==========================================================================
     // Sizing
 
     /** Preferred component width including rotated label column. */
     int getPreferredWidth () const;
 
-    static constexpr int kPreferredHeight = 70;  // TRACK_H(50) + THUMB(10) + value(10)
+    static constexpr int kPreferredHeight = 90;  // TRACK_H(70) + THUMB(10) + value(10)
 
     //==========================================================================
     // JUCE overrides
@@ -139,7 +152,7 @@ private:
     // Layout constants
 
     static constexpr int TRACK_W    = 6;
-    static constexpr int TRACK_H    = 50;
+    static constexpr int TRACK_H    = 70;
     static constexpr int THUMB_SIZE = 10;
     static constexpr int CIRCLE_SIZE = 5;
     static constexpr int LABEL_GAP  = 4;

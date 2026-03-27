@@ -1,6 +1,9 @@
 #pragma once
 
+#include "../../Theme.h"
 #include "DrumMachineData.h"
+#include <functional>
+#include <memory>
 
 //==============================================================================
 /**
@@ -27,10 +30,14 @@ public:
     /** Fired on the message thread whenever any step or step-count changes. */
     std::function<void()> onModified;
 
+    /** Highlight the current playhead column across all voice rows. */
+    void setPlayhead (int stepIndex);
+
     void paint   (juce::Graphics&) override;
     void resized () override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseUp   (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
 
     static constexpr int kRowH    = 16;
     static constexpr int kLabelW  = 48;
@@ -52,6 +59,7 @@ private:
         void mouseDown (const juce::MouseEvent& e) override { owner->voiceMouseDown (e); }
         void mouseUp   (const juce::MouseEvent& e) override { owner->voiceMouseUp (e); }
         void mouseDrag (const juce::MouseEvent& e) override { owner->voiceDrag (e); }
+        void mouseMove (const juce::MouseEvent& e) override { owner->voiceMove (e); }
     };
 
     std::unique_ptr<VoiceContent> m_voiceContent;
@@ -64,6 +72,7 @@ private:
     void voiceMouseDown (const juce::MouseEvent& e);
     void voiceMouseUp   (const juce::MouseEvent& e);
     void voiceDrag      (const juce::MouseEvent& e);
+    void voiceMove      (const juce::MouseEvent& e);
 
     //==========================================================================
     // Layout helpers (in VoiceContent coordinates)
@@ -85,11 +94,17 @@ private:
     void paintVoiceRow (juce::Graphics& g, int vi) const;
     void addNewVoice();
     void rightClickVoice (int vi);
+    void rightClickStep (int vi, int step);
+    void duplicateStep (int vi, int step);
+    void clearStep (int vi, int step);
 
     // Paint-mode drag tracking
     bool m_paintMode   { false };
     int  m_lastVoice   { -1 };
     int  m_lastStep    { -1 };
+    int  m_playhead    { -1 };
+    int  m_hoverVoice  { -1 };
+    int  m_hoverStep   { -1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StepGridDrum)
 };

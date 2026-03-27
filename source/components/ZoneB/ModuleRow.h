@@ -7,6 +7,8 @@
 #include "VerticalFader.h"
 #include "../../instruments/reel/ReelParams.h"
 
+class FaceplatePanel;   // defined in FaceplatePanel.h — included by ModuleRow.cpp
+
 //==============================================================================
 /**
     ModuleRow — one full-width row in Zone B's module list.
@@ -21,7 +23,7 @@
         Up to 8 params laid out as horizontal sliders with label + value.
 
     Heights:
-      Expanded  : kExpandedH  = kHeaderH + kParamH = 56px
+      Expanded  : kExpandedH  = kHeaderH + kParamH = 188px
       Collapsed : kCollapsedH = kHeaderH            = 20px
 */
 class ModuleRow : public juce::Component,
@@ -57,12 +59,18 @@ public:
     juce::String getModuleTypeName() const;
     juce::Colour getSignalColour()   const;
 
+    /** Map a param label or paramId to a colour for display in Zone B controls.
+        Public so FaceplatePanel and other Zone B components can use it. */
+    static juce::Colour paramColorForLabel (const juce::String& labelOrId);
+
     //==========================================================================
     // Data
 
     SlotPattern&       pattern()       noexcept { return m_pattern; }
     const SlotPattern& pattern() const noexcept { return m_pattern; }
     DrumMachineData*   drumData()      noexcept { return m_drumData.get(); }
+    const DrumMachineData* drumData() const noexcept { return m_drumData.get(); }
+    void setDrumData (const DrumMachineData& data);
 
     const juce::Array<InlineEditor::Param>& getAllParams() const noexcept { return m_params;   }
     const juce::StringArray&                getInPorts()   const noexcept { return m_inPorts;  }
@@ -71,10 +79,10 @@ public:
     //==========================================================================
     // Height helpers
 
-    static constexpr int kExpandedH  = 180;   // header(20) + two fader rows(160)
+    static constexpr int kExpandedH  = 188;   // header(20) + param area(168)
     static constexpr int kCollapsedH = 20;
     static constexpr int kHeaderH    = 20;
-    static constexpr int kParamH     = kExpandedH - kHeaderH;  // 160
+    static constexpr int kParamH     = kExpandedH - kHeaderH;  // 168
     static constexpr int kSectionH   = 10;   // height of each section label strip
 
     int currentHeight() const noexcept { return m_collapsed ? kCollapsedH : (m_expandedOverrideH > 0 ? m_expandedOverrideH : kExpandedH); }
@@ -93,6 +101,11 @@ public:
 
     /** Fired when a fader value changes. paramIdx = index into getAllParams(). norm = 0-1. */
     std::function<void (int paramIdx, float norm)> onParamChanged;
+
+    /** Fired when a FaceplatePanel control changes (for SYNTH / DRUM module types).
+        paramId is the stable routing key from QuickControlSlot::paramId.
+        value is the actual (min..max) value. */
+    std::function<void (const juce::String& paramId, float value)> onFaceplateChanged;
 
     /** Fired when a CapturedAudioClip is dropped onto this row.
         If the row was Empty it is already converted to Reel before this fires. */
@@ -163,8 +176,11 @@ private:
     void initParams();
     void initFaders();
 
-    static juce::Colour          paramColorForLabel (const juce::String& label);
     static VerticalFader::FormatFn makeFormatter    (const InlineEditor::Param& p);
+
+    /** Zone B faceplate panel (owned, shown instead of m_faders for SYNTH / DRUM types).
+        Null for all other module types. */
+    std::unique_ptr<FaceplatePanel> m_faceplate;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ModuleRow)
 };

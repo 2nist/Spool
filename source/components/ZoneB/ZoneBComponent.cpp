@@ -70,6 +70,13 @@ ZoneBComponent::ZoneBComponent()
             m_focusedRow->pattern() = m_patternClipboard;
             m_stepGridSingle.repaint();
             m_stepGridDrum.repaint();
+            if (! m_focusedRow->isDrumMachine() && onPatternModified)
+            {
+                int flatIdx = m_focusedRow->getRowIndex();
+                for (int g = 0; g < m_focusedGroupIdx; ++g)
+                    flatIdx += m_groups[g]->slots.size();
+                onPatternModified (flatIdx, m_focusedRow->pattern());
+            }
         }
     };
 
@@ -80,10 +87,29 @@ ZoneBComponent::ZoneBComponent()
             m_focusedRow->pattern().clearPattern();
             m_stepGridSingle.repaint();
             m_stepGridDrum.repaint();
+            if (! m_focusedRow->isDrumMachine() && onPatternModified)
+            {
+                int flatIdx = m_focusedRow->getRowIndex();
+                for (int g = 0; g < m_focusedGroupIdx; ++g)
+                    flatIdx += m_groups[g]->slots.size();
+                onPatternModified (flatIdx, m_focusedRow->pattern());
+            }
         }
     };
 
-    m_seqHeader.onPatternChanged = [this] (int) { m_stepGridSingle.repaint(); m_stepGridDrum.repaint(); };
+    m_seqHeader.onPatternChanged = [this] (int)
+    {
+        m_stepGridSingle.repaint();
+        m_stepGridDrum.repaint();
+
+        if (m_focusedRow == nullptr || m_focusedRow->isDrumMachine() || ! onPatternModified)
+            return;
+
+        int flatIdx = m_focusedRow->getRowIndex();
+        for (int g = 0; g < m_focusedGroupIdx; ++g)
+            flatIdx += m_groups[g]->slots.size();
+        onPatternModified (flatIdx, m_focusedRow->pattern());
+    };
 
     createDefaultGroups();
 }
@@ -96,6 +122,69 @@ ZoneBComponent::~ZoneBComponent()
 
     for (auto* hdr : m_groupHeaders)
         m_rowsContent.removeChildComponent (hdr);
+}
+
+ModuleRow* ZoneBComponent::rowForFlatSlot (int flatSlotIndex, int* groupIndexOut) noexcept
+{
+    if (flatSlotIndex < 0)
+        return nullptr;
+
+    int currentFlat = 0;
+    for (int gi = 0; gi < m_groups.size(); ++gi)
+    {
+        auto* group = m_groups[gi];
+        if (group == nullptr)
+            continue;
+
+        for (int ri = 0; ri < group->slots.size(); ++ri, ++currentFlat)
+        {
+            if (currentFlat != flatSlotIndex)
+                continue;
+
+            if (groupIndexOut != nullptr)
+                *groupIndexOut = gi;
+            return group->slots[ri];
+        }
+    }
+
+    return nullptr;
+}
+
+const ModuleRow* ZoneBComponent::rowForFlatSlot (int flatSlotIndex, int* groupIndexOut) const noexcept
+{
+    return const_cast<ZoneBComponent*> (this)->rowForFlatSlot (flatSlotIndex, groupIndexOut);
+}
+
+DrumMachineData* ZoneBComponent::getDrumDataForSlot (int flatSlotIndex) noexcept
+{
+    if (auto* row = rowForFlatSlot (flatSlotIndex))
+        return row->drumData();
+    return nullptr;
+}
+
+const DrumMachineData* ZoneBComponent::getDrumDataForSlot (int flatSlotIndex) const noexcept
+{
+    if (auto* row = rowForFlatSlot (flatSlotIndex))
+        return row->drumData();
+    return nullptr;
+}
+
+bool ZoneBComponent::setDrumDataForSlot (int flatSlotIndex, const DrumMachineData& data)
+{
+    int groupIndex = -1;
+    auto* row = rowForFlatSlot (flatSlotIndex, &groupIndex);
+    if (row == nullptr || !row->isDrumMachine())
+        return false;
+
+    row->setDrumData (data);
+
+    if (m_focusedRow == row)
+    {
+        m_stepGridDrum.setDrumData (row->drumData(), m_groups[groupIndex]->color);
+        m_stepGridDrum.repaint();
+    }
+
+    return true;
 }
 
 //==============================================================================
@@ -174,6 +263,29 @@ void ZoneBComponent::addSlotToGroup (int groupIndex, ModuleRow::ModuleType type)
             onClipDropped (flatSlot);
     };
 
+    // Forward fader changes to PluginEditor so they reach the DSP layer.
+    // Compute the flat slot index identically to focusRow / onClipDropped.
+    row->onParamChanged = [this, row, groupIndex] (int paramIdx, float /*norm*/)
+    {
+        if (!onQuickParamChanged) return;
+        const auto& params = row->getAllParams();
+        if (paramIdx < 0 || paramIdx >= params.size()) return;
+        int flatSlot = row->getRowIndex();
+        for (int g = 0; g < groupIndex; ++g)
+            flatSlot += m_groups[g]->slots.size();
+        onQuickParamChanged (flatSlot, params[paramIdx].label, params[paramIdx].value);
+    };
+
+    // FaceplatePanel events (SYNTH / DRUM rows — paramId-routed, replaces onParamChanged for those types)
+    row->onFaceplateChanged = [this, row, groupIndex] (const juce::String& paramId, float value)
+    {
+        if (!onQuickParamChanged) return;
+        int flatSlot = row->getRowIndex();
+        for (int g = 0; g < groupIndex; ++g)
+            flatSlot += m_groups[g]->slots.size();
+        onQuickParamChanged (flatSlot, paramId, value);
+    };
+
     m_rowsContent.addAndMakeVisible (*row);
     layoutRowsContent();
     updateSourceNames();
@@ -242,8 +354,11 @@ int ZoneBComponent::calculateRowsContentH() const noexcept
     {
         h += GroupHeader::kHeight;
         if (!grp->collapsed)
-            for (auto* row : grp->slots)
-                h += row->currentHeight() + kRowGap;
+        {
+            // Rows are displayed in pairs (2 side-by-side per vertical slot)
+            for (int ri = 0; ri < grp->slots.size(); ri += 2)
+                h += grp->slots[ri]->currentHeight() + kRowGap;
+        }
     }
     h += 18;  // ADD GROUP button
     return h;
@@ -257,6 +372,9 @@ void ZoneBComponent::layoutRowsContent()
     const int contentH = juce::jmax (calculateRowsContentH(), vpH);
     m_rowsContent.setSize (vpW, contentH);
 
+    // Half-module width: viewport minus outer padding (both sides) and centre gutter
+    const int halfW = juce::jmax (200, (vpW - kOuterPad * 2 - kPairGutter) / 2);
+
     int y = 0;
     for (int gi = 0; gi < m_groups.size(); ++gi)
     {
@@ -266,38 +384,50 @@ void ZoneBComponent::layoutRowsContent()
         hdr->setBounds (0, y, vpW, GroupHeader::kHeight);
         y += GroupHeader::kHeight;
 
-        // Calculate a desired expanded row height so that a single expanded
-        // module occupies at least 1/3 of the rows area (so a full module
-        // is visible on start). We only apply the override when it is
-        // larger than the default ModuleRow::kExpandedH.
-        const int rowsH = rowsAreaH();
-        // Make a single expanded module occupy a larger fraction of the rows
-        // area so modules are more visible by default. Use half the rows area
-        // (instead of one third) as the target when available.
-        const int desiredPerRow = rowsH > 0 ? juce::jmax (ModuleRow::kExpandedH, rowsH / 2) : ModuleRow::kExpandedH;
+        const int rowsH      = rowsAreaH();
+        const int desiredPerRow = rowsH > 0 ? juce::jmax (ModuleRow::kExpandedH, rowsH / 2)
+                                            : ModuleRow::kExpandedH;
 
-        for (auto* row : grp.slots)
+        // Process rows in pairs: left row at kOuterPad, right row at kOuterPad + halfW + kPairGutter
+        for (int ri = 0; ri < grp.slots.size(); ri += 2)
         {
+            ModuleRow* leftRow  = grp.slots[ri];
+            ModuleRow* rightRow = (ri + 1 < grp.slots.size()) ? grp.slots[ri + 1] : nullptr;
+
             if (!grp.collapsed)
             {
-                // Apply override if desiredPerRow is larger than default
-                if (desiredPerRow > ModuleRow::kExpandedH)
-                    row->setExpandedHeightOverride (desiredPerRow);
-                else
-                    row->setExpandedHeightOverride (0);
+                const int overrideH = (desiredPerRow > ModuleRow::kExpandedH) ? desiredPerRow : 0;
 
-                row->setBounds (0, y, vpW, row->currentHeight());
-                row->setVisible (true);
-                y += row->currentHeight() + kRowGap;
+                leftRow->setExpandedHeightOverride (overrideH);
+                const int rowH = leftRow->currentHeight();
+
+                leftRow->setBounds (kOuterPad, y, halfW, rowH);
+                leftRow->setVisible (true);
+
+                if (rightRow != nullptr)
+                {
+                    rightRow->setExpandedHeightOverride (overrideH);
+                    rightRow->setBounds (kOuterPad + halfW + kPairGutter, y, halfW, rowH);
+                    rightRow->setVisible (true);
+                }
+
+                y += rowH + kRowGap;
             }
             else
             {
-                row->setVisible (false);
+                leftRow->setVisible (false);
+                if (rightRow != nullptr)
+                    rightRow->setVisible (false);
             }
         }
     }
 
     m_addGroupBtn.setBounds (4, y, 80, 14);
+}
+
+void ZoneBComponent::broadcastModuleList()
+{
+    updateSourceNames();
 }
 
 void ZoneBComponent::updateSourceNames()
@@ -516,6 +646,7 @@ void ZoneBComponent::defocusRow()
 void ZoneBComponent::setPlayheadStep (int step)
 {
     m_stepGridSingle.setPlayhead (step);
+    m_stepGridDrum.setPlayhead   (step);
 }
 
 void ZoneBComponent::seedPatternForSlot (int flatSlotIndex, int stepCount, const std::initializer_list<int>& activeSteps)
@@ -545,7 +676,7 @@ void ZoneBComponent::seedPatternForSlot (int flatSlotIndex, int stepCount, const
             for (const auto s : activeSteps)
             {
                 if (s >= 0 && s < pattern.activeStepCount())
-                    pattern.active[pattern.currentPattern][s] = true;
+                    pattern.toggleStep (s);
             }
 
             if (m_focusedRow == row)

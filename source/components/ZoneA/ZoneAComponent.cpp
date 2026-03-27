@@ -21,9 +21,12 @@ void ZoneAComponent::switchToModulePanel (const juce::String& moduleType, int sl
         return;
     }
 
+    // "DRUM MACHINE" (Zone B display string) normalises to "DRUMS" here
+    const juce::String normType = (moduleType == "DRUM MACHINE") ? "DRUMS" : moduleType;
+
     // SYNTH, DRUMS, and other instrument types → INSTRUMENT tab
-    if (moduleType == "SYNTH" || moduleType == "DRUMS"
-        || moduleType == "SAMPLER" || moduleType == "VST3")
+    if (normType == "SYNTH" || normType == "DRUMS"
+        || normType == "SAMPLER" || normType == "VST3")
     {
         ensurePanelCreated ("instrument");
         if (m_instrumentPanel)
@@ -61,12 +64,15 @@ void ZoneAComponent::setInstrumentSlots (const juce::StringArray& moduleList)
         if (colon >= 0)
         {
             entry.groupName  = item.substring (0, colon).trim();
-            entry.moduleType = item.substring (colon + 1).trim();
+            const auto raw   = item.substring (colon + 1).trim();
+            // "DRUM MACHINE" (Zone B display) → canonical "DRUMS" for Zone A
+            entry.moduleType = (raw == "DRUM MACHINE") ? "DRUMS" : raw;
         }
         else
         {
             entry.groupName  = "DEFAULT";
-            entry.moduleType = item.trim();
+            const auto raw   = item.trim();
+            entry.moduleType = (raw == "DRUM MACHINE") ? "DRUMS" : raw;
         }
 
         // Assign group colour
@@ -268,7 +274,12 @@ void ZoneAComponent::ensurePanelCreated (const juce::String& tabId)
     // New panels
     else if (tabId == "instrument" && m_instrumentPanel == nullptr)
     {
-        m_instrumentPanel = std::make_unique<InstrumentPanel>();
+        m_instrumentPanel = std::make_unique<InstrumentPanel> (processorRef);
+        m_instrumentPanel->onSlotSelected = [this] (int slotIdx, const juce::String& type)
+        {
+            if (onInstrumentSlotSelected)
+                onInstrumentSlotSelected (slotIdx, type);
+        };
         addChildComponent (*m_instrumentPanel);
     }
     else if (tabId == "mixer" && m_mixerPanel == nullptr)

@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include "PolyVoice.h"
+#include "../module/ModuleProcessor.h"
 
 //==============================================================================
 /**
@@ -23,7 +24,7 @@
         synth.prepare (sampleRate, maxBlock);   // once, off audio thread
         synth.process (outputBuffer, midiBuf);  // each block, audio thread
 */
-class PolySynthProcessor
+class PolySynthProcessor : public ModuleProcessor
 {
 public:
     static constexpr int kNumVoices = 8;
@@ -42,14 +43,31 @@ public:
     void reset();
 
     //==========================================================================
+    // ModuleProcessor interface
+
+    const char*      getModuleId()   const noexcept override { return "com.spool.polysynth"; }
+    const char*      getModuleName() const noexcept override { return "PolySynth"; }
+    const ParamDef*  getParamDefs()  const noexcept override;
+    int              getNumParams()  const noexcept override;
+    void             setParam (juce::StringRef id, float value) noexcept override;
+    float            getParam (juce::StringRef id) const noexcept override;
+    void             getState (juce::MemoryBlock& dest) const override;
+    bool             setState (const void* data, int sizeBytes) override;
+
+    //==========================================================================
     // Parameter setters — safe to call from the UI thread
 
     // --- Oscillators ---
+    void setOsc1Enabled (bool enabled) noexcept { m_osc1Enabled.store (enabled); }
+    void setOsc2Enabled (bool enabled) noexcept { m_osc2Enabled.store (enabled); }
     void setOsc1Shape  (int shape)    noexcept { m_osc1Shape.store (shape);   }
     void setOsc2Shape  (int shape)    noexcept { m_osc2Shape.store (shape);   }
     void setOsc1Detune (float cents)  noexcept { m_osc1Detune.store (cents);  }
     void setOsc2Detune (float cents)  noexcept { m_osc2Detune.store (cents);  }
+    void setOsc1Octave (int octave)   noexcept { m_osc1Octave.store (octave); }
     void setOsc2Octave (int octave)   noexcept { m_osc2Octave.store (octave); }
+    void setOsc1PulseWidth (float width) noexcept { m_osc1PulseWidth.store (width); }
+    void setOsc2PulseWidth (float width) noexcept { m_osc2PulseWidth.store (width); }
     void setOsc2Level  (float level)  noexcept { m_osc2Level.store (level);   }
 
     // --- Filter ---
@@ -70,6 +88,7 @@ public:
     void setFiltRelease (float s) noexcept { m_filtR.store (s); }
 
     // --- LFO ---
+    void setLfoEnabled (bool enabled) noexcept { m_lfoEnabled.store (enabled); }
     void setLfoRate   (float hz)     noexcept { m_lfoRate.store (hz);     }
     void setLfoDepth  (float depth)  noexcept { m_lfoDepth.store (depth); }
     void setLfoTarget (int  target)  noexcept { m_lfoTarget.store (target); }
@@ -77,14 +96,51 @@ public:
     // --- Mode ---
     void setMonoMode (bool mono) noexcept { m_monoMode.store (mono); }
 
+    // --- Character ---
+    void setCharAsym  (float v) noexcept { m_charAsym.store  (v); }
+    void setCharDrive (float v) noexcept { m_charDrive.store (v); }
+    void setCharDrift (float v) noexcept { m_charDrift.store (v); }
+
+    // --- Output ---
+    void setOutputLevel (float v) noexcept { m_outputLevel.store (v); }
+    void setOutputPan   (float v) noexcept { m_outputPan.store (v); }
+
     //==========================================================================
     // Getters (for UI readback)
 
+    bool  isOsc1Enabled()     const noexcept { return m_osc1Enabled.load(); }
+    bool  isOsc2Enabled()     const noexcept { return m_osc2Enabled.load(); }
     float getFilterCutoff()    const noexcept { return m_filterCutoff.load(); }
     float getFilterResonance() const noexcept { return m_filterRes.load();    }
     int   getOsc1Shape()       const noexcept { return m_osc1Shape.load();    }
     int   getOsc2Shape()       const noexcept { return m_osc2Shape.load();    }
-    bool  isMonoMode()         const noexcept { return m_monoMode.load();     }
+    float getOsc1Detune()      const noexcept { return m_osc1Detune.load();   }
+    float getOsc2Detune()      const noexcept { return m_osc2Detune.load();   }
+    int   getOsc1Octave()      const noexcept { return m_osc1Octave.load();   }
+    int   getOsc2Octave()      const noexcept { return m_osc2Octave.load();   }
+    float getOsc1PulseWidth()  const noexcept { return m_osc1PulseWidth.load(); }
+    float getOsc2PulseWidth()  const noexcept { return m_osc2PulseWidth.load(); }
+    float getOsc2Level()       const noexcept { return m_osc2Level.load();    }
+    float getFilterEnvAmt()    const noexcept { return m_filterEnvAmt.load(); }
+    float getAmpAttack()       const noexcept { return m_ampA.load(); }
+    float getAmpDecay()        const noexcept { return m_ampD.load(); }
+    float getAmpSustain()      const noexcept { return m_ampS.load(); }
+    float getAmpRelease()      const noexcept { return m_ampR.load(); }
+    float getFiltAttack()      const noexcept { return m_filtA.load(); }
+    float getFiltDecay()       const noexcept { return m_filtD.load(); }
+    float getFiltSustain()     const noexcept { return m_filtS.load(); }
+    float getFiltRelease()     const noexcept { return m_filtR.load(); }
+    bool  isLfoEnabled()       const noexcept { return m_lfoEnabled.load(); }
+    float getLfoRate()         const noexcept { return m_lfoRate.load();   }
+    float getLfoDepth()        const noexcept { return m_lfoDepth.load();  }
+    int   getLfoTarget()       const noexcept { return m_lfoTarget.load(); }
+    bool  isMonoMode()         const noexcept { return m_monoMode.load();  }
+
+    float getCharAsym()  const noexcept { return m_charAsym.load();  }
+    float getCharDrive() const noexcept { return m_charDrive.load(); }
+    float getCharDrift() const noexcept { return m_charDrift.load(); }
+    float getOutputLevel() const noexcept { return m_outputLevel.load(); }
+    float getOutputPan()   const noexcept { return m_outputPan.load(); }
 
 private:
     //==========================================================================
@@ -98,12 +154,17 @@ private:
     //==========================================================================
     // Parameters — atomics so UI thread can write freely
 
+    std::atomic<bool>  m_osc1Enabled { true  };
+    std::atomic<bool>  m_osc2Enabled { true  };
     std::atomic<int>   m_osc1Shape  { Saw   };
     std::atomic<int>   m_osc2Shape  { Saw   };
     std::atomic<float> m_osc1Detune { 0.0f  };  // cents
     std::atomic<float> m_osc2Detune { 7.0f  };  // cents (slight detune by default)
+    std::atomic<int>   m_osc1Octave { 0     };
     std::atomic<int>   m_osc2Octave { 0     };   // -2..+2 octaves
-    std::atomic<float> m_osc2Level  { 0.7f  };
+    std::atomic<float> m_osc1PulseWidth { 0.5f };
+    std::atomic<float> m_osc2PulseWidth { 0.5f };
+    std::atomic<float> m_osc2Level  { 0.5f  };
 
     std::atomic<float> m_filterCutoff { 4000.0f };  // Hz
     std::atomic<float> m_filterRes    { 0.3f    };  // 0..1
@@ -119,11 +180,18 @@ private:
     std::atomic<float> m_filtS { 0.5f  };
     std::atomic<float> m_filtR { 0.3f  };
 
+    std::atomic<bool>  m_lfoEnabled { true         };
     std::atomic<float> m_lfoRate   { 5.0f         };  // Hz
     std::atomic<float> m_lfoDepth  { 0.0f         };  // 0..1
     std::atomic<int>   m_lfoTarget { LfoToPitch    };
 
     std::atomic<bool>  m_monoMode  { false };
+
+    std::atomic<float> m_charAsym  { 0.15f };  // oscillator asymmetry 0..1
+    std::atomic<float> m_charDrive { 0.20f };  // pre-filter saturation 0..1
+    std::atomic<float> m_charDrift { 0.15f };  // phase drift on noteOn 0..1
+    std::atomic<float> m_outputLevel { 1.0f };
+    std::atomic<float> m_outputPan   { 0.0f };
 
     //==========================================================================
     // Private helpers — audio thread only
@@ -135,12 +203,17 @@ private:
     void noteOff    (int note);
 
     void renderVoice (PolyVoice& v, int numSamples,
+                      bool osc1Enabled, bool osc2Enabled,
                       int osc1Shape, int osc2Shape,
-                      double osc1Freq, double osc2Freq, float osc2Level,
+                      double osc1Freq, double osc2Freq,
+                      float osc1PulseWidth, float osc2PulseWidth, float osc2Level,
                       float baseCutoff, float filterRes, float filterEnvAmt,
-                      float lfoValue, int lfoTarget) noexcept;
+                      float lfoValue, int lfoTarget,
+                      float charAsym, float charDrive,
+                      float driveGain, float driveNorm,
+                      float charDrift) noexcept;
 
-    static float renderOsc (double& phase, double phaseInc, int shape) noexcept;
+    static float renderOsc (double& phase, double phaseInc, int shape, float pulseWidth) noexcept;
 
     PolyVoice* findFreeVoice    ()        noexcept;
     PolyVoice* findVoiceForNote (int note) noexcept;

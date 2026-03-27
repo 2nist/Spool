@@ -7,6 +7,7 @@
 #include "ReelGranular.h"
 #include "ReelSampler.h"
 #include "ReelSlicer.h"
+#include "../../module/ModuleProcessor.h"
 
 //==============================================================================
 /**
@@ -21,10 +22,21 @@
       - process:                       audio thread only
       - getBuffer / getParams:         read-only, safe after load
 */
-class ReelProcessor
+class ReelProcessor : public ModuleProcessor
 {
 public:
     ReelProcessor();
+
+    //==========================================================================
+    // ModuleProcessor identity
+
+    const char* getModuleId()   const noexcept override { return "com.spool.reel"; }
+    const char* getModuleName() const noexcept override { return "Reel"; }
+
+    // Reel params are accessed via setParam/getParam string IDs (ReelParams scheme)
+    // rather than a manifest; expose empty manifest for now.
+    const ParamDef* getParamDefs()  const noexcept override { return nullptr; }
+    int             getNumParams()  const noexcept override { return 0; }
 
     //==========================================================================
     // Lifecycle
@@ -57,8 +69,8 @@ public:
     //==========================================================================
     // Params
 
-    void  setParam (const juce::String& paramId, float value);
-    float getParam (const juce::String& paramId) const noexcept;
+    void  setParam (juce::StringRef paramId, float value) noexcept override;
+    float getParam (juce::StringRef paramId) const noexcept override;
 
     //==========================================================================
     // Direct slice trigger (from step sequencer — audio thread safe)
@@ -82,8 +94,8 @@ public:
     //==========================================================================
     // State persistence
 
-    void getState (juce::MemoryBlock& destData) const;
-    void setState (const void* data, int sizeInBytes);
+    void getState (juce::MemoryBlock& destData) const override;
+    bool setState (const void* data, int sizeInBytes) override;
 
 private:
     ReelBuffer     m_buffer;

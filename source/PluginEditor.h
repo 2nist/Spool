@@ -128,5 +128,12 @@ private:
         Arrangement DSP not yet implemented; clip provenance logged to system feed. */
     void routeClipToTimeline (const CapturedAudioClip& clip);
 
+    DrumMachineData* getDrumStateForSlot (int slotIndex) noexcept;
+    const DrumMachineData* getDrumStateForSlot (int slotIndex) const noexcept;
+    void syncSlotRuntimeFromModuleType (int slotIndex, const juce::String& moduleType);
+    void syncAllSlotRuntimeFromModuleList();
+    void applyDrumStateToRuntime (int slotIndex);
+    void replaceDrumStateForSlot (int slotIndex, const DrumMachineData& state);
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

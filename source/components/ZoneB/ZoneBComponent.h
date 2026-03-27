@@ -17,7 +17,7 @@
       Zone stripe:         3px  (Theme::Space::zoneStripeHeight)
       Module rows area:    elastic — fills middle, scrollable via Viewport
         Group header:      20px  (GroupHeader::kHeight)  ← inline divider
-        Module row:        56px expanded / 20px collapsed (ModuleRow)
+        Module row pair:   188px expanded / 20px collapsed (2× ModuleRow side-by-side)
       Split handle:        6px   (draggable)
       Sequencer header:    16px  (SequencerHeader::kHeight)
       Step grid:           140px synth / 200px drum  (dynamic)
@@ -64,6 +64,12 @@ public:
         flatSlotIndex is the 0-based absolute slot index across all groups. */
     std::function<void (int flatSlotIndex)> onClipDropped;
 
+    /** Fired when any fader on any module row changes.
+        actualValue is the mapped (min..max) value, ready to forward to the processor.
+        label is the param's display label (e.g. "CUT", "REL") — use for routing, not paramIdx,
+        so the mapping survives future changes to the Zone B param list. */
+    std::function<void (int slotIdx, const juce::String& label, float actualValue)> onQuickParamChanged;
+
     //==========================================================================
 
     ZoneBComponent();
@@ -73,6 +79,14 @@ public:
 
     void paint   (juce::Graphics&) override;
     void resized () override;
+
+    /** Re-fire onModuleListChanged with the current slot list.
+        Call after wiring onModuleListChanged to catch the initial state that
+        was broadcast during construction before the callback was connected. */
+    void broadcastModuleList();
+    DrumMachineData* getDrumDataForSlot (int flatSlotIndex) noexcept;
+    const DrumMachineData* getDrumDataForSlot (int flatSlotIndex) const noexcept;
+    bool setDrumDataForSlot (int flatSlotIndex, const DrumMachineData& data);
 
 private:
     //==========================================================================
@@ -146,6 +160,8 @@ private:
     static constexpr int kMinRowsH    = 40;
     static constexpr int kMinBottomH  = kSeqHdrH + kMinGridH + kLooperH;
     static constexpr int kRowGap      = 0;   // rows are flush
+    static constexpr int kOuterPad    = 8;   // horizontal padding left and right of row pairs
+    static constexpr int kPairGutter  = 12;  // gap between the two half-modules in a row pair
 
     int m_gridH { 0 };  // computed dynamically in resized()
 
@@ -196,6 +212,8 @@ private:
 
     void showLoadDialog    (ModuleRow* row, juce::Rectangle<int> boundsInContent);
     void dismissLoadDialog ();
+    ModuleRow* rowForFlatSlot (int flatSlotIndex, int* groupIndexOut = nullptr) noexcept;
+    const ModuleRow* rowForFlatSlot (int flatSlotIndex, int* groupIndexOut = nullptr) const noexcept;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ZoneBComponent)
 };

@@ -1,6 +1,5 @@
 #include "PluginEditor.h"
-#include "instruments/drum/DrumVoiceParams.h"
-#include "instruments/drum/DrumKitPatch.h"
+#include "instruments/drum/DrumModuleState.h"
 
 //==============================================================================
 // Helpers
@@ -15,59 +14,102 @@ TransportStrip::StructureFollowState computeFollowState (bool followEnabled, boo
 }
 }
 
-static DrumVoiceParams drumParamsForNote (int note)
+//==============================================================================
+// Zone B quick-control → DSP translation
+//
+// Label-based routing: matches param labels in ModuleRow::initParams() so the
+// mapping is stable regardless of future changes to the Zone B param order.
+// All PolySynthProcessor setters are covered so any label can be added to the
+// Zone B surface without touching this function.
+//
+static void applySynthQuickParam (PolySynthProcessor& synth, const juce::String& label, float value)
 {
-    switch (note)
-    {
-        case 36: return DrumVoiceParams::kick();
-        case 38: case 40: return DrumVoiceParams::snare();
-        case 42: return DrumVoiceParams::closedHat();
-        case 46: return DrumVoiceParams::openHat();
-        case 37: case 39: return DrumVoiceParams::clap();
-        case 45: case 47: case 48: case 50: return DrumVoiceParams::tom();
-        case 51: case 59: return DrumVoiceParams::cymbal();
-        default: return DrumVoiceParams::kick();
-    }
+    if      (label == "OSC1")  synth.setOsc1Shape        (juce::roundToInt (value));
+    else if (label == "DET1")  synth.setOsc1Detune       (value);
+    else if (label == "OSC2")  synth.setOsc2Shape        (juce::roundToInt (value));
+    else if (label == "DET2")  synth.setOsc2Detune       (value);
+    else if (label == "OCT2")  synth.setOsc2Octave       (juce::roundToInt (value));
+    else if (label == "MIX2")  synth.setOsc2Level        (value);
+    else if (label == "CUT")   synth.setFilterCutoff     (value);
+    else if (label == "RES")   synth.setFilterResonance  (value);
+    else if (label == "ENVA")  synth.setFilterEnvAmt     (value);
+    else if (label == "ATK")   synth.setAmpAttack        (value);
+    else if (label == "DEC")   synth.setAmpDecay         (value);
+    else if (label == "SUS")   synth.setAmpSustain       (value);
+    else if (label == "REL")   synth.setAmpRelease       (value);
+    else if (label == "FATK")  synth.setFiltAttack       (value);
+    else if (label == "FDEC")  synth.setFiltDecay        (value);
+    else if (label == "FSUS")  synth.setFiltSustain      (value);
+    else if (label == "FREL")  synth.setFiltRelease      (value);
+    else if (label == "LFRT")  synth.setLfoRate          (value);
+    else if (label == "LFDP")  synth.setLfoDepth         (value);
 }
 
-static uint64_t slotPatternToBits (const SlotPattern& p)
+// ----------------------------------------------------------------------------
+// Zone B quick-control → authoritative DrumModuleState translation
+//
+// paramId format for per-voice params: "vN:field"
+//   N      = voice index in the current kit
+//   field  = tpitch, tdecay, body, clicklvl, noiselv, noisehp, metaldec,
+//            drive, grit, snap, outl, outp, trig
+//
+// Special (kit-level) IDs: "voicepg", "muteall", "initkit" — placeholders for now.
+// ----------------------------------------------------------------------------
+static bool applyDrumQuickParam (DrumMachineData& drumState,
+                                 const juce::String& paramId,
+                                 float value)
 {
-    uint64_t bits = 0;
-    for (int s = 0; s < p.activeStepCount(); ++s)
-        if (p.stepActive (s))
-            bits |= (1ULL << s);
-    return bits;
-}
-
-static void syncDrumDataToProcessor (int slotIdx,
-                                     DrumMachineData* data,
-                                     PluginProcessor& proc)
-{
-    if (data == nullptr) return;
-
-    // Build and load kit into DSP voice engine
-    DrumKitPatch kit;
-    kit.name = "UI Kit";
-    for (auto* v : data->voices)
+    // Per-voice params: "vN:field"
+    if (paramId.length() >= 3 && paramId[0] == 'v'
+        && paramId.substring(1).containsChar (':'))
     {
-        DrumKitEntry entry;
-        entry.name   = v->name.toStdString();
-        entry.params = drumParamsForNote (v->midiNote);
-        entry.params.midiNote = v->midiNote;
-        kit.voices.push_back (entry);
-    }
-    proc.getAudioGraph().getDrumMachine (slotIdx).loadKit (kit);
+        const int    colonIdx  = paramId.indexOfChar (':');
+        const int    voiceIdx  = paramId.substring (1, colonIdx).getIntValue();
+        const auto   field     = paramId.substring (colonIdx + 1);
 
-    // Sync sequencer step data
-    const int numVoices = data->voices.size();
-    proc.setDrumVoiceCount (slotIdx, numVoices);
-    for (int vi = 0; vi < numVoices; ++vi)
-    {
-        const auto* v = data->voices[vi];
-        proc.setDrumVoiceMidiNote  (slotIdx, vi, v->midiNote);
-        proc.setDrumVoiceStepBits  (slotIdx, vi, slotPatternToBits (v->pattern));
-        proc.setDrumVoiceStepCount (slotIdx, vi, v->pattern.activeStepCount());
+        if (voiceIdx < 0 || voiceIdx >= static_cast<int> (drumState.voices.size()))
+            return false;
+
+        auto& voice = drumState.voices[static_cast<size_t> (voiceIdx)];
+
+        if      (field == "tpitch")   voice.params.tone.pitch        = value;
+        else if (field == "tdecay")   voice.params.tone.decay        = value;
+        else if (field == "body")     voice.params.tone.body         = value;
+        else if (field == "clicklvl") voice.params.click.level       = value;
+        else if (field == "noiselv")  voice.params.noise.level       = value;
+        else if (field == "noisehp")  voice.params.noise.hpfreq      = value;
+        else if (field == "metaldec") voice.params.metal.decay       = value;
+        else if (field == "drive")    voice.params.character.drive   = value;
+        else if (field == "grit")     voice.params.character.grit    = value;
+        else if (field == "snap")     voice.params.character.snap    = value;
+        else if (field == "outl")     voice.params.out.level         = value;
+        else if (field == "outp")     voice.params.out.pan           = value;
+        else return false;
+
+        voice.params.midiNote = voice.midiNote;
+        drumState.clamp();
+        return true;
     }
+
+    if (paramId == "muteall")
+    {
+        const bool muted = value >= 0.5f;
+        for (auto& voice : drumState.voices)
+            voice.muted = muted;
+        return true;
+    }
+
+    if (paramId == "initkit" && value >= 0.5f)
+    {
+        const auto focusedVoiceIndex = drumState.focusedVoiceIndex;
+        drumState = DrumMachineData::makeDefault();
+        drumState.focusedVoiceIndex = focusedVoiceIndex;
+        drumState.clamp();
+        return true;
+    }
+
+    juce::ignoreUnused (value); // "voicepg" or unsupported IDs remain no-op for this pass
+    return false;
 }
 
 //==============================================================================
@@ -107,6 +149,13 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         zoneA.setInstrumentSlots    (names);
         zoneA.setMixerSlots         (names);
         zoneA.setTrackLanes         (names);
+        syncAllSlotRuntimeFromModuleList();
+    };
+
+    // Wire Zone A InstrumentPanel browser slot selection to full slot-selected flow
+    zoneA.onInstrumentSlotSelected = [this] (int slotIndex, const juce::String& moduleType)
+    {
+        slotSelected (slotIndex, moduleType);
     };
 
     // Wire tab strip → Zone A panel switching
@@ -302,6 +351,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         processorRef.setStepCount (slotIdx, stepCount);
         for (int s = 0; s < SlotPattern::MAX_STEPS; ++s)
             processorRef.setStepActive (slotIdx, s, s < stepCount && pattern.stepActive (s));
+        processorRef.setSlotPattern (slotIdx, pattern);
     };
 
     // Wire Zone B DnD drop → load the pending clip into the target slot
@@ -437,14 +487,51 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     // Wire drum machine focus → load kit + sync DSP
     zoneB.onDrumSlotFocused = [this] (int slotIdx, DrumMachineData* data)
     {
-        processorRef.getAudioGraph().setSlotSynthType (slotIdx, 2);
-        syncDrumDataToProcessor (slotIdx, data, processorRef);
+        juce::ignoreUnused (data);
+        applyDrumStateToRuntime (slotIdx);
     };
 
     // Wire drum step edits → sync DSP
     zoneB.onDrumPatternModified = [this] (int slotIdx, DrumMachineData* data)
     {
-        syncDrumDataToProcessor (slotIdx, data, processorRef);
+        juce::ignoreUnused (data);
+        applyDrumStateToRuntime (slotIdx);
+    };
+
+    // Wire Zone B fader changes → DSP quick controls.
+    // m_lastModuleNames[slotIdx] is "GROUPNAME:TYPENAME"; strip the group prefix.
+    zoneB.onQuickParamChanged = [this] (int slotIdx, const juce::String& paramId, float value)
+    {
+        if (slotIdx < 0 || slotIdx >= m_lastModuleNames.size()) return;
+
+        const juce::String moduleType =
+            m_lastModuleNames[slotIdx].fromLastOccurrenceOf (":", false, false).toUpperCase();
+
+        if (moduleType == "SYNTH")
+        {
+            applySynthQuickParam (processorRef.getAudioGraph().getPolySynth (slotIdx),
+                                  paramId, value);
+        }
+        else if (moduleType == "DRUMS")
+        {
+            auto* state = getDrumStateForSlot (slotIdx);
+            if (state == nullptr)
+                return;
+
+            if (paramId.endsWith (":trig"))
+            {
+                const int colonIdx = paramId.indexOfChar (':');
+                const int voiceIdx = paramId.substring (1, colonIdx).getIntValue();
+                auto& drum = processorRef.getAudioGraph().getDrumMachine (slotIdx);
+                if (voiceIdx >= 0 && voiceIdx < drum.getNumVoices())
+                    drum.triggerVoice (voiceIdx, value);
+                return;
+            }
+
+            if (applyDrumQuickParam (*state, paramId, value))
+                replaceDrumStateForSlot (slotIdx, *state);
+        }
+        // REEL and other types: seam left for next pass
     };
 
     // Wire step advance notifications from the processor to Zone B playhead
@@ -456,6 +543,84 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     zoneB.addListener (this);
     zoneD.addTransportListener (this);
     ThemeManager::get().addListener (this);
+
+    // Re-broadcast the current module list now that all callbacks are wired.
+    // ZoneBComponent fires onModuleListChanged during its own construction
+    // (before PluginEditor wires the callback), so this initial state would
+    // otherwise be missed and InstrumentPanel / MixerPanel would start empty.
+    zoneB.broadcastModuleList();
+
+    if (auto* instrumentPanel = zoneA.getInstrumentPanel())
+    {
+        instrumentPanel->onRequestDrumState = [this] (int slotIndex) -> DrumMachineData*
+        {
+            return getDrumStateForSlot (slotIndex);
+        };
+        instrumentPanel->onDrumStateChanged = [this] (int slotIndex, const DrumMachineData& state)
+        {
+            replaceDrumStateForSlot (slotIndex, state);
+        };
+        instrumentPanel->onPreviewDrumVoice = [this] (int slotIndex, int voiceIndex, float velocity)
+        {
+            auto& drum = processorRef.getAudioGraph().getDrumMachine (slotIndex);
+            if (voiceIndex >= 0 && voiceIndex < drum.getNumVoices())
+                drum.triggerVoice (voiceIndex, velocity);
+        };
+    }
+
+    // Seed the default standalone synth slots into an actually audible init.
+    // This keeps the groovebox startup state from coming up visually loaded but silent.
+    auto applyAudibleSynthInit = [this] (int slotIndex, int midiNote, bool mono,
+                                         std::initializer_list<int> activeSteps)
+    {
+        zoneB.seedPatternForSlot (slotIndex, 16, activeSteps);
+        processorRef.setStepCount (slotIndex, 16);
+        for (int step = 0; step < SlotPattern::MAX_STEPS; ++step)
+            processorRef.setStepActive (slotIndex, step, false);
+        for (const auto step : activeSteps)
+            if (step >= 0 && step < 16)
+                processorRef.setStepActive (slotIndex, step, true);
+
+        processorRef.setSlotNote (slotIndex, midiNote);
+
+        auto& synth = processorRef.getAudioGraph().getPolySynth (slotIndex);
+        synth.setParam ("osc1.shape",   0.0f);
+        synth.setParam ("osc2.shape",   0.0f);
+        synth.setParam ("osc1.detune",  0.0f);
+        synth.setParam ("osc2.detune",  7.0f);
+        synth.setParam ("osc2.octave",  mono ? -1.0f : 0.0f);
+        synth.setParam ("osc2.level",   mono ? 0.38f : 0.62f);
+        synth.setParam ("filter.cutoff", mono ? 1400.0f : 5200.0f);
+        synth.setParam ("filter.res",   mono ? 0.22f : 0.18f);
+        synth.setParam ("filter.env_amt", mono ? 0.58f : 0.36f);
+        synth.setParam ("amp.attack",   0.005f);
+        synth.setParam ("amp.decay",    mono ? 0.18f : 0.28f);
+        synth.setParam ("amp.sustain",  mono ? 0.58f : 0.82f);
+        synth.setParam ("amp.release",  mono ? 0.10f : 0.22f);
+        synth.setParam ("filt.attack",  0.005f);
+        synth.setParam ("filt.decay",   mono ? 0.20f : 0.24f);
+        synth.setParam ("filt.sustain", mono ? 0.16f : 0.28f);
+        synth.setParam ("filt.release", 0.12f);
+        synth.setParam ("lfo.rate",     0.35f);
+        synth.setParam ("lfo.depth",    mono ? 0.00f : 0.03f);
+        synth.setParam ("lfo.target",   1.0f);
+        synth.setParam ("voice.mono",   mono ? 1.0f : 0.0f);
+        synth.setParam ("char.asym",    mono ? 0.10f : 0.16f);
+        synth.setParam ("char.drive",   mono ? 0.28f : 0.18f);
+        synth.setParam ("char.drift",   0.08f);
+    };
+
+    applyAudibleSynthInit (0, 48, true,  { 0, 4, 8, 12 });
+    applyAudibleSynthInit (1, 55, false, { 0, 5, 10, 13 });
+    applyAudibleSynthInit (2, 60, false, { 2, 6, 10, 14 });
+
+    // Standalone default: start in an audible groovebox state.
+    processorRef.setFocusedSlot (0);
+    processorRef.setPlaying (true);
+    zoneD.setPlaying (true);
+    if (auto* tp = zoneA.getTracksPanel())
+        tp->setPlaying (true);
+    systemFeed.addMessage ("Startup: transport running on synth slot 01");
 
     zoneC.onCollapseChanged = [this] (bool) { resized(); };
     zoneD.onHeightChanged   = [this] (int)  { resized(); };
@@ -624,16 +789,7 @@ void PluginEditor::slotSelected (int slotIndex, const juce::String& moduleType)
                                 Theme::Colour::accent);
 
     // Route slot to correct DSP node
-    if (moduleType == "REEL")
-        processorRef.getAudioGraph().setSlotSynthType (slotIndex, 3);
-    else if (moduleType == "SYNTH")
-        processorRef.getAudioGraph().setSlotSynthType (slotIndex, 1);
-    else if (moduleType != "DRUM MACHINE")  // drum type is set by onDrumSlotFocused
-        processorRef.getAudioGraph().setSlotSynthType (slotIndex, 0);
-
-    const bool isAudioProducer = (moduleType == "SYNTH" || moduleType == "SAMPLER"
-                                  || moduleType == "DRUM MACHINE" || moduleType == "REEL");
-    processorRef.setSlotActive (slotIndex, isAudioProducer);
+    syncSlotRuntimeFromModuleType (slotIndex, moduleType);
 
     // Auto-switch Zone A to the module's editor panel
     zoneA.switchToModulePanel (moduleType, slotIndex);
@@ -653,7 +809,7 @@ void PluginEditor::slotSelected (int slotIndex, const juce::String& moduleType)
         m_contentPanelOpen = true;
         resized();
     }
-    else if (moduleType == "SYNTH" || moduleType == "DRUMS"
+    else if (moduleType == "SYNTH" || moduleType == "DRUMS" || moduleType == "DRUM MACHINE"
              || moduleType == "SAMPLER" || moduleType == "VST3")
     {
         // Open Zone A to INSTRUMENT tab and show the correct editor
@@ -821,6 +977,88 @@ void PluginEditor::routeClipToTimeline (const CapturedAudioClip& clip)
     m_tabStrip.setActiveTab ("tracks");
     zoneA.setActivePanel ("tracks");
     resized();
+}
+
+DrumMachineData* PluginEditor::getDrumStateForSlot (int slotIndex) noexcept
+{
+    return zoneB.getDrumDataForSlot (slotIndex);
+}
+
+const DrumMachineData* PluginEditor::getDrumStateForSlot (int slotIndex) const noexcept
+{
+    return zoneB.getDrumDataForSlot (slotIndex);
+}
+
+void PluginEditor::syncSlotRuntimeFromModuleType (int slotIndex, const juce::String& moduleType)
+{
+    if (slotIndex < 0 || slotIndex >= SpoolAudioGraph::kNumSlots)
+        return;
+
+    const auto normalized = moduleType.toUpperCase().trim();
+
+    if (normalized == "DRUM MACHINE" || normalized == "DRUMS")
+    {
+        applyDrumStateToRuntime (slotIndex);
+        return;
+    }
+
+    int synthType = 0;
+    if (normalized == "SYNTH")
+        synthType = 1;
+    else if (normalized == "REEL")
+        synthType = 3;
+
+    const bool isAudioProducer = (normalized == "SYNTH"
+                                  || normalized == "SAMPLER"
+                                  || normalized == "REEL");
+
+    processorRef.getAudioGraph().setSlotSynthType (slotIndex, synthType);
+    processorRef.setSlotActive (slotIndex, isAudioProducer);
+}
+
+void PluginEditor::syncAllSlotRuntimeFromModuleList()
+{
+    for (int slotIndex = 0; slotIndex < m_lastModuleNames.size(); ++slotIndex)
+    {
+        const auto moduleType =
+            m_lastModuleNames[slotIndex].fromLastOccurrenceOf (":", false, false);
+        syncSlotRuntimeFromModuleType (slotIndex, moduleType);
+    }
+}
+
+void PluginEditor::applyDrumStateToRuntime (int slotIndex)
+{
+    auto* state = getDrumStateForSlot (slotIndex);
+    if (state == nullptr)
+        return;
+
+    state->clamp();
+
+    processorRef.getAudioGraph().setSlotSynthType (slotIndex, 2);
+    processorRef.setSlotActive (slotIndex, true);
+    processorRef.getAudioGraph().getDrumMachine (slotIndex).applyState (*state);
+
+    const int numVoices = static_cast<int> (state->voices.size());
+    processorRef.setDrumVoiceCount (slotIndex, numVoices);
+    for (int vi = 0; vi < numVoices; ++vi)
+    {
+        const auto& voice = state->voices[static_cast<size_t> (vi)];
+        processorRef.setDrumVoiceMidiNote  (slotIndex, vi, voice.midiNote);
+        processorRef.setDrumVoiceStepBits  (slotIndex, vi, voice.stepBits);
+        processorRef.setDrumVoiceStepCount (slotIndex, vi, voice.stepCount);
+        for (int step = 0; step < DrumVoiceState::kMaxSteps; ++step)
+        {
+            processorRef.setDrumStepVelocity (slotIndex, vi, step, voice.stepVelocity (step));
+            processorRef.setDrumStepRatchet  (slotIndex, vi, step, voice.stepRatchetCount (step));
+            processorRef.setDrumStepDivision (slotIndex, vi, step, voice.stepRepeatDivision (step));
+        }
+    }
+}
+
+void PluginEditor::replaceDrumStateForSlot (int slotIndex, const DrumMachineData& state)
+{
+    zoneB.setDrumDataForSlot (slotIndex, state);
+    applyDrumStateToRuntime (slotIndex);
 }
 
 void PluginEditor::openTransportSettings()

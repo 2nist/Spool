@@ -1,9 +1,17 @@
 #include "InstrumentPanel.h"
+#include "PolySynthEditorComponent.h"
+#include "DrumEditorComponent.h"
+#include "../../PluginProcessor.h"
+#include "../../preset/PresetManager.h"
 
 //==============================================================================
-InstrumentPanel::InstrumentPanel()
+InstrumentPanel::InstrumentPanel (PluginProcessor& p)
+    : processorRef (p)
 {
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    m_editorViewport.setScrollBarsShown (true, false);
+    addChildComponent (m_editorViewport);
+    addChildComponent (m_presetBar);
 }
 
 //==============================================================================
@@ -75,14 +83,158 @@ void InstrumentPanel::showSlot (int slotIndex)
 {
     m_activeSlot = slotIndex;
     m_state      = State::editor;
+
+    const SlotEntry* entry = getActiveEntry();
+    if (entry != nullptr)
+        mountEditor (*entry);
+
+    m_editorViewport.setVisible (true);
+    resized();
     repaint();
 }
 
 void InstrumentPanel::showBrowser()
 {
+    unmountEditor();
+    m_editorViewport.setVisible (false);
     m_state      = State::browser;
     m_activeSlot = -1;
+    resized();
     repaint();
+}
+
+//==============================================================================
+// Editor host
+//==============================================================================
+
+void InstrumentPanel::mountEditor (const SlotEntry& entry)
+{
+    // Detach any previous content without deleting owned components
+    m_editorViewport.setViewedComponent (nullptr, false);
+
+    if (entry.moduleType == "SYNTH")
+    {
+        if (!m_polySynthEditor)
+            m_polySynthEditor = std::make_unique<PolySynthEditorComponent>();
+
+        auto& synth = processorRef.getAudioGraph().getPolySynth (entry.slotIndex);
+        m_polySynthEditor->setProcessor (&synth);
+        m_editorViewport.setViewedComponent (m_polySynthEditor.get(), false);
+    }
+    else if (entry.moduleType == "DRUMS")
+    {
+        if (!m_drumEditor)
+            m_drumEditor = std::make_unique<DrumEditorComponent>();
+
+        m_drumEditor->setState (onRequestDrumState != nullptr ? onRequestDrumState (entry.slotIndex) : nullptr);
+        m_drumEditor->onStateChanged = [this, slot = entry.slotIndex]
+        {
+            if (onDrumStateChanged != nullptr)
+                if (auto* state = onRequestDrumState != nullptr ? onRequestDrumState (slot) : nullptr)
+                    onDrumStateChanged (slot, *state);
+        };
+        m_drumEditor->onPreviewVoice = [this, slot = entry.slotIndex] (int voiceIndex, float velocity)
+        {
+            if (onPreviewDrumVoice != nullptr)
+                onPreviewDrumVoice (slot, voiceIndex, velocity);
+        };
+        m_editorViewport.setViewedComponent (m_drumEditor.get(), false);
+    }
+    // REEL, OUTPUT, unknown: leave viewport empty — module picks its own Zone A panel
+
+    wirePresetBar (entry);
+}
+
+void InstrumentPanel::unmountEditor()
+{
+    m_editorViewport.setViewedComponent (nullptr, false);
+
+    if (m_polySynthEditor)
+        m_polySynthEditor->setProcessor (nullptr);
+
+    if (m_drumEditor)
+    {
+        m_drumEditor->setState (nullptr);
+        m_drumEditor->onStateChanged = nullptr;
+        m_drumEditor->onPreviewVoice = nullptr;
+    }
+
+    m_presetBar.onRequestState = nullptr;
+    m_presetBar.onLoadPreset   = nullptr;
+    m_presetBar.setVisible (false);
+}
+
+//==============================================================================
+// Entry helper
+//==============================================================================
+
+const InstrumentPanel::SlotEntry* InstrumentPanel::getActiveEntry() const noexcept
+{
+    for (const auto& s : m_slots)
+        if (s.slotIndex == m_activeSlot)
+            return &s;
+    return nullptr;
+}
+
+//==============================================================================
+// Preset bar wiring
+//==============================================================================
+
+void InstrumentPanel::wirePresetBar (const SlotEntry& entry)
+{
+    const int slot = entry.slotIndex;
+
+    if (entry.moduleType == "SYNTH")
+    {
+        m_presetBar.setModuleType (PresetManager::ModuleType::Synth);
+
+        m_presetBar.onRequestState = [this, slot]() -> juce::var
+        {
+            return PresetManager::captureSynthPreset (
+                processorRef.getAudioGraph().getPolySynth (slot),
+                m_presetBar.getCurrentName());
+        };
+
+        m_presetBar.onLoadPreset = [this, slot] (const juce::var& data)
+        {
+            PresetManager::applySynthPreset (
+                data,
+                processorRef.getAudioGraph().getPolySynth (slot));
+        };
+
+        m_presetBar.setVisible (true);
+    }
+    else if (entry.moduleType == "DRUMS")
+    {
+        m_presetBar.setModuleType (PresetManager::ModuleType::Drum);
+
+        m_presetBar.onRequestState = [this, slot]() -> juce::var
+        {
+            if (auto* state = onRequestDrumState != nullptr ? onRequestDrumState (slot) : nullptr)
+                return PresetManager::captureDrumPreset (*state, m_presetBar.getCurrentName());
+            return {};
+        };
+
+        m_presetBar.onLoadPreset = [this, slot] (const juce::var& data)
+        {
+            if (auto* state = onRequestDrumState != nullptr ? onRequestDrumState (slot) : nullptr)
+            {
+                PresetManager::applyDrumPreset (data, *state);
+                if (m_drumEditor != nullptr)
+                    m_drumEditor->setState (state);
+                if (onDrumStateChanged != nullptr)
+                    onDrumStateChanged (slot, *state);
+            }
+        };
+
+        m_presetBar.setVisible (true);
+    }
+    else
+    {
+        m_presetBar.onRequestState = nullptr;
+        m_presetBar.onLoadPreset   = nullptr;
+        m_presetBar.setVisible (false);
+    }
 }
 
 //==============================================================================
@@ -96,7 +248,7 @@ void InstrumentPanel::paint (juce::Graphics& g)
     if (m_state == State::browser)
         paintBrowser (g);
     else
-        paintEditor (g);
+        paintEditorHeader (g);
 }
 
 void InstrumentPanel::paintBrowser (juce::Graphics& g) const
@@ -106,6 +258,8 @@ void InstrumentPanel::paintBrowser (juce::Graphics& g) const
     // Header
     g.setColour (Theme::Colour::surface1);
     g.fillRect  (0, 0, w, kBrowserHeaderH);
+    g.setColour (Theme::Zone::a.withAlpha (0.85f));
+    g.fillRect (0, 0, 3, kBrowserHeaderH);
     g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.5f));
     g.fillRect  (0, kBrowserHeaderH - 1, w, 1);
     g.setFont   (Theme::Font::micro());
@@ -236,25 +390,21 @@ void InstrumentPanel::paintBrowserSlot (juce::Graphics& g,
 }
 
 //==============================================================================
-// Editor state
+// Editor header (back button, slot name, type badge)
 //==============================================================================
 
-void InstrumentPanel::paintEditor (juce::Graphics& g) const
+void InstrumentPanel::paintEditorHeader (juce::Graphics& g) const
 {
-    const int w = getWidth();
+    const int w     = getWidth();
+    const auto* entry = getActiveEntry();
 
-    const SlotEntry* entry = nullptr;
-    for (const auto& s : m_slots)
-        if (s.slotIndex == m_activeSlot)
-            entry = &s;
-
-    // Header
     g.setColour (Theme::Colour::surface1);
     g.fillRect  (0, 0, w, kEditorHeaderH);
+    g.setColour (Theme::Zone::a.withAlpha (0.85f));
+    g.fillRect (0, 0, 3, kEditorHeaderH);
     g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.5f));
     g.fillRect  (0, kEditorHeaderH - 1, w, 1);
 
-    // Back button
     const auto backR = backBtnRect();
     g.setFont   (Theme::Font::label());
     g.setColour (Theme::Colour::inkGhost);
@@ -269,7 +419,6 @@ void InstrumentPanel::paintEditor (juce::Graphics& g) const
                                            w - backR.getRight() - kPad - 40, kEditorHeaderH),
                      juce::Justification::centredLeft, true);
 
-        // Type badge
         const juce::String badge    = typeShort (entry->moduleType);
         const juce::Colour badgeCol = typeColor (entry->moduleType);
         const int badgeW = 36, badgeH = 12;
@@ -284,10 +433,15 @@ void InstrumentPanel::paintEditor (juce::Graphics& g) const
                      juce::Rectangle<int> (badgeX, badgeY, badgeW, badgeH),
                      juce::Justification::centred, false);
 
-        if (entry->moduleType == "SYNTH")
-            paintPolySynth (g, entry);
-        else
-            paintEditorStub (g, entry);
+        // Stub message for types without a real editor
+        if (entry->moduleType != "SYNTH" && entry->moduleType != "DRUMS")
+        {
+            g.setFont   (Theme::Font::micro());
+            g.setColour (Theme::Colour::inkGhost);
+            g.drawText  (entry->moduleType + " editor coming soon",
+                         getLocalBounds().withTrimmedTop (kEditorHeaderH).reduced (12),
+                         juce::Justification::centredTop, true);
+        }
     }
     else
     {
@@ -296,59 +450,6 @@ void InstrumentPanel::paintEditor (juce::Graphics& g) const
         g.drawText  ("No module",
                      getLocalBounds().withTrimmedTop (kEditorHeaderH),
                      juce::Justification::centred, false);
-    }
-}
-
-void InstrumentPanel::paintEditorStub (juce::Graphics& g,
-                                        const SlotEntry* entry) const
-{
-    const auto area = getLocalBounds().withTrimmedTop (kEditorHeaderH);
-    const juce::String typeName = entry ? entry->moduleType : "MODULE";
-
-    g.setFont   (Theme::Font::micro());
-    g.setColour (Theme::Colour::inkGhost);
-    g.drawText  (typeName + " editor\nexpanding in future session",
-                 area.reduced (12), juce::Justification::centred, true);
-}
-
-void InstrumentPanel::paintPolySynth (juce::Graphics& g,
-                                       const SlotEntry* /*entry*/) const
-{
-    const int w    = getWidth();
-    const int topY = kEditorHeaderH + kPad;
-
-    struct Section { juce::String name; juce::Colour color; };
-    const Section sections[] = {
-        { "OSCILLATORS", juce::Colour (0xFF4a9eff) },
-        { "FILTER",      juce::Colour (Theme::Zone::b) },
-        { "ENVELOPES",   juce::Colour (0xFF4a9eff) },
-        { "LFO",         juce::Colour (0xFFee4aee) },
-        { "VOICE",       juce::Colour (Theme::Colour::inkMid) },
-        { "OUTPUT",      juce::Colour (Theme::Colour::inkMid) },
-    };
-
-    int y = topY;
-    for (const auto& sec : sections)
-    {
-        const juce::Rectangle<int> hdr (0, y, w, 20);
-        g.setColour (Theme::Colour::surface1);
-        g.fillRect  (hdr);
-        g.setColour (sec.color.withAlpha (0.6f));
-        g.fillRect  (0, y, 2, 20);
-        g.setFont   (Theme::Font::micro());
-        g.setColour (sec.color);
-        g.drawText  ("\xe2\x96\xbe " + sec.name,
-                     juce::Rectangle<int> (kPad, y, w - kPad * 2, 20),
-                     juce::Justification::centredLeft, false);
-        y += 20;
-
-        const juce::Rectangle<int> body (0, y, w, 32);
-        g.setColour (Theme::Colour::surface0);
-        g.fillRect  (body);
-        g.setFont   (Theme::Font::micro());
-        g.setColour (Theme::Colour::inkGhost.withAlpha (0.4f));
-        g.drawText  ("— params —", body, juce::Justification::centred, false);
-        y += 34;
     }
 }
 
@@ -363,6 +464,35 @@ juce::Rectangle<int> InstrumentPanel::backBtnRect() const noexcept
 
 void InstrumentPanel::resized()
 {
+    if (m_state == State::editor)
+    {
+        const bool hasPresetBar = m_presetBar.isVisible();
+        const int  topOfContent = kEditorHeaderH + (hasPresetBar ? kPresetBarH : 0);
+
+        if (hasPresetBar)
+            m_presetBar.setBounds (0, kEditorHeaderH, getWidth(), kPresetBarH);
+
+        const auto editorArea = getLocalBounds().withTrimmedTop (topOfContent);
+        m_editorViewport.setBounds (editorArea);
+
+        if (auto* c = m_editorViewport.getViewedComponent())
+        {
+            int prefH = editorArea.getHeight();
+            if (c == static_cast<juce::Component*> (m_polySynthEditor.get()))
+                prefH = PolySynthEditorComponent::kRequiredHeight;
+            else if (c == static_cast<juce::Component*> (m_drumEditor.get()))
+                prefH = DrumEditorComponent::kRequiredHeight;
+
+            c->setSize (editorArea.getWidth(),
+                        juce::jmax (editorArea.getHeight(), prefH));
+        }
+    }
+    else
+    {
+        m_presetBar.setBounds (0, 0, 0, 0);
+        m_editorViewport.setBounds (0, 0, 0, 0);
+    }
+
     repaint();
 }
 
@@ -383,8 +513,19 @@ void InstrumentPanel::mouseDown (const juce::MouseEvent& e)
             {
                 if (entry.slotIndex == hit && entry.moduleType.isNotEmpty())
                 {
-                    if (onSlotSelected) onSlotSelected (hit);
-                    showSlot (hit);
+                    if (onSlotSelected)
+                    {
+                        // The callback (ZoneAComponent → PluginEditor) drives full slot
+                        // selection and will call showSlot() for non-REEL types.
+                        // For REEL, the callback opens the reel_N panel instead —
+                        // InstrumentPanel stays in browser mode. Do not call showSlot() here.
+                        onSlotSelected (hit, entry.moduleType);
+                    }
+                    else
+                    {
+                        // Standalone / no callback: navigate locally
+                        showSlot (hit);
+                    }
                     return;
                 }
             }

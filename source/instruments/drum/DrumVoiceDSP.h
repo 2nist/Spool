@@ -76,6 +76,11 @@ private:
     double m_sampleRate  = 44100.0;
     float  m_velocity    = 1.0f;
     bool   m_active      = false;
+    float  m_driveAmount = 0.2f;
+    float  m_gritAmount  = 0.1f;
+    float  m_snapAmount  = 0.2f;
+    float  m_attackEnv   = 1.0f;
+    float  m_attackStep  = 1.0f;
 
     // TONE
     double m_tonePhase        = 0.0;
@@ -89,15 +94,19 @@ private:
     float  m_noiseEnv         = 0.0f;
     double m_noiseDecayCoeff  = 0.0;
     float  m_pinkState        = 0.0f;  // pink noise 1-pole state
+    float  m_noiseLast        = 0.0f;
     OnePole m_noiseHP;
     OnePole m_noiseLP;
 
     // CLICK
     float  m_clickEnv         = 0.0f;
     double m_clickDecayCoeff  = 0.0;
+    double m_clickPhase       = 0.0;
+    double m_clickPhaseInc    = 0.0;
     int    m_clickBurstCount  = 0;
     int    m_clickBurstSamples = 0;
     int    m_nextBurstAt      = 0;
+    OnePole m_clickHP;
 
     // METAL
     struct MetalOsc { double phase = 0.0; double freq = 0.0; };
@@ -119,6 +128,7 @@ private:
     float renderNoise()  noexcept;
     float renderClick()  noexcept;
     float renderMetal()  noexcept;
+    float applyCharacter (float sample) noexcept;
 
     /** Exponential decay coefficient from a time constant in seconds. */
     double decayCoeff (double seconds) const noexcept

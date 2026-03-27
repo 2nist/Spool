@@ -76,6 +76,10 @@ public:
     //--- InstrumentPanel interface --------------------------------------------
     InstrumentPanel* getInstrumentPanel() noexcept { return m_instrumentPanel.get(); }
 
+    /** Fired when the user selects a slot from the InstrumentPanel browser.
+        Wire in PluginEditor to perform full slot selection across all zones. */
+    std::function<void(int slotIndex, const juce::String& moduleType)> onInstrumentSlotSelected;
+
     /** Update InstrumentPanel browser list from Zone B module list.
         Format: "GroupName:ModuleType" e.g. "SYNTHS:SYNTH" */
     void setInstrumentSlots (const juce::StringArray& moduleList);

@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_core/juce_core.h>
+#include <array>
 #include "dsp/SpoolAudioGraph.h"
 #include "dsp/MidiRouter.h"
 #include "dsp/CircularAudioBuffer.h"
@@ -9,6 +10,7 @@
 #include "midi/MidiConstraintEngine.h"
 #include "state/AppState.h"
 #include "structure/StructureEngine.h"
+#include "theory/TheoryAdapter.h"
 #include "components/ZoneB/SlotPattern.h"
 
 #if (MSVC)
@@ -80,6 +82,7 @@ public:
     //--- Per-slot step data (UI thread writes, audio thread reads) -----------
     void setStepActive (int slot, int step, bool active) noexcept;
     void setStepCount  (int slot, int count) noexcept;
+    void setSlotPattern (int slot, const SlotPattern& pattern) noexcept;
 
     /** MIDI note each slot plays when a step fires.  Default: 60 (C4). */
     void setSlotNote  (int slot, int note)  noexcept;
@@ -113,6 +116,9 @@ public:
     void setDrumVoiceStepCount (int slot, int voice, int count)      noexcept;
     void setDrumVoiceMidiNote  (int slot, int voice, int note)       noexcept;
     void setDrumVoiceCount     (int slot, int count)                 noexcept;
+    void setDrumStepVelocity   (int slot, int voice, int step, float velocity) noexcept;
+    void setDrumStepRatchet    (int slot, int voice, int step, int count) noexcept;
+    void setDrumStepDivision   (int slot, int voice, int step, int division) noexcept;
 
     uint64_t getDrumVoiceStepBits  (int slot, int voice) const noexcept;
     int      getDrumVoiceStepCount (int slot, int voice) const noexcept;
@@ -188,6 +194,67 @@ private:
     std::atomic<int>      m_stepCount[SpoolAudioGraph::kNumSlots];
     std::atomic<int>      m_slotNote [SpoolAudioGraph::kNumSlots];
 
+    static constexpr int kSequencerTicksPerBeat = 96;
+    static constexpr int kSequencerTicksPerStep = kSequencerTicksPerBeat / 4;
+    static constexpr int kMaxSequencerEventsPerSlot = SlotPattern::MAX_STEPS * SlotPattern::MAX_MICRO_EVENTS;
+    static constexpr int kMaxHeldNotesPerSlot = 16;
+    static constexpr int kMaxDrumStepsPerVoice = 64;
+
+    struct RuntimeMicroEvent
+    {
+        int startTick  { 0 };
+        int lengthTicks { 1 };
+        int pitchValue { SlotPattern::kUseSlotBasePitch };
+        int anchorValue { SlotPattern::kUseSlotBasePitch };
+        int stepIndex { 0 };
+        int eventOrdinalInStep { 0 };
+        int eventsInStep { 1 };
+        uint8_t velocity { 100 };
+        SlotPattern::NoteMode noteMode { SlotPattern::NoteMode::absolute };
+        SlotPattern::StepRole role { SlotPattern::StepRole::lead };
+        SlotPattern::HarmonicSource harmonicSource { SlotPattern::HarmonicSource::key };
+        bool lookAheadToNextChord { false };
+    };
+
+    struct RuntimeSlotPattern
+    {
+        int patternLengthTicks { kSequencerTicksPerStep * SlotPattern::DEFAULT_PATTERN_UNITS };
+        int eventCount { 0 };
+        bool hasEvents { false };
+        SlotPattern::LaneContext laneContext { SlotPattern::LaneContext::melodic };
+        std::array<RuntimeMicroEvent, kMaxSequencerEventsPerSlot> events {};
+    };
+
+    struct HeldSlotNote
+    {
+        int note { -1 };
+        int ticksRemaining { 0 };
+        bool active { false };
+    };
+
+    struct PhraseMemory
+    {
+        bool hasPreviousNote { false };
+        int previousNote { 60 };
+        int previousDirection { 0 };
+        int recentLow { 60 };
+        int recentHigh { 60 };
+        int previousChordRootPc { 0 };
+        int notesSinceChordChange { 0 };
+        SlotPattern::StepRole previousRole { SlotPattern::StepRole::lead };
+        int previousChordVoiceIndex { 0 };
+        int previousChordTopNote { 60 };
+        bool preferOpenChordVoicing { false };
+        int cadenceTemplate { 0 };
+        int cadenceEventCounter { 0 };
+    };
+
+    RuntimeSlotPattern m_runtimePatterns[SpoolAudioGraph::kNumSlots];
+    juce::SpinLock     m_runtimePatternLocks[SpoolAudioGraph::kNumSlots];
+    HeldSlotNote       m_heldNotes[SpoolAudioGraph::kNumSlots][kMaxHeldNotesPerSlot];
+    PhraseMemory       m_phraseMemory[SpoolAudioGraph::kNumSlots];
+    TheoryAdapter      m_theoryAdapter;
+
     // Note-hold state (audio thread only — no atomic needed)
     bool m_noteHeld[SpoolAudioGraph::kNumSlots] = {};
     int  m_midiNoteMap[128] = {};
@@ -204,6 +271,9 @@ private:
         std::atomic<uint64_t> stepBits  { 0  };
         std::atomic<int>      stepCount { 16 };
         std::atomic<int>      midiNote  { 36 };
+        std::array<std::atomic<int>, kMaxDrumStepsPerVoice> stepVelocitiesNorm {};
+        std::array<std::atomic<int>, kMaxDrumStepsPerVoice> stepRatchets {};
+        std::array<std::atomic<int>, kMaxDrumStepsPerVoice> stepDivisions {};
         DrumVoiceStepState() = default;
     };
     DrumVoiceStepState   m_drumVoices [SpoolAudioGraph::kNumSlots][kMaxDrumVoices];
@@ -224,7 +294,30 @@ private:
     static constexpr int    kRoutingOutputs = 2;
 
     //--- Song helpers
-    void advanceSongBeat (int sampleOffset);
+    void advanceSequencerTick (int sampleOffset);
+    static RuntimeSlotPattern compileRuntimePattern (const SlotPattern& pattern);
+    int realizeRuntimePitch (int slot,
+                             const RuntimeMicroEvent& event,
+                             int baseNote,
+                             const juce::String& keyRoot,
+                             const juce::String& keyScale,
+                             const Chord& currentChord,
+                             const Chord& nextChord,
+                             bool structureFollow,
+                             const std::vector<int>& structureChordPcs);
+    void triggerRuntimePatternEvents (int slot,
+                                      int patternTick,
+                                      int sampleOffset,
+                                      bool structureFollow,
+                                      const juce::String& keyRoot,
+                                      const juce::String& keyScale,
+                                      const Chord& currentChord,
+                                      const Chord& nextChord,
+                                      const std::vector<int>& structureChordPcs);
+    void resetPhraseMemory (int slot);
+    void updatePhraseMemory (int slot, int realizedNote, SlotPattern::StepRole role, const Chord& currentChord);
+    void releaseFinishedSlotNotes (int slot, int sampleOffset);
+    void pushHeldNote (int slot, int note, int lengthTicks);
     
     double m_currentSongBeat { 0.0 };
     

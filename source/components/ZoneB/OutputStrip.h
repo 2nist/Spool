@@ -4,12 +4,11 @@
 
 //==============================================================================
 /**
-    OutputStrip  — compact 22px output row replacing the full 80px OutputSlot.
+    OutputStrip  — compact output row focused on master level.
 
-    Left-to-right: [red stripe] [OUTPUT label] [LVL slider] [PAN slider]
+    Left-to-right: [red stripe] [OUTPUT label] [LVL slider]
 
-    Drag on either slider to adjust; double-click to reset to default.
-    Callbacks fire coninuously during drag.
+    Drag on the level slider to adjust; double-click to reset to default.
 */
 class OutputStrip : public juce::Component
 {
@@ -42,7 +41,7 @@ private:
     float m_level { 1.0f };
     float m_pan   { 0.0f };
 
-    enum class DragTarget { None, Level, Pan };
+    enum class DragTarget { None, Level };
     DragTarget m_drag { DragTarget::None };
 
     //==========================================================================
@@ -50,19 +49,13 @@ private:
     static constexpr int kStripeW     = 3;
     static constexpr int kPad         = 5;
     static constexpr int kNameW       = 52;   // "OUTPUT" label
-    static constexpr int kMiniLabelW  = 28;   // "LVL" / "PAN"
-    static constexpr int kPanTrackW   = 120;  // fixed-width pan track
     static constexpr int kThumbD      = 8;
 
     //==========================================================================
     // Region helpers
     juce::Rectangle<int> stripeRect()     const noexcept;
     juce::Rectangle<int> nameLabelRect()  const noexcept;
-    juce::Rectangle<int> lvlLabelRect()   const noexcept;
     juce::Rectangle<int> levelTrackRect() const noexcept;
-    juce::Rectangle<int> panLabelRect()   const noexcept;
-    juce::Rectangle<int> panTrackRect()   const noexcept;
-
     void paintSlider (juce::Graphics& g, juce::Rectangle<int> tk,
                       float t, bool fromCenter, bool active) const;
 
