@@ -80,6 +80,7 @@ struct SlotPattern
         bool     accent     { false };
         StepRole role       { StepRole::lead };
         NoteMode noteMode   { NoteMode::absolute };
+        bool     followStructure { true };
         HarmonicSource harmonicSource { HarmonicSource::key };
         bool     lookAheadToNextChord { false };
         int      anchorValue { kUseSlotBasePitch };

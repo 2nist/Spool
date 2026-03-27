@@ -1,14 +1,16 @@
 #pragma once
-#include <juce_gui_basics/juce_gui_basics.h>
-#include <vector>
-#include "../../Theme.h"
 
-class PluginProcessor;  
+#include <juce_gui_basics/juce_gui_basics.h>
+
+#include "../../Theme.h"
+#include "../../structure/StructureState.h"
+
+class PluginProcessor;
 
 class StructurePanel : public juce::Component
 {
 public:
-    StructurePanel (PluginProcessor&);
+    explicit StructurePanel (PluginProcessor&);
     ~StructurePanel() override = default;
 
     void paint (juce::Graphics&) override;
@@ -20,159 +22,160 @@ public:
     std::function<void(const juce::Array<int>&)> onRailsSeeded;
 
 private:
-    enum class SelectionType
+    class ContentComponent : public juce::Component
+    {
+    public:
+        explicit ContentComponent (StructurePanel& ownerIn) : owner (ownerIn) {}
+        void paint (juce::Graphics& g) override;
+    private:
+        StructurePanel& owner;
+    };
+
+    enum class SelectionTarget
     {
         none,
-        pattern,
         section,
-        chord
+        arrangementBlock
     };
 
-    class PatternsModel : public juce::ListBoxModel
+    class SectionListModel : public juce::ListBoxModel
     {
     public:
-        explicit PatternsModel (StructurePanel& ownerIn) : owner (ownerIn) {}
+        explicit SectionListModel (StructurePanel& ownerIn) : owner (ownerIn) {}
         int getNumRows() override;
         void paintListBoxItem (int rowNumber, juce::Graphics&, int width, int height, bool selected) override;
         void selectedRowsChanged (int lastRowSelected) override;
-
     private:
         StructurePanel& owner;
     };
 
-    class SectionsModel : public juce::ListBoxModel
+    class ArrangementListModel : public juce::ListBoxModel
     {
     public:
-        explicit SectionsModel (StructurePanel& ownerIn) : owner (ownerIn) {}
+        explicit ArrangementListModel (StructurePanel& ownerIn) : owner (ownerIn) {}
         int getNumRows() override;
         void paintListBoxItem (int rowNumber, juce::Graphics&, int width, int height, bool selected) override;
         void selectedRowsChanged (int lastRowSelected) override;
-
     private:
         StructurePanel& owner;
     };
 
-    class ChordsModel : public juce::ListBoxModel
+    class ProgressionStrip : public juce::Component
     {
     public:
-        explicit ChordsModel (StructurePanel& ownerIn) : owner (ownerIn) {}
-        int getNumRows() override;
-        void paintListBoxItem (int rowNumber, juce::Graphics&, int width, int height, bool selected) override;
-        void selectedRowsChanged (int lastRowSelected) override;
-
+        explicit ProgressionStrip (StructurePanel& ownerIn) : owner (ownerIn) {}
+        void paint (juce::Graphics&) override;
+        void mouseUp (const juce::MouseEvent& event) override;
+        void mouseDoubleClick (const juce::MouseEvent& event) override;
     private:
         StructurePanel& owner;
     };
 
     PluginProcessor& processorRef;
-    PatternsModel patternsModel { *this };
-    SectionsModel sectionsModel { *this };
-    ChordsModel chordsModel { *this };
-    juce::TabbedComponent listTabs { juce::TabbedButtonBar::TabsAtTop };
+    ContentComponent content { *this };
+    juce::Viewport viewport;
 
-    juce::ListBox patternsList { "Patterns", &patternsModel };
-    juce::TextButton addPatternButton { "Add Pattern" };
-    juce::TextButton addSectionButton { "Add Section" };
-    juce::TextButton addChordButton { "Add Chord" };
-    juce::TextButton deleteButton { "Delete Selected" };
+    SectionListModel sectionListModel { *this };
+    ArrangementListModel arrangementListModel { *this };
+    ProgressionStrip progressionStrip { *this };
 
-    juce::ListBox sectionsList { "Sections", &sectionsModel };
-    juce::ListBox chordsList { "Chords", &chordsModel };
-    
-    juce::TextButton loadButton {"Load"};
-    juce::TextButton saveButton {"Save"};
-    std::unique_ptr<juce::FileChooser> fileChooser;
+    juce::ToggleButton structureFollowToggle { "Use Structure For Tracks" };
+    juce::TextButton seedRailsButton { "Seed Rails" };
 
-    // Thin-slice structure intent input.
-    juce::Label intentTitle { {}, "Structure Intent" };
-    juce::Label intentSectionLabel { {}, "Section" };
-    juce::TextEditor intentSectionEditor;
-    juce::Label intentRootLabel { {}, "Root" };
-    juce::ComboBox intentRootBox;
-    juce::Label intentModeLabel { {}, "Mode" };
-    juce::ComboBox intentModeBox;
-    juce::Label intentProgLabel { {}, "Roman" };
-    juce::TextEditor intentProgressionEditor;
-    juce::Label intentBarsLabel { {}, "Bars" };
-    juce::TextEditor intentBarsEditor;
-    juce::TextButton intentApplyButton { "Apply Structure" };
-    juce::TextButton intentApplyToRailsButton { "Apply To Rails" };
-    juce::ToggleButton intentFollowToggle { "Use Structure For Tracks" };
-    juce::ToggleButton intentSelectedOnlyToggle { "Selected Lane Only" };
-    juce::ToggleButton advancedToggle { "Advanced" };
-    juce::Label intentFeedbackLabel { {}, "" };
+    juce::Label sectionListTitle { {}, "Sections" };
+    juce::ListBox sectionList { "Section List", &sectionListModel };
+    juce::TextButton addSectionButton { "Add" };
+    juce::TextButton duplicateSectionButton { "Duplicate" };
+    juce::TextButton deleteSectionButton { "Delete" };
+    juce::TextButton moveSectionUpButton { "Up" };
+    juce::TextButton moveSectionDownButton { "Down" };
 
-    juce::Label detailsTitle { {}, "Details" };
-    juce::Label quickTitle { {}, "Quick Progression" };
-    juce::Label progressionLabel { {}, "Progression" };
-    juce::TextEditor progressionEditor;
-    juce::Label barsLabel { {}, "Bars/Chord" };
-    juce::ComboBox barsPerChordBox;
-    juce::Label targetPatternLabel { {}, "Pattern" };
-    juce::ComboBox targetPatternBox;
-    juce::ToggleButton replaceExistingToggle { "Replace sections/chords" };
-    juce::TextButton buildProgressionButton { "Build Progression" };
+    juce::Label arrangementTitle { {}, "Arrangement" };
+    juce::ListBox arrangementList { "Arrangement List", &arrangementListModel };
+    juce::TextButton addArrangementButton { "Add" };
+    juce::TextButton duplicateArrangementButton { "Duplicate" };
+    juce::TextButton deleteArrangementButton { "Delete" };
+    juce::TextButton moveArrangementUpButton { "Up" };
+    juce::TextButton moveArrangementDownButton { "Down" };
 
-    // Pattern editor
-    juce::Label patternNameLabel { {}, "Name" };
-    juce::TextEditor patternNameEditor;
-    juce::Label patternLengthLabel { {}, "Length (beats)" };
-    juce::TextEditor patternLengthEditor;
+    juce::Label editorHeader { {}, "Section Editor" };
+    juce::Label editorHint { {}, "Select a section or arrangement block to sculpt song form." };
+    juce::Label nameLabel { {}, "Name" };
+    juce::Label barsLabel { {}, "Length (Bars)" };
+    juce::Label repeatsLabel { {}, "Repeats" };
+    juce::Label transitionLabel { {}, "Transition" };
+    juce::Label beatsLabel { {}, "Meter" };
+    juce::Label keyLabel { {}, "Key / Root" };
+    juce::Label modeLabel { {}, "Mode" };
+    juce::Label centerLabel { {}, "Harmonic Center" };
+    juce::TextEditor nameEditor;
+    juce::Slider barsSlider;
+    juce::Slider repeatsSlider;
+    juce::ComboBox beatsPerBarBox;
+    juce::ComboBox transitionIntentBox;
+    juce::ComboBox keyRootBox;
+    juce::ComboBox modeBox;
+    juce::ComboBox harmonicCenterBox;
 
-    // Section editor
-    juce::Label sectionPatternLabel { {}, "Pattern" };
-    juce::ComboBox sectionPatternBox;
-    juce::Label sectionStartLabel { {}, "Start" };
-    juce::TextEditor sectionStartEditor;
-    juce::Label sectionLengthLabel { {}, "Length" };
-    juce::TextEditor sectionLengthEditor;
-    juce::Label sectionRepeatsLabel { {}, "Repeats" };
-    juce::TextEditor sectionRepeatsEditor;
-    juce::Label sectionSlotsLabel { {}, "Slot Mask" };
-    juce::TextEditor sectionSlotsEditor;
-    juce::Label sectionTransposeLabel { {}, "Transpose" };
-    juce::TextEditor sectionTransposeEditor;
+    juce::Label progressionHeader { {}, "Progression Cells" };
+    juce::Label progressionHint { {}, "One harmonic cell per bar. Cells loop across the section length." };
+    juce::Label chordRootLabel { {}, "Selected Chord Root" };
+    juce::Label chordTypeLabel { {}, "Selected Chord Quality" };
+    juce::TextButton addChordCellButton { "Add Cell" };
+    juce::TextButton removeChordCellButton { "Remove" };
+    juce::ComboBox chordRootBox;
+    juce::ComboBox chordTypeBox;
 
-    // Chord editor
-    juce::Label chordStartLabel { {}, "Start" };
-    juce::TextEditor chordStartEditor;
-    juce::Label chordDurationLabel { {}, "Duration" };
-    juce::TextEditor chordDurationEditor;
-    juce::Label chordRootLabel { {}, "Root MIDI" };
-    juce::TextEditor chordRootEditor;
-    juce::Label chordTypeLabel { {}, "Type" };
-    juce::TextEditor chordTypeEditor;
+    juce::Label summaryHeader { {}, "Song Summary" };
+    juce::Label summaryTempo { {}, "-" };
+    juce::Label summaryKey { {}, "-" };
+    juce::Label summaryMode { {}, "-" };
+    juce::Label summaryBars { {}, "-" };
+    juce::Label summaryDuration { {}, "-" };
 
-    juce::TextButton applyButton { "Apply Changes" };
+    SelectionTarget selectionTarget { SelectionTarget::none };
+    int selectedSectionIndex = -1;
+    int selectedArrangementIndex = -1;
+    int selectedChordIndex = -1;
+    bool suppressListCallbacks = false;
+    bool suppressControlCallbacks = false;
 
-    SelectionType selectionType { SelectionType::none };
-    int selectedIndex = -1;
-    bool suppressSelectionCallbacks = false;
-    std::vector<std::pair<int, int>> chordRowMap;
-
-    void setSelection (SelectionType type, int index);
-    void clearSelection();
-    void populateEditorsForSelection();
-    void applySelectionChanges();
-    void showPatternEditors (bool show);
-    void showSectionEditors (bool show);
-    void showChordEditors (bool show);
-
-    void addPattern();
     void addSection();
-    void addChord();
-    void deleteSelected();
-    void buildProgression();
-    void refreshPatternChoices();
-    void rebuildChordRowMap();
-    void loadSong();
-    void saveSong();
-    void refreshLists();
-    void applyIntentStructure();
-    void applyIntentToRails();
-    void updateLegacyVisibility();
+    void duplicateSelectedSection();
+    void deleteSelectedSection();
+    void moveSelectedSection (int delta);
 
-    bool showAdvanced = false;
+    void addArrangementBlock();
+    void duplicateSelectedArrangementBlock();
+    void deleteSelectedArrangementBlock();
+    void moveSelectedArrangementBlock (int delta);
+    void resequenceArrangement();
+
+    void addChordCell();
+    void removeSelectedChordCell();
+    void selectChordCell (int index);
+    void showChordCellMenu();
+    void showChordEditMenu (int index);
+    void applyTheoryAction (int commandId);
+
+    void selectSection (int index);
+    void selectArrangementBlock (int index);
+    void clearSelection();
+
+    Section* getSelectedSection();
+    const Section* getSelectedSection() const;
+    ArrangementBlock* getSelectedArrangementBlock();
+    const ArrangementBlock* getSelectedArrangementBlock() const;
+    Chord* getSelectedChordCell();
+    const Chord* getSelectedChordCell() const;
+
+    juce::Rectangle<int> chordCellBounds (int index) const;
+    void refreshLists();
+    void refreshEditor();
+    void refreshSummary();
+    void commitStructureChange (bool seedRails);
+    void paintContent (juce::Graphics&);
+    void layoutContent (juce::Rectangle<int> bounds);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StructurePanel)
 };

@@ -30,7 +30,7 @@ public:
     bool keyPressed (const juce::KeyPress&) override;
     juce::MouseCursor getMouseCursor() override;
 
-    static constexpr int kHeight = 176;
+    static constexpr int kHeight = 116;
 
 private:
     SlotPattern* m_pattern    { nullptr };
@@ -41,6 +41,7 @@ private:
     int          m_pitchBase { 48 };
     SlotPattern::Step m_stepClipboard;
     bool         m_hasStepClipboard { false };
+    bool         m_detailOpen { false };
 
     enum class DragMode
     {
@@ -62,24 +63,21 @@ private:
 
     static constexpr int kPad       = 6;
     static constexpr int kGap       = 4;
-    static constexpr int kCtrlW     = 128;
     static constexpr int kBtnH      = 18;
     static constexpr int kBtnGap    = 4;
-    static constexpr int kLaneH     = 42;
+    static constexpr int kLaneH     = 58;
     static constexpr int kPitchRows = 12;
 
     juce::Rectangle<int> stepLaneRect() const noexcept;
+    juce::Rectangle<int> compactBarRect() const noexcept;
+    juce::Rectangle<int> detailToolbarRect() const noexcept;
     juce::Rectangle<int> detailRect() const noexcept;
-    juce::Rectangle<int> ctrlRect() const noexcept;
-
-    juce::Rectangle<int> patternShorterRect() const noexcept;
-    juce::Rectangle<int> patternLongerRect() const noexcept;
-    juce::Rectangle<int> stepShorterRect() const noexcept;
-    juce::Rectangle<int> stepLongerRect() const noexcept;
-    juce::Rectangle<int> addStepRect() const noexcept;
-    juce::Rectangle<int> removeStepRect() const noexcept;
+    juce::Rectangle<int> editRect() const noexcept;
+    juce::Rectangle<int> closeDetailRect() const noexcept;
     juce::Rectangle<int> modeRect() const noexcept;
     juce::Rectangle<int> roleRect() const noexcept;
+    juce::Rectangle<int> followRect() const noexcept;
+    juce::Rectangle<int> moreRect() const noexcept;
     juce::Rectangle<float> stepResizeHandleRect (int stepIndex) const noexcept;
 
     int stepAt (juce::Point<int> pos) const noexcept;
@@ -94,7 +92,8 @@ private:
     void paintEmpty (juce::Graphics& g) const;
     void paintStepLane (juce::Graphics& g) const;
     void paintDetail (juce::Graphics& g) const;
-    void paintControls (juce::Graphics& g) const;
+    void paintCompactBar (juce::Graphics& g) const;
+    void paintDetailToolbar (juce::Graphics& g) const;
     void commitChange();
     void showStepContextMenu (int stepIndex);
     void showNoteContextMenu (int eventIndex);

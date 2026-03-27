@@ -1,6 +1,7 @@
 #include "StructureEngine.h"
 
 #include <array>
+#include <cmath>
 
 namespace
 {
@@ -35,38 +36,40 @@ StructureEngine::StructureEngine (StructureState& state) : stateRef (state)
 {
 }
 
-const Section* StructureEngine::getSectionAtBeat (double beat) const
+std::optional<ResolvedSectionInstance> StructureEngine::getSectionAtBeat (double beat) const
 {
-    const auto barFloat = beat / 4.0;
+    if (! structureHasScaffold (stateRef))
+        return std::nullopt;
 
-    for (const auto& section : stateRef.sections)
+    const auto resolved = buildResolvedStructure (stateRef);
+    const auto clampedBeat = juce::jmax (0.0, beat);
+
+    for (const auto& instance : resolved)
     {
-        const auto start = static_cast<double> (section.startBar);
-        const auto end = static_cast<double> (section.startBar + section.lengthBars);
-        if (barFloat >= start && barFloat < end)
-            return &section;
+        const auto start = static_cast<double> (instance.startBeat);
+        const auto end = static_cast<double> (instance.startBeat + instance.totalBeats);
+        if (clampedBeat >= start && clampedBeat < end)
+            return instance;
     }
 
-    return nullptr;
+    return std::nullopt;
 }
 
 Chord StructureEngine::getChordAtBeat (double beat) const
 {
-    if (const auto* section = getSectionAtBeat (beat))
-    {
-        if (section->progression.empty())
-            return { "C", "maj" };
+    const auto instance = getSectionAtBeat (beat);
+    if (! instance.has_value() || instance->section == nullptr)
+        return { "C", "maj" };
 
-        const auto barFloat = beat / 4.0;
-        const auto sectionLocalBars = juce::jmax (0.0, barFloat - static_cast<double> (section->startBar));
-        const auto barsPerChord = static_cast<double> (section->lengthBars) / static_cast<double> (section->progression.size());
-        const auto slot = juce::jlimit (0,
-                                        static_cast<int> (section->progression.size() - 1),
-                                        static_cast<int> (sectionLocalBars / juce::jmax (0.0001, barsPerChord)));
-        return section->progression[(size_t) slot];
-    }
+    if (instance->section->progression.empty())
+        return { "C", "maj" };
 
-    return { "C", "maj" };
+    const auto perRepeatBeats = juce::jmax (1, instance->barsPerRepeat * instance->beatsPerBar);
+    const auto localBeat = juce::jmax (0.0, beat - static_cast<double> (instance->startBeat));
+    const auto beatInRepeat = std::fmod (localBeat, static_cast<double> (perRepeatBeats));
+    const auto barInRepeat = beatInRepeat / static_cast<double> (instance->beatsPerBar);
+    const auto slot = juce::jmax (0, static_cast<int> (barInRepeat)) % static_cast<int> (instance->section->progression.size());
+    return instance->section->progression[(size_t) slot];
 }
 
 std::vector<int> StructureEngine::resolveChord (const Chord& chord) const
@@ -97,8 +100,8 @@ std::vector<int> StructureEngine::resolveChord (const Chord& chord) const
 
     std::vector<int> out;
     out.reserve (intervals.size());
-    for (const auto i : intervals)
-        out.push_back ((rootPc + i) % 12);
+    for (const auto interval : intervals)
+        out.push_back ((rootPc + interval) % 12);
 
     return out;
 }
@@ -122,9 +125,7 @@ void StructureEngine::transpose (int semitones)
 
 void StructureEngine::rebuild()
 {
-    int maxBars = 0;
-    for (const auto& section : stateRef.sections)
-        maxBars = juce::jmax (maxBars, section.startBar + section.lengthBars);
-
-    stateRef.totalBars = maxBars;
+    stateRef.totalBars = computeStructureTotalBars (stateRef);
+    stateRef.totalBeats = computeStructureTotalBeats (stateRef);
+    stateRef.estimatedDurationSeconds = computeStructureEstimatedDurationSeconds (stateRef);
 }

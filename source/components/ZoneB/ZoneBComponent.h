@@ -54,6 +54,13 @@ public:
 
     /** Called by PluginEditor when the sequencer advances a step. */
     void setPlayheadStep (int step);
+    void setStructureContext (const juce::String& sectionName,
+                              const juce::String& positionLabel,
+                              const juce::String& currentChord,
+                              const juce::String& nextChord,
+                              const juce::String& transitionIntent,
+                              bool followingStructure,
+                              bool locallyOverriding);
     void seedPatternForSlot (int flatSlotIndex, int stepCount, const std::initializer_list<int>& activeSteps);
 
     /** Fired when the module list changes — passes flat "<Group>:<Type>" list. */

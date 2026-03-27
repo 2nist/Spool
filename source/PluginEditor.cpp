@@ -12,6 +12,11 @@ TransportStrip::StructureFollowState computeFollowState (bool followEnabled, boo
     return hasStructure ? TransportStrip::StructureFollowState::active
                         : TransportStrip::StructureFollowState::ready;
 }
+
+juce::String chordText (const Chord& chord)
+{
+    return chord.root.isNotEmpty() ? chord.root + chord.type : juce::String();
+}
 }
 
 //==============================================================================
@@ -180,6 +185,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         auto& appState = processorRef.getAppState();
         appState.transport.bpm = bpm;
         appState.song.bpm = static_cast<int> (bpm);
+        appState.structure.songTempo = static_cast<int> (bpm);
+        processorRef.getStructureEngine().rebuild();
         processorRef.syncTransportFromAppState();
         if (auto* tp = zoneA.getTracksPanel())
             tp->setBpm (bpm);
@@ -216,6 +223,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                 auto& appState = processorRef.getAppState();
                 appState.transport.bpm = bpm;
                 appState.song.bpm = static_cast<int> (bpm);
+                appState.structure.songTempo = static_cast<int> (bpm);
+                processorRef.getStructureEngine().rebuild();
                 processorRef.syncTransportFromAppState();
                 songHeader.setBpm   (bpm);
             };
@@ -240,19 +249,27 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     {
         if (auto* sp = zoneA.getSongPanel())
         {
+            sp->setStructureSummary (processorRef.getAppState().structure);
             sp->onBpmChanged = [this] (float bpm)
             {
                 auto& appState = processorRef.getAppState();
                 appState.transport.bpm = bpm;
                 appState.song.bpm = static_cast<int> (bpm);
+                appState.structure.songTempo = static_cast<int> (bpm);
+                processorRef.getStructureEngine().rebuild();
                 processorRef.syncTransportFromAppState();
                 songHeader.setBpm   (bpm);
+                if (auto* song = zoneA.getSongPanel())
+                    song->setStructureSummary (processorRef.getAppState().structure);
             };
 
             sp->onKeyChanged = [this] (const juce::String& key)
             {
                 auto& appState = processorRef.getAppState();
                 appState.song.keyRoot = key.trim();
+                appState.structure.songKey = appState.song.keyRoot;
+                if (auto* song = zoneA.getSongPanel())
+                    song->setStructureSummary (processorRef.getAppState().structure);
                 if (auto* structure = zoneA.getStructurePanel())
                     structure->setIntentKeyMode (appState.song.keyRoot, appState.song.keyScale);
             };
@@ -261,6 +278,9 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             {
                 auto& appState = processorRef.getAppState();
                 appState.song.keyScale = scale.trim();
+                appState.structure.songMode = appState.song.keyScale;
+                if (auto* song = zoneA.getSongPanel())
+                    song->setStructureSummary (processorRef.getAppState().structure);
                 if (auto* structure = zoneA.getStructurePanel())
                     structure->setIntentKeyMode (appState.song.keyRoot, appState.song.keyScale);
             };
@@ -290,8 +310,9 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
             sp->onStructureFollowModeChanged = [this] (bool enabled)
             {
-                const bool hasStructure = ! processorRef.getAppState().structure.sections.empty();
+                const bool hasStructure = structureHasScaffold (processorRef.getAppState().structure);
                 zoneD.setStructureFollowState (computeFollowState (enabled, hasStructure));
+                updateSequencerStructureContext (processorRef.getCurrentSongBeat());
                 systemFeed.addMessage (enabled ? "Structure follow enabled" : "Structure follow disabled");
             };
 
@@ -301,15 +322,17 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                 zoneD.seedStructureRails (processorRef.getAppState().structure);
                 zoneD.setStructureBeat (processorRef.getAppState().transport.playheadBeats);
                 zoneD.setStructureFollowState (computeFollowState (processorRef.isStructureFollowForTracksEnabled(),
-                                                                   ! processorRef.getAppState().structure.sections.empty()));
+                                                                   structureHasScaffold (processorRef.getAppState().structure)));
                 if (auto* song = zoneA.getSongPanel())
                 {
                     song->setKey (processorRef.getAppState().song.keyRoot);
                     song->setScale (processorRef.getAppState().song.keyScale);
+                    song->setStructureSummary (processorRef.getAppState().structure);
                 }
+                updateSequencerStructureContext (processorRef.getCurrentSongBeat());
                 systemFeed.addMessage ("Structure applied: "
-                                       + juce::String (processorRef.getAppState().structure.sections.size())
-                                       + " section(s)");
+                                       + juce::String (processorRef.getAppState().structure.arrangement.size())
+                                       + " block(s)");
             };
         }
     };
@@ -690,6 +713,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     {
         song->setKey (processorRef.getAppState().song.keyRoot);
         song->setScale (processorRef.getAppState().song.keyScale);
+        song->setStructureSummary (processorRef.getAppState().structure);
     }
     if (auto* structure = zoneA.getStructurePanel())
         structure->setIntentKeyMode (processorRef.getAppState().song.keyRoot, processorRef.getAppState().song.keyScale);
@@ -697,7 +721,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     zoneD.seedStructureRails (processorRef.getAppState().structure);
     zoneD.setStructureBeat (processorRef.getAppState().transport.playheadBeats);
     zoneD.setStructureFollowState (computeFollowState (processorRef.isStructureFollowForTracksEnabled(),
-                                                       ! processorRef.getAppState().structure.sections.empty()));
+                                                       structureHasScaffold (processorRef.getAppState().structure)));
+    updateSequencerStructureContext (processorRef.getCurrentSongBeat());
 }
 
 PluginEditor::~PluginEditor()
@@ -817,6 +842,8 @@ void PluginEditor::slotSelected (int slotIndex, const juce::String& moduleType)
         m_tabStrip.setActiveTab ("instrument");
         resized();
     }
+
+    updateSequencerStructureContext (processorRef.getCurrentSongBeat());
 }
 
 void PluginEditor::slotDeselected()
@@ -855,8 +882,7 @@ void PluginEditor::positionChanged (float beat)
     double structureBeat = processorBeat;
     {
         const juce::ScopedReadLock structureRead (processorRef.getStructureLock());
-        const int totalBars = juce::jmax (0, processorRef.getAppState().structure.totalBars);
-        const double totalBeats = static_cast<double> (totalBars) * 4.0;
+        const double totalBeats = static_cast<double> (juce::jmax (0, processorRef.getAppState().structure.totalBeats));
         if (totalBeats > 0.0)
             structureBeat = std::fmod (juce::jmax (0.0, processorBeat), totalBeats);
     }
@@ -864,6 +890,44 @@ void PluginEditor::positionChanged (float beat)
     if (auto* tp = zoneA.getTracksPanel())
         tp->setPosition (static_cast<float> (processorBeat));
     zoneD.setStructureBeat (structureBeat);
+    updateSequencerStructureContext (structureBeat);
+}
+
+void PluginEditor::updateSequencerStructureContext (double structureBeat)
+{
+    juce::String sectionName, positionLabel, currentChord, nextChord, transitionIntent;
+    bool followingStructure = processorRef.isStructureFollowForTracksEnabled();
+    bool locallyOverriding = ! followingStructure;
+
+    {
+        const juce::ScopedReadLock structureRead (processorRef.getStructureLock());
+        if (const auto instance = processorRef.getStructureEngine().getSectionAtBeat (structureBeat))
+        {
+            if (instance->section != nullptr)
+                sectionName = instance->section->name;
+            const int localBarBeat = juce::jmax (0, juce::roundToInt (structureBeat - static_cast<double> (instance->startBeat)));
+            const int sectionBarIndex = juce::jlimit (0, juce::jmax (0, instance->totalBars - 1), localBarBeat / juce::jmax (1, instance->beatsPerBar));
+            positionLabel = "Bar " + juce::String (sectionBarIndex + 1) + "/" + juce::String (instance->totalBars);
+            transitionIntent = instance->transitionIntent.isNotEmpty() ? "Transition: " + instance->transitionIntent : juce::String();
+
+            currentChord = chordText (processorRef.getStructureEngine().getChordAtBeat (structureBeat));
+
+            if (instance->section != nullptr && ! instance->section->progression.empty())
+            {
+                const int beatsPerBar = juce::jmax (1, instance->beatsPerBar);
+                const int barsPerRepeat = juce::jmax (1, instance->barsPerRepeat);
+                const int perRepeatBeats = juce::jmax (1, beatsPerBar * barsPerRepeat);
+                const double beatInsideSection = juce::jmax (0.0, structureBeat - static_cast<double> (instance->startBeat));
+                const int currentBar = static_cast<int> (std::floor (std::fmod (beatInsideSection, static_cast<double> (perRepeatBeats))
+                                                                     / static_cast<double> (beatsPerBar)));
+                const int nextBar = (currentBar + 1) % barsPerRepeat;
+                const int nextIndex = nextBar % static_cast<int> (instance->section->progression.size());
+                nextChord = chordText (instance->section->progression[(size_t) nextIndex]);
+            }
+        }
+    }
+
+    zoneB.setStructureContext (sectionName, positionLabel, currentChord, nextChord, transitionIntent, followingStructure, locallyOverriding);
 }
 
 void PluginEditor::recordStateChanged (bool recording)

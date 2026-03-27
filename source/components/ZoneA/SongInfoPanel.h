@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Theme.h"
+#include "../../structure/StructureState.h"
 
 //==============================================================================
 /**
@@ -28,6 +29,7 @@ public:
     void setTitle (const juce::String& title);
     void setKey (const juce::String& key);
     void setScale (const juce::String& scale);
+    void setStructureSummary (const StructureState& structure);
 
     // Callbacks
     std::function<void(const juce::String& title)> onTitleChanged;
@@ -48,6 +50,12 @@ private:
     juce::Label       m_bpmLabel;
     juce::Label       m_timeSigLabel;
     juce::TextEditor  m_notesEditor;
+    juce::Label       m_summaryTitle;
+    juce::Label       m_summaryTempo;
+    juce::Label       m_summaryKey;
+    juce::Label       m_summaryMode;
+    juce::Label       m_summaryBars;
+    juce::Label       m_summaryDuration;
 
     float m_bpm = 120.0f;
 

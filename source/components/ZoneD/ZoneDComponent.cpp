@@ -194,7 +194,11 @@ void ZoneDComponent::setStructureFollowState (TransportStrip::StructureFollowSta
 
 void ZoneDComponent::seedStructureRails (const StructureState& structure)
 {
-    if (structure.sections.empty())
+    if (! structureHasScaffold (structure))
+        return;
+
+    const auto resolved = buildResolvedStructure (structure);
+    if (resolved.empty())
         return;
 
     auto appendClipsForLane = [&] (LaneData& lane)
@@ -202,35 +206,42 @@ void ZoneDComponent::seedStructureRails (const StructureState& structure)
         lane.clips.clear();
         lane.active = true;
 
-        for (size_t s = 0; s < structure.sections.size(); ++s)
+        for (size_t s = 0; s < resolved.size(); ++s)
         {
-            const auto& section = structure.sections[s];
+            const auto& instance = resolved[s];
+            if (instance.section == nullptr)
+                continue;
+
             const auto sectionTint = sectionColourForIndex (static_cast<int> (s));
-            const int chordCount = juce::jmax (1, static_cast<int> (section.progression.size()));
-            const float barsPerChord = static_cast<float> (section.lengthBars) / static_cast<float> (chordCount);
+            const int chordCount = juce::jmax (1, static_cast<int> (instance.section->progression.size()));
+            const float barsPerChord = static_cast<float> (instance.barsPerRepeat) / static_cast<float> (chordCount);
 
-            for (int c = 0; c < chordCount; ++c)
+            for (int repeatIndex = 0; repeatIndex < instance.repeats; ++repeatIndex)
             {
-                const float startBar = static_cast<float> (section.startBar) + barsPerChord * static_cast<float> (c);
-                const float endBar = (c == chordCount - 1)
-                                       ? static_cast<float> (section.startBar + section.lengthBars)
-                                       : static_cast<float> (section.startBar) + barsPerChord * static_cast<float> (c + 1);
+                for (int c = 0; c < chordCount; ++c)
+                {
+                    const float repeatStartBeat = static_cast<float> (instance.startBeat + repeatIndex * instance.barsPerRepeat * instance.beatsPerBar);
+                    const float startBeat = repeatStartBeat + barsPerChord * static_cast<float> (c) * static_cast<float> (instance.beatsPerBar);
+                    const float endBeat = (c == chordCount - 1)
+                                            ? repeatStartBeat + static_cast<float> (instance.barsPerRepeat * instance.beatsPerBar)
+                                            : repeatStartBeat + barsPerChord * static_cast<float> (c + 1) * static_cast<float> (instance.beatsPerBar);
 
-                Clip clip;
-                clip.startBeat = startBar * 4.0f;
-                clip.lengthBeats = juce::jmax (0.25f, (endBar - startBar) * 4.0f);
-                if (c < static_cast<int> (section.progression.size()))
-                {
-                    const auto& chord = section.progression[(size_t) c];
-                    clip.name = section.name + " · " + chord.root + chord.type;
+                    Clip clip;
+                    clip.startBeat = startBeat;
+                    clip.lengthBeats = juce::jmax (0.25f, endBeat - startBeat);
+                    if (c < static_cast<int> (instance.section->progression.size()))
+                    {
+                        const auto& chord = instance.section->progression[(size_t) c];
+                        clip.name = instance.section->name + " · " + chord.root + chord.type;
+                    }
+                    else
+                    {
+                        clip.name = instance.section->name;
+                    }
+                    clip.type = ClipType::midi;
+                    clip.tint = sectionTint;
+                    lane.clips.add (clip);
                 }
-                else
-                {
-                    clip.name = section.name;
-                }
-                clip.type = ClipType::midi;
-                clip.tint = sectionTint;
-                lane.clips.add (clip);
             }
         }
     };

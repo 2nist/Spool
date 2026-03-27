@@ -1,5 +1,15 @@
 #include "SongInfoPanel.h"
 
+namespace
+{
+void styleSummaryLabel (juce::Label& label)
+{
+    label.setFont (Theme::Font::micro());
+    label.setColour (juce::Label::textColourId, Theme::Colour::inkMid);
+    label.setJustificationType (juce::Justification::centredLeft);
+}
+}
+
 const juce::StringArray SongInfoPanel::kKeys =
     { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 
@@ -67,6 +77,19 @@ SongInfoPanel::SongInfoPanel()
     m_notesEditor.setColour (juce::TextEditor::textColourId, Theme::Colour::inkMid);
     m_notesEditor.setColour (juce::TextEditor::outlineColourId, Theme::Colour::surfaceEdge);
     addAndMakeVisible (m_notesEditor);
+
+    m_summaryTitle.setFont (Theme::Font::label());
+    m_summaryTitle.setColour (juce::Label::textColourId, Theme::Colour::inkLight);
+    m_summaryTitle.setText ("STRUCTURE SUMMARY", juce::dontSendNotification);
+    addAndMakeVisible (m_summaryTitle);
+
+    for (auto* label : { &m_summaryTempo, &m_summaryKey, &m_summaryMode, &m_summaryBars, &m_summaryDuration })
+    {
+        styleSummaryLabel (*label);
+        addAndMakeVisible (*label);
+    }
+
+    setStructureSummary (StructureState {});
 }
 
 void SongInfoPanel::setBpm (float bpm)
@@ -106,6 +129,21 @@ void SongInfoPanel::setScale (const juce::String& scale)
     }
 }
 
+void SongInfoPanel::setStructureSummary (const StructureState& structure)
+{
+    const auto duration = [&]
+    {
+        const auto totalSeconds = juce::jmax (0, juce::roundToInt (structure.estimatedDurationSeconds));
+        return juce::String (totalSeconds / 60) + ":" + juce::String (totalSeconds % 60).paddedLeft ('0', 2);
+    }();
+
+    m_summaryTempo.setText ("Tempo  " + juce::String (structure.songTempo) + " BPM", juce::dontSendNotification);
+    m_summaryKey.setText ("Key  " + (structure.songKey.isNotEmpty() ? structure.songKey : juce::String ("-")), juce::dontSendNotification);
+    m_summaryMode.setText ("Mode  " + (structure.songMode.isNotEmpty() ? structure.songMode : juce::String ("-")), juce::dontSendNotification);
+    m_summaryBars.setText ("Total Bars  " + juce::String (structure.totalBars), juce::dontSendNotification);
+    m_summaryDuration.setText ("Est. Duration  " + duration, juce::dontSendNotification);
+}
+
 juce::Rectangle<int> SongInfoPanel::bpmRect() const noexcept
 {
     return { kPad, kPad + 5 * (kLabelH + kRowH + kPad), 80, kRowH };
@@ -129,11 +167,16 @@ void SongInfoPanel::paint (juce::Graphics& g)
     drawLabel ("KEY",      y);    y += kLabelH + kRowH + kPad;
     drawLabel ("SCALE",    y);    y += kLabelH + kRowH + kPad;
     drawLabel ("TIME SIG", y);    y += kLabelH + kRowH + kPad;
-    drawLabel ("BPM  (drag to change)", y);
+    drawLabel ("BPM  (drag to change)", y); y += kLabelH + kRowH + kPad;
+    drawLabel ("NOTES", y);
 
     // BPM drag hint arrow
     g.setColour (Theme::Zone::d);
     g.drawText ("↕", bpmRect().withTrimmedLeft (84), juce::Justification::centredLeft, false);
+
+    auto summaryBounds = juce::Rectangle<int> (kPad, getHeight() - 114, getWidth() - kPad * 2, 106);
+    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.55f));
+    g.drawRoundedRectangle (summaryBounds.toFloat(), 6.0f, 1.0f);
 }
 
 void SongInfoPanel::resized()
@@ -155,8 +198,17 @@ void SongInfoPanel::resized()
     m_bpmLabel.setBounds (bpmRect());
     y += kRowH + kPad * 2;
 
-    const int notesH = juce::jmax (60, getHeight() - y - kPad);
+    const int summaryH = 106;
+    const int notesH = juce::jmax (60, getHeight() - y - kPad - summaryH - kPad);
     m_notesEditor.setBounds (kPad, y, getWidth() - kPad * 2, notesH);
+
+    auto summary = juce::Rectangle<int> (kPad, m_notesEditor.getBottom() + kPad, getWidth() - kPad * 2, summaryH);
+    m_summaryTitle.setBounds (summary.removeFromTop (20).reduced (8, 0));
+    m_summaryTempo.setBounds (summary.removeFromTop (18).reduced (8, 0));
+    m_summaryKey.setBounds (summary.removeFromTop (18).reduced (8, 0));
+    m_summaryMode.setBounds (summary.removeFromTop (18).reduced (8, 0));
+    m_summaryBars.setBounds (summary.removeFromTop (18).reduced (8, 0));
+    m_summaryDuration.setBounds (summary.removeFromTop (18).reduced (8, 0));
 }
 
 void SongInfoPanel::mouseDown (const juce::MouseEvent& e)

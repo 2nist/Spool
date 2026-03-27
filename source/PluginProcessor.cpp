@@ -18,8 +18,7 @@ enum class CadenceTemplate
 
 double wrapBeatToStructure (double beat, const StructureState& structure)
 {
-    const auto totalBars = juce::jmax (0, structure.totalBars);
-    const double totalBeats = static_cast<double> (totalBars) * 4.0;
+    const double totalBeats = static_cast<double> (juce::jmax (0, structure.totalBeats));
     if (totalBeats <= 0.0)
         return beat;
     return std::fmod (juce::jmax (0.0, beat), totalBeats);
@@ -183,25 +182,23 @@ std::vector<int> chordIntervalsForType (const juce::String& type)
 
 Chord nextChordForBeat (const StructureState& structure, double beat)
 {
-    const auto barFloat = beat / 4.0;
-
-    for (const auto& section : structure.sections)
+    for (const auto& instance : buildResolvedStructure (structure))
     {
-        const auto start = static_cast<double> (section.startBar);
-        const auto end = static_cast<double> (section.startBar + section.lengthBars);
-        if (barFloat < start || barFloat >= end)
+        const auto start = static_cast<double> (instance.startBeat);
+        const auto end = static_cast<double> (instance.startBeat + instance.totalBeats);
+        if (beat < start || beat >= end || instance.section == nullptr)
             continue;
 
-        if (section.progression.empty())
+        if (instance.section->progression.empty())
             return { "C", "maj" };
 
-        const auto sectionLocalBars = juce::jmax (0.0, barFloat - start);
-        const auto barsPerChord = static_cast<double> (section.lengthBars) / static_cast<double> (section.progression.size());
-        const auto slot = juce::jlimit (0,
-                                        static_cast<int> (section.progression.size() - 1),
-                                        static_cast<int> (sectionLocalBars / juce::jmax (0.0001, barsPerChord)));
-        const auto nextSlot = juce::jmin (slot + 1, static_cast<int> (section.progression.size() - 1));
-        return section.progression[(size_t) nextSlot];
+        const auto perRepeatBeats = juce::jmax (1, instance.barsPerRepeat * instance.beatsPerBar);
+        const auto localBeat = juce::jmax (0.0, beat - start);
+        const auto beatInRepeat = std::fmod (localBeat, static_cast<double> (perRepeatBeats));
+        const auto sectionLocalBars = beatInRepeat / static_cast<double> (instance.beatsPerBar);
+        const auto slot = juce::jmax (0, static_cast<int> (sectionLocalBars)) % static_cast<int> (instance.section->progression.size());
+        const auto nextSlot = (slot + 1) % static_cast<int> (instance.section->progression.size());
+        return instance.section->progression[(size_t) nextSlot];
     }
 
     return { "C", "maj" };
@@ -226,6 +223,9 @@ PluginProcessor::PluginProcessor()
     m_appState.song.bpm = static_cast<int> (m_bpm.load());
     m_appState.transport.bpm = static_cast<double> (m_bpm.load());
     m_appState.transport.isPlaying = m_playing.load();
+    m_appState.structure.songTempo = m_appState.song.bpm;
+    m_appState.structure.songKey = m_appState.song.keyRoot;
+    m_appState.structure.songMode = m_appState.song.keyScale;
 
     m_appState.slots.resize (SpoolAudioGraph::kNumSlots);
     for (int s = 0; s < SpoolAudioGraph::kNumSlots; ++s)
@@ -861,7 +861,7 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         m_appState.transport.playheadBeats = m_currentSongBeat;
 
         // Minimal integration point: transport can query structure context.
-        const Section* activeSection = nullptr;
+        std::optional<ResolvedSectionInstance> activeSection;
         Chord activeChord { "C", "maj" };
         {
             const juce::ScopedReadLock structureRead (m_structureLock);
@@ -926,7 +926,7 @@ void PluginProcessor::advanceSequencerTick (int sampleOffset)
     Chord nextChord { "C", "maj" };
     {
         const juce::ScopedReadLock structureRead (m_structureLock);
-        structureActive = ! m_appState.structure.sections.empty();
+        structureActive = structureHasScaffold (m_appState.structure);
         if (structureActive)
         {
             structureBeat = wrapBeatToStructure (m_currentSongBeat, m_appState.structure);
@@ -1102,6 +1102,8 @@ void PluginProcessor::setBpm (float bpm) noexcept
     m_bpm.store (clamped);
     m_appState.song.bpm = static_cast<int> (clamped);
     m_appState.transport.bpm = static_cast<double> (clamped);
+    m_appState.structure.songTempo = static_cast<int> (clamped);
+    m_structureEngine.rebuild();
 }
 
 void PluginProcessor::syncTransportFromAppState() noexcept
@@ -1116,6 +1118,8 @@ void PluginProcessor::syncTransportFromAppState() noexcept
     {
         m_bpm.store (static_cast<float> (desiredBpm));
         m_appState.song.bpm = static_cast<int> (desiredBpm);
+        m_appState.structure.songTempo = static_cast<int> (desiredBpm);
+        m_structureEngine.rebuild();
         DBG ("BPM updated via AppState: " << desiredBpm);
     }
 

@@ -134,6 +134,7 @@ private:
     void syncAllSlotRuntimeFromModuleList();
     void applyDrumStateToRuntime (int slotIndex);
     void replaceDrumStateForSlot (int slotIndex, const DrumMachineData& state);
+    void updateSequencerStructureContext (double structureBeat);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

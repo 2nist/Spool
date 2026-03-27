@@ -649,6 +649,17 @@ void ZoneBComponent::setPlayheadStep (int step)
     m_stepGridDrum.setPlayhead   (step);
 }
 
+void ZoneBComponent::setStructureContext (const juce::String& sectionName,
+                                          const juce::String& positionLabel,
+                                          const juce::String& currentChord,
+                                          const juce::String& nextChord,
+                                          const juce::String& transitionIntent,
+                                          bool followingStructure,
+                                          bool locallyOverriding)
+{
+    m_seqHeader.setStructureContext (sectionName, positionLabel, currentChord, nextChord, transitionIntent, followingStructure, locallyOverriding);
+}
+
 void ZoneBComponent::seedPatternForSlot (int flatSlotIndex, int stepCount, const std::initializer_list<int>& activeSteps)
 {
     if (flatSlotIndex < 0)

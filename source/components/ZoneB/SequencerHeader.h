@@ -27,13 +27,20 @@ public:
 
     /** Paste-ready clipboard entry (owned by ZoneBComponent). */
     void setClipboard (const SlotPattern* cb, bool hasData);
+    void setStructureContext (const juce::String& sectionName,
+                              const juce::String& positionLabel,
+                              const juce::String& currentChord,
+                              const juce::String& nextChord,
+                              const juce::String& transitionIntent,
+                              bool followingStructure,
+                              bool locallyOverriding);
 
     std::function<void()>    onCopy;
     std::function<void()>    onPaste;
     std::function<void()>    onClear;
     std::function<void(int)> onPatternChanged;
 
-    static constexpr int kHeight = 16;
+    static constexpr int kHeight = 28;
 
     void paint    (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -43,6 +50,13 @@ private:
     juce::String m_groupName;
     juce::Colour m_groupColor { 0x00000000 };
     bool         m_hasFocus   { false };
+    juce::String m_structureSection;
+    juce::String m_structurePosition;
+    juce::String m_currentChord;
+    juce::String m_nextChord;
+    juce::String m_transitionIntent;
+    bool         m_followingStructure { false };
+    bool         m_locallyOverriding { false };
 
     SlotPattern* m_pattern    { nullptr };
     bool         m_hasClipboard { false };
