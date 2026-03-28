@@ -1,21 +1,21 @@
 #include "ClipCard.h"
 
 //==============================================================================
-const juce::Colour ClipCard::tapeClipBg     { 0xFFe8dbc0 };
-const juce::Colour ClipCard::tapeClipBorder { 0xFF7a6438 };
-
-//==============================================================================
 void ClipCard::paint (juce::Graphics& g,
                       const juce::Rectangle<float>& rect,
                       const Clip& clip,
                       float loopLengthBeats,
                       float pxPerBeat)
 {
+    const auto& theme = ThemeManager::get().theme();
+
     // Card background
-    const float alpha = (clip.type == ClipType::output) ? 0.6f : 1.0f;
-    juce::Colour fill = tapeClipBg;
+    const float alpha = (clip.type == ClipType::output) ? 0.6f : clip.type == ClipType::scaffold ? 0.45f : 1.0f;
+    juce::Colour fill = theme.tapeClipBg;
     if (clip.tint.getAlpha() > 0)
-        fill = tapeClipBg.interpolatedWith (clip.tint, 0.35f);
+        fill = theme.tapeClipBg.interpolatedWith (clip.tint, 0.35f);
+    if (clip.type == ClipType::scaffold)
+        fill = Theme::Colour::surface2.interpolatedWith (clip.tint, 0.18f);
     g.setColour (fill.withAlpha (alpha));
     g.fillRoundedRectangle (rect, Theme::Radius::xs);
 
@@ -27,9 +27,11 @@ void ClipCard::paint (juce::Graphics& g,
     }
 
     // Border — selected = Zone::d, normal = tapeClipBorder
-    const juce::Colour borderCol = clip.selected
+    const juce::Colour borderCol = clip.type == ClipType::scaffold
+                                   ? Theme::Colour::surfaceEdge.withAlpha (0.55f)
+                                   : clip.selected
                                    ? Theme::Zone::d
-                                   : tapeClipBorder;
+                                   : theme.tapeClipBorder;
     g.setColour (borderCol);
     g.drawRoundedRectangle (rect, Theme::Radius::xs, 0.5f);
 
@@ -40,6 +42,8 @@ void ClipCard::paint (juce::Graphics& g,
         paintAudio (g, contentR, clip, loopLengthBeats, pxPerBeat);
     else if (clip.type == ClipType::midi)
         paintMidi (g, contentR, clip, loopLengthBeats, pxPerBeat);
+    else if (clip.type == ClipType::scaffold)
+        paintScaffold (g, contentR, clip);
     else
         paintOutput (g, contentR, clip);
 }
@@ -132,4 +136,21 @@ void ClipCard::paintOutput (juce::Graphics& g,
     g.drawText (clip.name.toUpperCase(),
                 contentR.toNearestInt(),
                 juce::Justification::centred, false);
+}
+
+void ClipCard::paintScaffold (juce::Graphics& g,
+                              const juce::Rectangle<float>& contentR,
+                              const Clip& clip)
+{
+    auto area = contentR;
+    g.setColour (Theme::Colour::inkGhost.withAlpha (0.9f));
+    g.setFont (Theme::Font::micro());
+    g.drawText (clip.name.toUpperCase(),
+                area.removeFromTop (8.0f).toNearestInt(),
+                juce::Justification::centredLeft,
+                true);
+
+    g.setColour (Theme::Colour::inkGhost.withAlpha (0.35f));
+    for (float x = area.getX(); x < area.getRight(); x += 6.0f)
+        g.drawLine (x, area.getBottom() - 2.0f, juce::jmin (x + 3.0f, area.getRight()), area.getBottom() - 2.0f, 1.0f);
 }

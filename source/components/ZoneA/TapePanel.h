@@ -1,5 +1,6 @@
 #pragma once
 #include "../../Theme.h"
+#include "ZoneAStyle.h"
 
 //==============================================================================
 /** TapePanel — stub. Circular buffer capture controls and looper settings.
@@ -12,16 +13,16 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        // Intentional departure from theme — flat dark matte
-        g.fillAll (juce::Colour (0xFF1a1208));
+        g.fillAll (Theme::Zone::bgA);
+        const auto accent = ZoneAStyle::accentForTabId ("tape");
         const auto b = getLocalBounds();
-        g.setFont   (Theme::Font::label());
-        g.setColour (Theme::Zone::d);
-        g.drawText  ("TAPE", b.withHeight (24), juce::Justification::centred, false);
+        ZoneAStyle::drawHeader (g, b.withHeight (24), "TAPE", accent);
+        ZoneAStyle::drawCard (g, b.reduced (8).withTrimmedTop (30), accent);
+
         g.setFont   (Theme::Font::micro());
         g.setColour (Theme::Colour::inkGhost.withAlpha (0.6f));
-        g.drawText  ("Circular buffer capture controls\nand looper settings \xe2\x80\x94 coming soon",
-                     b.reduced (12).withTrimmedTop (32),
+        g.drawText  ("Circular buffer capture controls\nand looper settings are still being folded into the new workflow.",
+                     b.reduced (18).withTrimmedTop (44),
                      juce::Justification::centredTop, true);
     }
 

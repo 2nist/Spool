@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../../Theme.h"
-#include "../TapeColors.h"
 
 //==============================================================================
 /** A single scrolling message on the system feed tape. */
@@ -41,6 +40,8 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
 
 private:
+    static juce::Colour tapeInk() noexcept;
+
     //--- juce::Timer ---------------------------------------------------------
     void timerCallback() override;
 

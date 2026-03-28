@@ -1,10 +1,10 @@
 #include "ZoneAComponent.h"
 #include "../../PluginProcessor.h"
+#include "ZoneAStyle.h"
 
 //==============================================================================
 ZoneAComponent::ZoneAComponent (PluginProcessor& p) : processorRef (p)
 {
-    addAndMakeVisible (m_outputStrip);
 }
 
 //==============================================================================
@@ -45,15 +45,6 @@ void ZoneAComponent::setInstrumentSlots (const juce::StringArray& moduleList)
     // Parse "GroupName:ModuleType" format
     juce::Array<InstrumentPanel::SlotEntry> entries;
 
-    // Colour pool for groups (cycles through a fixed set)
-    const juce::Colour kGroupColors[] = {
-        juce::Colour (0xFF4B9EDB),
-        juce::Colour (0xFFDBA34B),
-        juce::Colour (0xFF7B9E4B),
-        juce::Colour (0xFF9E4B9E),
-    };
-    juce::StringArray seenGroups;
-
     int slotIndex = 0;
     for (const auto& item : moduleList)
     {
@@ -75,14 +66,7 @@ void ZoneAComponent::setInstrumentSlots (const juce::StringArray& moduleList)
             entry.moduleType = (raw == "DRUM MACHINE") ? "DRUMS" : raw;
         }
 
-        // Assign group colour
-        int gIdx = seenGroups.indexOf (entry.groupName);
-        if (gIdx < 0)
-        {
-            seenGroups.add (entry.groupName);
-            gIdx = seenGroups.size() - 1;
-        }
-        entry.groupColor = kGroupColors[gIdx % 4];
+        entry.groupColor = ZoneAStyle::accentForGroupName (entry.groupName);
 
         // Build display name
         if (entry.moduleType.isNotEmpty())
@@ -101,14 +85,6 @@ void ZoneAComponent::setMixerSlots (const juce::StringArray& moduleList)
 {
     ensurePanelCreated ("mixer");
     if (!m_mixerPanel) return;
-
-    const juce::Colour kGroupColors[] = {
-        juce::Colour (0xFF4B9EDB),
-        juce::Colour (0xFFDBA34B),
-        juce::Colour (0xFF7B9E4B),
-        juce::Colour (0xFF9E4B9E),
-    };
-    juce::StringArray seenGroups;
 
     juce::Array<MixerPanel::SlotInfo> entries;
     int slotIndex = 0;
@@ -137,13 +113,7 @@ void ZoneAComponent::setMixerSlots (const juce::StringArray& moduleList)
                 : item.trim();
         }
 
-        int gIdx = seenGroups.indexOf (entry.groupName);
-        if (gIdx < 0)
-        {
-            seenGroups.add (entry.groupName);
-            gIdx = seenGroups.size() - 1;
-        }
-        entry.groupColor = kGroupColors[gIdx % 4];
+        entry.groupColor = ZoneAStyle::accentForGroupName (entry.groupName);
         entry.level      = processorRef.getSlotLevel (entry.slotIndex);
         entry.muted      = processorRef.isSlotMuted  (entry.slotIndex);
         entry.soloed     = processorRef.isSlotSoloed (entry.slotIndex);
@@ -158,14 +128,6 @@ void ZoneAComponent::setTrackLanes (const juce::StringArray& moduleList)
 {
     ensurePanelCreated ("tracks");
     if (!m_tracksPanel) return;
-
-    const juce::Colour kGroupColors[] = {
-        juce::Colour (0xFF4B9EDB),
-        juce::Colour (0xFFDBA34B),
-        juce::Colour (0xFF7B9E4B),
-        juce::Colour (0xFF9E4B9E),
-    };
-    juce::StringArray seenGroups;
 
     juce::Array<TracksPanel::LaneInfo> lanes;
     int slotIndex = 0;
@@ -194,9 +156,7 @@ void ZoneAComponent::setTrackLanes (const juce::StringArray& moduleList)
         lane.soloed = processorRef.isSlotSoloed (slotIndex);
         lane.armed  = false;
 
-        int gIdx = seenGroups.indexOf (groupName);
-        if (gIdx < 0) { seenGroups.add (groupName); gIdx = seenGroups.size() - 1; }
-        lane.colour = kGroupColors[gIdx % 4];
+        lane.colour = ZoneAStyle::accentForGroupName (groupName);
 
         lanes.add (lane);
         ++slotIndex;
@@ -236,13 +196,7 @@ void ZoneAComponent::ensurePanelCreated (const juce::String& tabId)
         m_routingPanel = std::make_unique<RoutingPanel>();
         if (m_onRoutingChanged)
         {
-            m_routingPanel->onMatrixChanged = [this] (const std::vector<uint8_t>& vals)
-            {
-                std::array<uint8_t, 8> a{};
-                for (size_t i = 0; i < a.size() && i < vals.size(); ++i)
-                    a[i] = vals[i];
-                m_onRoutingChanged (a);
-            };
+            m_routingPanel->onRoutingStateChanged = [this] (const RoutingState& state) { m_onRoutingChanged (state); };
         }
         addChildComponent (*m_routingPanel);
     }
@@ -306,7 +260,7 @@ void ZoneAComponent::ensurePanelCreated (const juce::String& tabId)
     }
     else if (tabId == "lyrics" && m_lyricsPanel == nullptr)
     {
-        m_lyricsPanel = std::make_unique<LyricsPanel>();
+        m_lyricsPanel = std::make_unique<LyricsPanel> (processorRef);
         addChildComponent (*m_lyricsPanel);
     }
     else if (tabId == "macro" && m_macroPanel == nullptr)
@@ -321,7 +275,7 @@ void ZoneAComponent::ensurePanelCreated (const juce::String& tabId)
     }
     else if (tabId == "automate" && m_autoPanel == nullptr)
     {
-        m_autoPanel = std::make_unique<AutoPanel>();
+        m_autoPanel = std::make_unique<AutoPanel> (processorRef);
         addChildComponent (*m_autoPanel);
     }
 }
@@ -389,29 +343,18 @@ void ZoneAComponent::setActivePanel (const juce::String& tabId)
     repaint();
 }
 
-void ZoneAComponent::setOnRoutingChanged (std::function<void (const std::array<uint8_t, 8>&)> cb)
+void ZoneAComponent::setOnRoutingChanged (std::function<void (const RoutingState&)> cb)
 {
     m_onRoutingChanged = std::move (cb);
     if (m_routingPanel && m_onRoutingChanged)
-    {
-        m_routingPanel->onMatrixChanged = [this] (const std::vector<uint8_t>& vals)
-        {
-            std::array<uint8_t, 8> a{};
-            for (size_t i = 0; i < a.size() && i < vals.size(); ++i)
-                a[i] = vals[i];
-            m_onRoutingChanged (a);
-        };
-    }
+        m_routingPanel->onRoutingStateChanged = [this] (const RoutingState& state) { m_onRoutingChanged (state); };
 }
 
-void ZoneAComponent::setRoutingMatrix (const std::array<uint8_t, 8>& m)
+void ZoneAComponent::setRoutingState (const RoutingState& state)
 {
     ensurePanelCreated ("routing");
     if (m_routingPanel)
-    {
-        std::vector<uint8_t> vals (m.begin(), m.end());
-        m_routingPanel->setMatrix (vals);
-    }
+        m_routingPanel->setRoutingState (state);
 }
 
 void ZoneAComponent::setPatchModuleNames (const juce::StringArray& names)
@@ -427,12 +370,12 @@ void ZoneAComponent::setPatchModuleNames (const juce::StringArray& names)
 
 juce::Rectangle<int> ZoneAComponent::panelArea() const noexcept
 {
-    return { 0, 0, getWidth(), juce::jmax (0, getHeight() - OutputStrip::kHeight) };
+    return getLocalBounds();
 }
 
 juce::Rectangle<int> ZoneAComponent::outputArea() const noexcept
 {
-    return { 0, getHeight() - OutputStrip::kHeight, getWidth(), OutputStrip::kHeight };
+    return {};
 }
 
 //==============================================================================
@@ -452,8 +395,6 @@ void ZoneAComponent::paint (juce::Graphics& g)
 
 void ZoneAComponent::resized()
 {
-    m_outputStrip.setBounds (outputArea());
-
     if (auto* p = activePanel())
         p->setBounds (panelArea());
 }

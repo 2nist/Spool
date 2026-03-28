@@ -24,10 +24,8 @@ public:
     static constexpr int kCollapsedW  = 20;
     static constexpr int kHeaderH     = 28;
     static constexpr int kPinBannerH  = 20;
-    static constexpr int kTabsH       = 24;
+    static constexpr int kTabsH       = 0;
     static constexpr int kMacroH      = 80;
-
-    enum class Tab { Chain, Routing, Settings };
 
     //==========================================================================
     // Collapse callback — fired whenever the collapsed state changes.
@@ -60,6 +58,7 @@ public:
 
     // Returns actual render width (collapsed = kCollapsedW, else m_expandedWidth)
     int  currentWidth() const;
+    void setMacroStripVisible (bool shouldShow);
 
     /** Called by PluginEditor when the Zone C resizer moves. */
     void setExpandedWidth (int w) noexcept { m_expandedWidth = juce::jlimit (kCollapsedW + 1, 600, w); }
@@ -84,21 +83,21 @@ private:
     bool        m_isPinned          = false;
     int         m_pinnedSlotIndex   = -1;
     bool        m_isCollapsed       = false;
+    bool        m_showMacroStrip    = true;
     int         m_expandedWidth     = static_cast<int> (Theme::Space::zoneCWidth);
-    Tab         m_activeTab         = Tab::Chain;
     juce::String m_moduleTypeName;
+    int         m_focusedNodeIndex   = 0;
 
     //==========================================================================
     // Hit-test rects (set in resized/paint)
     juce::Rectangle<int> m_pinButtonRect;
     juce::Rectangle<int> m_collapseButtonRect;
     juce::Rectangle<int> m_unpinLinkRect;
-    juce::Rectangle<int> m_tabRects[3];
-
     //==========================================================================
     // Helpers
     int  pinBannerHeight()  const;     // kPinBannerH when pinned, 0 otherwise
     int  tabsHeight()       const;     // kTabsH always
+    int  macroStripHeight() const noexcept { return m_showMacroStrip ? kMacroH : 0; }
     juce::Rectangle<int> chainRect()  const;   // viewport area
 
     ChainState*       currentChainPtr();
@@ -112,11 +111,11 @@ private:
     void              moveNode           (int fromIndex, int toIndex);
     void              updateNodeBypass   (int nodeIndex, bool bypassed);
     void              updateNodeParam    (int nodeIndex, int paramIndex, float value);
+    void              setFocusedNode     (int nodeIndex);
 
     void paintCollapsed  (juce::Graphics&);
     void paintHeader     (juce::Graphics&);
     void paintPinBanner  (juce::Graphics&);
-    void paintTabs       (juce::Graphics&);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ZoneCComponent)
 };

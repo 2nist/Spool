@@ -174,19 +174,20 @@ void SequencerHeader::paint (juce::Graphics& g)
     paintBtn (clearRect(), "CLR",   m_hasFocus);
 
     auto contextRect = juce::Rectangle<int> (kPad, 16, getWidth() - kPad * 2, 11);
-    juce::String context = m_structureSection.isNotEmpty() ? m_structureSection : "NO SECTION";
+    juce::String context = "SEC ";
+    context += m_structureSection.isNotEmpty() ? m_structureSection : "NONE";
     if (m_structurePosition.isNotEmpty())
         context += " | " + m_structurePosition;
-    context += " | ";
+    context += " | NOW ";
     context += m_currentChord.isNotEmpty() ? m_currentChord : "--";
-    context += " -> ";
+    context += " -> NEXT ";
     context += m_nextChord.isNotEmpty() ? m_nextChord : "--";
     if (m_transitionIntent.isNotEmpty())
         context += " | " + m_transitionIntent;
     context += " | ";
-    context += m_followingStructure && ! m_locallyOverriding ? "FOLLOW STRUCTURE" : "LOCAL OVERRIDE";
+    context += m_followingStructure && ! m_locallyOverriding ? "FOLLOWS STRUCTURE" : "LOCAL OVERRIDE";
     g.setFont (Theme::Font::micro());
-    g.setColour ((m_followingStructure && ! m_locallyOverriding) ? Theme::Zone::a : Theme::Colour::inkGhost);
+    g.setColour ((m_followingStructure && ! m_locallyOverriding) ? Theme::Zone::a : Theme::Colour::warning);
     g.drawText (context, contextRect, juce::Justification::centredLeft, true);
 
     // Bottom border

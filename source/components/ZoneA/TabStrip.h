@@ -1,25 +1,21 @@
 #pragma once
 
 #include "../../Theme.h"
+#include "ZoneAStyle.h"
 
 //==============================================================================
 /**
-    TabStrip — 28px-wide full-height left-edge navigation strip.
+    TabStrip — compact icon-first Zone A navigation.
 
-    10 tabs across 6 named groups.  Each group has a 12px header band
-    showing the group name.  Active tab uses the group's accent colour.
+    Tabs are declared with explicit metadata:
+      - stable tab id
+      - short label
+      - icon asset
+      - accent source
 
-    Groups (top to bottom):
-      SESSION     : song, structure, lyrics        — inkMid
-      INSTRUMENT  : instrument                     — Zone::a
-      PERFORMANCE : mixer, macro                   — Zone::b
-      SIGNAL      : routing                        — Zone::c
-      CAPTURE     : tape                           — Zone::d
-      TRACK       : tracks, automate               — inkMid
-
-    Active tab  : groupColor at 15% alpha bg + 2px groupColor left border
-    Hover       : surfaceEdge at 30% alpha bg
-    Text        : inkLight (active), inkMid (hover), inkGhost (default)
+    Active tab  : accent-tinted background + 2px accent edge
+    Hover       : subtle elevated row background
+    Icons       : always explicit, no paint-time icon swapping
 
     Firing:
       onTabSelected("tabId")  — a new tab was clicked
@@ -54,14 +50,17 @@ private:
     struct Tab
     {
         juce::String id;
-        juce::String label;   // ≤4 chars, displayed rotated
+        juce::String shortLabel;
+        const void*  iconData { nullptr };
+        int          iconSize { 0 };
+        juce::Colour accent   { Theme::Zone::a };
     };
 
     struct Group
     {
         juce::String     name;
         juce::Array<Tab> tabs;
-        juce::Colour     color;   // accent color for active state in this group
+        juce::Colour     accent { Theme::Zone::a };
     };
 
     juce::Array<Group> m_groups;
@@ -83,19 +82,15 @@ private:
     /** Return the tab ID at screen position pos; empty if none. */
     juce::String tabAtPos (juce::Point<int> pos) const noexcept;
 
-    /** Return the group color for a given tab ID. */
-    juce::Colour groupColorForTab (const juce::String& tabId) const noexcept;
-
     void paintGroupHeader (juce::Graphics& g,
                            juce::Rectangle<int> r,
-                           const juce::String& name) const;
+                           const Group& group) const;
 
     void paintTab (juce::Graphics& g,
                    const juce::Rectangle<int>& r,
-                   const juce::String& label,
+                   const Tab& tab,
                    bool isActive,
-                   bool isHovered,
-                   juce::Colour groupColor) const;
+                   bool isHovered) const;
 
     // Make the strip vertically scrollable when there isn't enough space
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;

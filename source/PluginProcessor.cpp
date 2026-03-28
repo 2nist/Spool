@@ -195,8 +195,9 @@ Chord nextChordForBeat (const StructureState& structure, double beat)
         const auto perRepeatBeats = juce::jmax (1, instance.barsPerRepeat * instance.beatsPerBar);
         const auto localBeat = juce::jmax (0.0, beat - start);
         const auto beatInRepeat = std::fmod (localBeat, static_cast<double> (perRepeatBeats));
-        const auto sectionLocalBars = beatInRepeat / static_cast<double> (instance.beatsPerBar);
-        const auto slot = juce::jmax (0, static_cast<int> (sectionLocalBars)) % static_cast<int> (instance.section->progression.size());
+        const int slot = chordIndexForLoopBeat (*instance.section, beatInRepeat);
+        if (slot < 0)
+            return { "C", "maj" };
         const auto nextSlot = (slot + 1) % static_cast<int> (instance.section->progression.size());
         return instance.section->progression[(size_t) nextSlot];
     }
@@ -212,20 +213,16 @@ PluginProcessor::PluginProcessor()
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                      #endif
                        ),
-       m_structureEngine (m_appState.structure)
+      m_structureEngine (m_songMgr)
 {
-    m_midiConstraintEngine.setStructure (&m_appState.structure);
+    m_midiConstraintEngine.setStructure (&m_songMgr.getStructureState());
     m_midiConstraintEngine.setStructureEngine (&m_structureEngine);
     m_midiConstraintEngine.setScaleLock (true);
     m_midiConstraintEngine.setChordLock (false);
     m_midiConstraintEngine.setNotePolicy (MidiConstraintEngine::NotePolicy::Guide);
 
-    m_appState.song.bpm = static_cast<int> (m_bpm.load());
     m_appState.transport.bpm = static_cast<double> (m_bpm.load());
     m_appState.transport.isPlaying = m_playing.load();
-    m_appState.structure.songTempo = m_appState.song.bpm;
-    m_appState.structure.songKey = m_appState.song.keyRoot;
-    m_appState.structure.songMode = m_appState.song.keyScale;
 
     m_appState.slots.resize (SpoolAudioGraph::kNumSlots);
     for (int s = 0; s < SpoolAudioGraph::kNumSlots; ++s)
@@ -255,6 +252,8 @@ PluginProcessor::PluginProcessor()
 
     for (auto& mapped : m_midiNoteMap)
         mapped = -1;
+
+    syncAuthoredSongToRuntime();
 }
 
 PluginProcessor::~PluginProcessor() {}
@@ -743,6 +742,7 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     m_circularBuffer.prepare (sampleRate, 120.0);
     m_circularBuffer.setSource (-1);   // master mix by default
     m_currentBeat = 0.0;
+    clearLooperPreview();
 
     for (auto& mb : m_slotMidi)
         mb.clear();
@@ -757,6 +757,7 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 void PluginProcessor::releaseResources()
 {
     m_audioGraph.reset();
+    clearLooperPreview();
 }
 
 bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -899,7 +900,7 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (numCh > 0) buffer.applyGain (0, 0, numSamples, leftGain);
     if (numCh > 1) buffer.applyGain (1, 0, numSamples, rightGain);
 
-    // ── Circular buffer — LAST operation, after all gain/pan applied ─────────
+    // ── Circular buffer — LAST operation before looper audition ───────────────
     if (m_circularBuffer.isActive())
     {
         const int srcSlot = m_circularBuffer.getSource();
@@ -912,6 +913,49 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                  && m_audioGraph.isSlotActive (srcSlot))
         {
             m_circularBuffer.writeBlock (m_audioGraph.getSlotBuffer (srcSlot), numSamples);
+        }
+    }
+
+    // ── Looper preview audition — post-history so tape capture stays clean ───
+    if (m_looperPreviewPlaying.load (std::memory_order_relaxed))
+    {
+        juce::SpinLock::ScopedTryLockType previewLock (m_looperPreviewLock);
+        if (previewLock.isLocked() && m_looperPreviewBuffer.getNumSamples() > 0)
+        {
+            const int previewSamples = m_looperPreviewBuffer.getNumSamples();
+            const int previewChannels = m_looperPreviewBuffer.getNumChannels();
+            const double ratio = m_sampleRate > 0.0 ? (m_looperPreviewSourceRate / m_sampleRate) : 1.0;
+
+            for (int sample = 0; sample < numSamples; ++sample)
+            {
+                if (m_looperPreviewReadPos >= static_cast<double> (previewSamples))
+                {
+                    if (m_looperPreviewLoopingFlag)
+                        m_looperPreviewReadPos = std::fmod (m_looperPreviewReadPos, static_cast<double> (previewSamples));
+                    else
+                    {
+                        m_looperPreviewPlaying.store (false, std::memory_order_relaxed);
+                        m_looperPreviewProgress.store (1.0f, std::memory_order_relaxed);
+                        break;
+                    }
+                }
+
+                const int indexA = juce::jlimit (0, previewSamples - 1, static_cast<int> (m_looperPreviewReadPos));
+                const int indexB = juce::jlimit (0, previewSamples - 1, indexA + 1);
+                const float frac = static_cast<float> (m_looperPreviewReadPos - static_cast<double> (indexA));
+
+                for (int ch = 0; ch < numCh; ++ch)
+                {
+                    const float* src = m_looperPreviewBuffer.getReadPointer (juce::jmin (ch, previewChannels - 1));
+                    const float previewSample = juce::jmap (frac, src[indexA], src[indexB]);
+                    buffer.addSample (ch, sample, previewSample * 0.9f);
+                }
+
+                m_looperPreviewReadPos += ratio;
+            }
+
+            const float progress = previewSamples > 0 ? (float) (m_looperPreviewReadPos / (double) previewSamples) : 0.0f;
+            m_looperPreviewProgress.store (juce::jlimit (0.0f, 1.0f, progress), std::memory_order_relaxed);
         }
     }
 }
@@ -1099,11 +1143,30 @@ void PluginProcessor::setPlaying (bool playing) noexcept
 void PluginProcessor::setBpm (float bpm) noexcept
 {
     const auto clamped = juce::jlimit (20.0f, 999.0f, bpm);
-    m_bpm.store (clamped);
-    m_appState.song.bpm = static_cast<int> (clamped);
-    m_appState.transport.bpm = static_cast<double> (clamped);
-    m_appState.structure.songTempo = static_cast<int> (clamped);
-    m_structureEngine.rebuild();
+    m_songMgr.setTempo (juce::roundToInt (clamped));
+    syncAuthoredSongToRuntime();
+}
+
+void PluginProcessor::syncAuthoredSongToRuntime() noexcept
+{
+    const auto authoredBpm = juce::jlimit (20, 999, m_songMgr.getTempo());
+    m_bpm.store (static_cast<float> (authoredBpm));
+    m_appState.song.title = m_songMgr.getSongTitle();
+    m_appState.song.bpm = authoredBpm;
+    m_appState.song.numerator = m_songMgr.getNumerator();
+    m_appState.song.denominator = m_songMgr.getDenominator();
+    m_appState.song.keyRoot = m_songMgr.getKeyRoot();
+    m_appState.song.keyScale = m_songMgr.getKeyScale();
+    m_appState.song.notes = m_songMgr.getNotes();
+    m_appState.transport.bpm = static_cast<double> (authoredBpm);
+
+    {
+        const juce::ScopedWriteLock structureWrite (m_structureLock);
+        m_appState.structure = m_songMgr.getStructureState();
+    }
+
+    m_beatsPerBar = static_cast<double> (juce::jmax (1, m_songMgr.getNumerator()));
+    m_midiConstraintEngine.setStructure (&m_songMgr.getStructureState());
 }
 
 void PluginProcessor::syncTransportFromAppState() noexcept
@@ -1116,10 +1179,8 @@ void PluginProcessor::syncTransportFromAppState() noexcept
 
     if (std::abs (oldBpm - desiredBpm) > 0.0001)
     {
-        m_bpm.store (static_cast<float> (desiredBpm));
-        m_appState.song.bpm = static_cast<int> (desiredBpm);
-        m_appState.structure.songTempo = static_cast<int> (desiredBpm);
-        m_structureEngine.rebuild();
+        m_songMgr.setTempo (juce::roundToInt (desiredBpm));
+        syncAuthoredSongToRuntime();
         DBG ("BPM updated via AppState: " << desiredBpm);
     }
 
@@ -1261,11 +1322,42 @@ void PluginProcessor::grabRegion (double startSecondsAgo, double lengthSeconds)
 void PluginProcessor::grabLastBars (int numBars)
 {
     m_grabbedClip    = m_circularBuffer.getLastBars (numBars,
-                                                      static_cast<double> (m_bpm.load()),
-                                                      m_beatsPerBar,
-                                                      m_currentBeat);
+                                                     static_cast<double> (m_bpm.load()),
+                                                     m_beatsPerBar,
+                                                     m_currentBeat);
     m_hasGrabbedClip = true;
     triggerAsyncUpdate();
+}
+
+void PluginProcessor::setLooperPreviewClip (const juce::AudioBuffer<float>& buffer, double sampleRate)
+{
+    const juce::SpinLock::ScopedLockType previewLock (m_looperPreviewLock);
+    m_looperPreviewBuffer.makeCopyOf (buffer);
+    m_looperPreviewSourceRate = sampleRate > 0.0 ? sampleRate : 44100.0;
+    m_looperPreviewReadPos = 0.0;
+    m_looperPreviewProgress.store (0.0f, std::memory_order_relaxed);
+}
+
+void PluginProcessor::clearLooperPreview()
+{
+    const juce::SpinLock::ScopedLockType previewLock (m_looperPreviewLock);
+    m_looperPreviewBuffer.setSize (0, 0);
+    m_looperPreviewReadPos = 0.0;
+    m_looperPreviewSourceRate = 44100.0;
+    m_looperPreviewLoopingFlag = true;
+    m_looperPreviewPlaying.store (false, std::memory_order_relaxed);
+    m_looperPreviewProgress.store (0.0f, std::memory_order_relaxed);
+}
+
+void PluginProcessor::setLooperPreviewState (bool playing, bool looping)
+{
+    const juce::SpinLock::ScopedLockType previewLock (m_looperPreviewLock);
+    m_looperPreviewLoopingFlag = looping;
+    if (! playing)
+        m_looperPreviewReadPos = 0.0;
+    m_looperPreviewPlaying.store (playing && m_looperPreviewBuffer.getNumSamples() > 0, std::memory_order_relaxed);
+    m_looperPreviewProgress.store (playing ? m_looperPreviewProgress.load (std::memory_order_relaxed) : 0.0f,
+                                   std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -1353,6 +1445,18 @@ std::array<uint8_t, 8> PluginProcessor::getRoutingMatrix() const
 {
     std::lock_guard<std::mutex> lock (m_routingLock);
     return m_routingState;
+}
+
+void PluginProcessor::setRoutingState (const RoutingState& state)
+{
+    std::lock_guard<std::mutex> lock (m_routingLock);
+    m_routeModel = state;
+}
+
+RoutingState PluginProcessor::getRoutingState() const
+{
+    std::lock_guard<std::mutex> lock (m_routingLock);
+    return m_routeModel;
 }
 
 //==============================================================================

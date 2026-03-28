@@ -23,6 +23,12 @@ void FXNode::setDragging (bool isDragging)
     repaint();
 }
 
+void FXNode::setFocused (bool isFocused)
+{
+    m_isFocused = isFocused;
+    repaint();
+}
+
 void FXNode::showRemoveConfirmation (bool show)
 {
     m_showConfirm = show;
@@ -106,6 +112,13 @@ void FXNode::paint (juce::Graphics& g)
         g.setColour (Theme::Colour::surfaceEdge);
         g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f),
                                 Theme::Radius::sm, Theme::Stroke::subtle);
+    }
+
+    if (m_isFocused)
+    {
+        g.setColour (Theme::Zone::c.withAlpha (0.9f));
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f),
+                                Theme::Radius::sm, Theme::Stroke::accent);
     }
 
     paintHeader (g);
@@ -219,6 +232,7 @@ void FXNode::paintParams (juce::Graphics& g) const
 
 void FXNode::paintRow (juce::Graphics& g, int rowIdx) const
 {
+    const auto& theme = ThemeManager::get().theme();
     auto* d = def();
     if (!d || rowIdx >= d->params.size()) return;
 
@@ -250,21 +264,21 @@ void FXNode::paintRow (juce::Graphics& g, int rowIdx) const
         auto tr = trackRect (rowR);
 
         // Track bg
-        g.setColour (Theme::Colour::surface0);
-        g.fillRect (tr);
+        g.setColour (theme.controlBg.withAlpha (0.95f));
+        g.fillRoundedRectangle (tr.toFloat(), 3.0f);
 
         // Track fill
         const float norm = (p.maxVal > p.minVal)
                            ? juce::jlimit (0.0f, 1.0f, (val - p.minVal) / (p.maxVal - p.minVal))
                            : 0.0f;
-        g.setColour (effectCol);
-        g.fillRect (tr.withWidth (static_cast<int> (tr.getWidth() * norm)));
+        g.setColour (theme.sliderTrack.interpolatedWith (effectCol, 0.35f));
+        g.fillRoundedRectangle (tr.withWidth (static_cast<int> (tr.getWidth() * norm)).toFloat(), 3.0f);
 
         // Thumb
         const int thumbD = 8;
         const float thumbX = static_cast<float> (tr.getX()) + norm * static_cast<float> (tr.getWidth()) - thumbD * 0.5f;
         const float thumbY = static_cast<float> (rowR.getY()) + (kRowH - thumbD) * 0.5f;
-        g.setColour (effectCol);
+        g.setColour (theme.sliderThumb);
         g.fillEllipse (thumbX, thumbY, static_cast<float> (thumbD), static_cast<float> (thumbD));
 
         // Value text
@@ -419,6 +433,9 @@ int FXNode::hitTestArrow (juce::Point<int> pos, int rowIdx) const noexcept
 void FXNode::mouseDown (const juce::MouseEvent& e)
 {
     const auto pos = e.getPosition();
+
+    if (onFocused)
+        onFocused (m_nodeIndex);
 
     // Drag handle
     if (dragHandleRect().contains (pos))

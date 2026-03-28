@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include "../../Theme.h"
 #include "../../module/ModuleProcessor.h"
 
@@ -39,7 +41,7 @@ private:
     //------------------------------------------------------------------
     // Oscillators
     juce::TextButton m_osc1On { "OSC 1" }, m_osc2On { "OSC 2" };
-    juce::TextButton m_osc1ShapeBtn { "SAW" }, m_osc2ShapeBtn { "SAW" };
+    std::array<juce::TextButton, 5> m_osc1WaveButtons, m_osc2WaveButtons;
     juce::ComboBox   m_osc1Octave, m_osc2Octave;
     juce::Slider     m_osc1Detune, m_osc2Detune;
     juce::Slider     m_osc1PulseWidth, m_osc2PulseWidth;

@@ -4,10 +4,12 @@
 
 #include "../../Theme.h"
 #include "../../structure/StructureState.h"
+#include "ZoneAStyle.h"
 
 class PluginProcessor;
 
-class StructurePanel : public juce::Component
+class StructurePanel : public juce::Component,
+                       public juce::DragAndDropContainer
 {
 public:
     explicit StructurePanel (PluginProcessor&);
@@ -16,12 +18,19 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void setIntentKeyMode (const juce::String& keyRoot, const juce::String& mode);
+    void refreshFromModel();
 
     std::function<void()> onStructureApplied;
     std::function<void(bool)> onStructureFollowModeChanged;
     std::function<void(const juce::Array<int>&)> onRailsSeeded;
 
 private:
+    enum class ListKind
+    {
+        sections,
+        arrangement
+    };
+
     class ContentComponent : public juce::Component
     {
     public:
@@ -60,13 +69,79 @@ private:
         StructurePanel& owner;
     };
 
+    class StructureListBox : public juce::ListBox,
+                             public juce::DragAndDropTarget
+    {
+    public:
+        StructureListBox (StructurePanel& ownerIn,
+                          ListKind kindIn,
+                          const juce::String& name,
+                          juce::ListBoxModel* modelIn);
+
+        void mouseDown (const juce::MouseEvent& event) override;
+        void mouseDrag (const juce::MouseEvent& event) override;
+        void mouseUp (const juce::MouseEvent& event) override;
+        void paintOverChildren (juce::Graphics& g) override;
+
+        bool isInterestedInDragSource (const SourceDetails& dragSourceDetails) override;
+        void itemDragEnter (const SourceDetails& dragSourceDetails) override;
+        void itemDragMove (const SourceDetails& dragSourceDetails) override;
+        void itemDragExit (const SourceDetails& dragSourceDetails) override;
+        void itemDropped (const SourceDetails& dragSourceDetails) override;
+
+    private:
+        StructurePanel& owner;
+        ListKind kind;
+        int dragStartRow = -1;
+        bool dragStarted = false;
+        int dropRow = -1;
+        bool dropHover = false;
+        bool dropAcceptsExternalSource = false;
+    };
+
+    class TrashDropZone : public juce::Component,
+                          public juce::DragAndDropTarget
+    {
+    public:
+        TrashDropZone (StructurePanel& ownerIn, ListKind kindIn) : owner (ownerIn), kind (kindIn) {}
+
+        void paint (juce::Graphics& g) override;
+        void mouseUp (const juce::MouseEvent& event) override;
+
+        bool isInterestedInDragSource (const SourceDetails& dragSourceDetails) override;
+        void itemDragEnter (const SourceDetails& dragSourceDetails) override;
+        void itemDragExit (const SourceDetails& dragSourceDetails) override;
+        void itemDropped (const SourceDetails& dragSourceDetails) override;
+
+    private:
+        StructurePanel& owner;
+        ListKind kind;
+        bool dragHover = false;
+    };
+
     class ProgressionStrip : public juce::Component
     {
     public:
         explicit ProgressionStrip (StructurePanel& ownerIn) : owner (ownerIn) {}
         void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent& event) override;
+        void mouseDrag (const juce::MouseEvent& event) override;
         void mouseUp (const juce::MouseEvent& event) override;
         void mouseDoubleClick (const juce::MouseEvent& event) override;
+    private:
+        StructurePanel& owner;
+        int dragCellIndex = -1;
+        int dragStartDuration = 0;
+        bool resizingDuration = false;
+        StructureState dragBeforeState;
+    };
+
+    class DiatonicPaletteStrip : public juce::Component
+    {
+    public:
+        explicit DiatonicPaletteStrip (StructurePanel& ownerIn) : owner (ownerIn) {}
+        void paint (juce::Graphics&) override;
+        void mouseUp (const juce::MouseEvent& event) override;
     private:
         StructurePanel& owner;
     };
@@ -78,23 +153,28 @@ private:
     SectionListModel sectionListModel { *this };
     ArrangementListModel arrangementListModel { *this };
     ProgressionStrip progressionStrip { *this };
+    DiatonicPaletteStrip diatonicPaletteStrip { *this };
 
     juce::ToggleButton structureFollowToggle { "Use Structure For Tracks" };
     juce::TextButton seedRailsButton { "Seed Rails" };
 
     juce::Label sectionListTitle { {}, "Sections" };
-    juce::ListBox sectionList { "Section List", &sectionListModel };
+    juce::Label sectionListHint { {}, "Reusable section loops" };
+    StructureListBox sectionList { *this, ListKind::sections, "Section List", &sectionListModel };
     juce::TextButton addSectionButton { "Add" };
     juce::TextButton duplicateSectionButton { "Duplicate" };
-    juce::TextButton deleteSectionButton { "Delete" };
+    TrashDropZone deleteSectionButton { *this, ListKind::sections };
     juce::TextButton moveSectionUpButton { "Up" };
     juce::TextButton moveSectionDownButton { "Down" };
+    juce::TextEditor inlineSectionNameEditor;
 
     juce::Label arrangementTitle { {}, "Arrangement" };
-    juce::ListBox arrangementList { "Arrangement List", &arrangementListModel };
+    juce::Label arrangementFlowHint { {}, "Drag sections here to build song order" };
+    StructureListBox arrangementList { *this, ListKind::arrangement, "Arrangement List", &arrangementListModel };
+    juce::Label arrangementHint { {}, "Drag sections here" };
     juce::TextButton addArrangementButton { "Add" };
     juce::TextButton duplicateArrangementButton { "Duplicate" };
-    juce::TextButton deleteArrangementButton { "Delete" };
+    TrashDropZone deleteArrangementButton { *this, ListKind::arrangement };
     juce::TextButton moveArrangementUpButton { "Up" };
     juce::TextButton moveArrangementDownButton { "Down" };
 
@@ -119,9 +199,12 @@ private:
 
     juce::Label progressionHeader { {}, "Progression Cells" };
     juce::Label progressionHint { {}, "One harmonic cell per bar. Cells loop across the section length." };
+    juce::Label progressionPaletteHint { {}, "" };
     juce::Label chordRootLabel { {}, "Selected Chord Root" };
     juce::Label chordTypeLabel { {}, "Selected Chord Quality" };
     juce::TextButton addChordCellButton { "Add Cell" };
+    juce::TextButton progressionPresetButton { "Preset" };
+    juce::TextButton cadenceButton { "Cadence" };
     juce::TextButton removeChordCellButton { "Remove" };
     juce::ComboBox chordRootBox;
     juce::ComboBox chordTypeBox;
@@ -137,6 +220,7 @@ private:
     int selectedSectionIndex = -1;
     int selectedArrangementIndex = -1;
     int selectedChordIndex = -1;
+    int inlineRenameRow = -1;
     bool suppressListCallbacks = false;
     bool suppressControlCallbacks = false;
 
@@ -144,23 +228,40 @@ private:
     void duplicateSelectedSection();
     void deleteSelectedSection();
     void moveSelectedSection (int delta);
+    void moveSectionTo (int fromIndex, int toIndex);
+    void deleteSectionAt (int index);
 
     void addArrangementBlock();
     void duplicateSelectedArrangementBlock();
     void deleteSelectedArrangementBlock();
     void moveSelectedArrangementBlock (int delta);
+    void moveArrangementBlockTo (int fromIndex, int toIndex);
+    void deleteArrangementBlockAt (int index);
     void resequenceArrangement();
+    void addArrangementBlockFromSection (int sectionIndex, int targetIndex);
+
+    juce::String dragDescriptionForSectionIndex (int index) const;
+    juce::String dragDescriptionForArrangementIndex (int index) const;
+    bool isDragDescriptionForKind (const juce::var& description, ListKind kind) const;
+    int dragIndexFromDescription (const juce::var& description, ListKind kind) const;
+    void handleListDrop (ListKind kind, int fromIndex, int toIndex);
+    void handleTrashDrop (ListKind kind, int fromIndex);
 
     void addChordCell();
     void removeSelectedChordCell();
     void selectChordCell (int index);
-    void showChordCellMenu();
-    void showChordEditMenu (int index);
+    void showChordCellMenu (int index = -1, juce::Point<int> anchorInProgressionStrip = {});
+    void showChordEditMenu (int index, juce::Point<int> anchorInProgressionStrip = {});
+    void showProgressionPresetMenu();
+    void showCadenceMenu();
+    void applyDiatonicPaletteChord (int degreeIndex, bool append);
     void applyTheoryAction (int commandId);
 
     void selectSection (int index);
     void selectArrangementBlock (int index);
     void clearSelection();
+    void beginInlineSectionRename (int index);
+    void finishInlineSectionRename (bool commit);
 
     Section* getSelectedSection();
     const Section* getSelectedSection() const;
@@ -169,11 +270,17 @@ private:
     Chord* getSelectedChordCell();
     const Chord* getSelectedChordCell() const;
 
+    int chordStartBeat (int index) const;
+    int chordIndexForBeat (int beat) const;
+    int progressionBeatAtPoint (juce::Point<int> position) const;
+    juce::Rectangle<float> progressionGridBounds() const;
     juce::Rectangle<int> chordCellBounds (int index) const;
+    juce::Rectangle<float> progressionChipBounds (int index) const;
+    void updateSectionDerivedLength (Section& section);
     void refreshLists();
     void refreshEditor();
     void refreshSummary();
-    void commitStructureChange (bool seedRails);
+    void commitStructureChange (const StructureState& beforeState, const juce::String& actionName, bool seedRails);
     void paintContent (juce::Graphics&);
     void layoutContent (juce::Rectangle<int> bounds);
 

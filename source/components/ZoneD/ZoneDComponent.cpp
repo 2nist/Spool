@@ -179,6 +179,19 @@ void ZoneDComponent::setBpm (float bpm)
 void ZoneDComponent::setStructureView (const StructureState* state, const StructureEngine* engine)
 {
     m_structureLane.setStructure (state, engine);
+
+    if (state != nullptr && structureHasScaffold (*state) && state->totalBars > 0)
+    {
+        const auto bars = static_cast<float> (juce::jlimit (1, 32, state->totalBars));
+        m_loopLengthBars = bars;
+        m_transportStrip.setLoopLength (bars);
+        m_cylinderBand.setLoopLengthBars (bars);
+    }
+}
+
+void ZoneDComponent::setAuthoredTimelineData (const LyricsState* lyricsState, const AutomationState* automationState)
+{
+    m_structureLane.setAuthoredTimelineData (lyricsState, automationState);
 }
 
 void ZoneDComponent::setStructureBeat (double beat)
@@ -213,34 +226,39 @@ void ZoneDComponent::seedStructureRails (const StructureState& structure)
                 continue;
 
             const auto sectionTint = sectionColourForIndex (static_cast<int> (s));
-            const int chordCount = juce::jmax (1, static_cast<int> (instance.section->progression.size()));
-            const float barsPerChord = static_cast<float> (instance.barsPerRepeat) / static_cast<float> (chordCount);
+            const int repeatBeats = juce::jmax (1, instance.barsPerRepeat * instance.beatsPerBar);
+            const bool hasProgression = ! instance.section->progression.empty();
+            const auto fallbackChord = Chord { "C", "maj" };
 
             for (int repeatIndex = 0; repeatIndex < instance.repeats; ++repeatIndex)
             {
-                for (int c = 0; c < chordCount; ++c)
+                const int repeatStartBeat = instance.startBeat + repeatIndex * repeatBeats;
+                int beatCursor = 0;
+                int sequenceIndex = 0;
+
+                while (beatCursor < repeatBeats && sequenceIndex < juce::jmax (1, repeatBeats * 2))
                 {
-                    const float repeatStartBeat = static_cast<float> (instance.startBeat + repeatIndex * instance.barsPerRepeat * instance.beatsPerBar);
-                    const float startBeat = repeatStartBeat + barsPerChord * static_cast<float> (c) * static_cast<float> (instance.beatsPerBar);
-                    const float endBeat = (c == chordCount - 1)
-                                            ? repeatStartBeat + static_cast<float> (instance.barsPerRepeat * instance.beatsPerBar)
-                                            : repeatStartBeat + barsPerChord * static_cast<float> (c + 1) * static_cast<float> (instance.beatsPerBar);
+                    const Chord chord = hasProgression
+                                      ? instance.section->progression[(size_t) (sequenceIndex % static_cast<int> (instance.section->progression.size()))]
+                                      : fallbackChord;
+                    const int chordDuration = hasProgression ? juce::jmax (1, chord.durationBeats)
+                                                             : repeatBeats;
+                    const int chordStartBeat = repeatStartBeat + beatCursor;
+                    const int chordEndBeat = juce::jmin (repeatStartBeat + repeatBeats,
+                                                         chordStartBeat + chordDuration);
+                    if (chordEndBeat <= chordStartBeat)
+                        break;
 
                     Clip clip;
-                    clip.startBeat = startBeat;
-                    clip.lengthBeats = juce::jmax (0.25f, endBeat - startBeat);
-                    if (c < static_cast<int> (instance.section->progression.size()))
-                    {
-                        const auto& chord = instance.section->progression[(size_t) c];
-                        clip.name = instance.section->name + " · " + chord.root + chord.type;
-                    }
-                    else
-                    {
-                        clip.name = instance.section->name;
-                    }
-                    clip.type = ClipType::midi;
+                    clip.startBeat = static_cast<float> (chordStartBeat);
+                    clip.lengthBeats = juce::jmax (0.25f, static_cast<float> (chordEndBeat - chordStartBeat));
+                    clip.name = instance.section->name + " · " + abbreviatedChordLabel (chord);
+                    clip.type = ClipType::scaffold;
                     clip.tint = sectionTint;
                     lane.clips.add (clip);
+
+                    beatCursor = chordEndBeat - repeatStartBeat;
+                    ++sequenceIndex;
                 }
             }
         }

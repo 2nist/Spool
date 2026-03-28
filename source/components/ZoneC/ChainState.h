@@ -15,6 +15,7 @@
 struct EffectNode
 {
     juce::String       effectType;       // "eq", "compressor", "reverb" etc.
+    juce::String       effectDomain { "audio" };
     bool               bypassed = false;
     juce::Array<float> params;           // indexed per effect type (see getEffectDef)
 };
@@ -52,6 +53,7 @@ struct EffectTypeDef
     juce::String              id;         // "eq", "compressor" etc.
     juce::String              displayName; // "EQ", "COMPRESSOR" etc.
     juce::String              tag;         // "3-BAND", "VINTAGE" etc.
+    juce::String              domain { "audio" };
     juce::Colour              colour;
     juce::Array<EffectParamDef> params;
 };
@@ -74,6 +76,7 @@ namespace EffectRegistry
             d.id          = "eq";
             d.displayName = "EQ";
             d.tag         = "3-BAND";
+            d.domain      = "audio";
             d.colour      = Theme::Signal::audio;
             d.params.add ({ "LO GAIN",  -12.0f, 12.0f,    0.0f,  T::Continuous, {} });
             d.params.add ({ "MID GAIN", -12.0f, 12.0f,    0.0f,  T::Continuous, {} });
@@ -89,6 +92,7 @@ namespace EffectRegistry
             d.id          = "compressor";
             d.displayName = "COMPRESSOR";
             d.tag         = "VINTAGE";
+            d.domain      = "audio";
             d.colour      = Theme::Colour::accent;
             d.params.add ({ "THRESH", -60.0f,  0.0f, -12.0f, T::Continuous, {} });
             d.params.add ({ "RATIO",    1.0f, 20.0f,   4.0f, T::Continuous, {} });
@@ -104,6 +108,7 @@ namespace EffectRegistry
             d.id          = "reverb";
             d.displayName = "REVERB";
             d.tag         = "ROOM";
+            d.domain      = "audio";
             d.colour      = Theme::Zone::a;
             d.params.add ({ "SIZE",   0.0f, 1.0f, 0.5f, T::Continuous, {} });
             d.params.add ({ "DAMP",   0.0f, 1.0f, 0.5f, T::Continuous, {} });
@@ -119,6 +124,7 @@ namespace EffectRegistry
             d.id          = "delay";
             d.displayName = "DELAY";
             d.tag         = "STEREO";
+            d.domain      = "audio";
             d.colour      = Theme::Colour::accentWarm;
             d.params.add ({ "TIME",   0.01f, 2.0f,  0.25f, T::Continuous, {} });
             d.params.add ({ "FEED",   0.0f,  0.99f, 0.4f,  T::Continuous, {} });
@@ -134,6 +140,7 @@ namespace EffectRegistry
             d.id          = "distortion";
             d.displayName = "DISTORTION";
             d.tag         = "SATURATION";
+            d.domain      = "audio";
             d.colour      = Theme::Colour::error;
             d.params.add ({ "DRIVE", 0.0f, 1.0f, 0.3f, T::Continuous, {} });
             d.params.add ({ "TONE",  0.0f, 1.0f, 0.5f, T::Continuous, {} });
@@ -149,6 +156,7 @@ namespace EffectRegistry
             d.id          = "chorus";
             d.displayName = "CHORUS";
             d.tag         = "FLANGER";
+            d.domain      = "audio";
             d.colour      = Theme::Semantic::borrowed;
             d.params.add ({ "RATE",  0.01f, 10.0f, 0.5f, T::Continuous, {} });
             d.params.add ({ "DEPTH", 0.0f,  1.0f,  0.3f, T::Continuous, {} });
@@ -165,6 +173,7 @@ namespace EffectRegistry
             d.id          = "filter";
             d.displayName = "FILTER";
             d.tag         = "LP24";
+            d.domain      = "audio";
             d.colour      = Theme::Semantic::strong;
             d.params.add ({ "CUTOFF", 20.0f,20000.0f,2000.0f, T::Continuous, {} });
             d.params.add ({ "RESO",   0.0f,  1.0f,   0.3f,    T::Continuous, {} });
@@ -172,6 +181,32 @@ namespace EffectRegistry
             d.params.add ({ "DRIVE",  0.0f,  1.0f,   0.0f,    T::Continuous, {} });
             d.params.add ({ "MODE",   0.0f,  3.0f,   0.0f,    T::Enum,
                             { "LP", "HP", "BP", "NOTCH" } });
+            defs.add (d);
+        }
+
+        {
+            EffectTypeDef d;
+            d.id          = "arp";
+            d.displayName = "ARP";
+            d.tag         = "MIDI FX";
+            d.domain      = "midi";
+            d.colour      = Theme::Signal::midi;
+            d.params.add ({ "RATE", 1.0f, 8.0f, 4.0f, T::Enum, { "1/4", "1/8", "1/16", "1/32", "TRIP", "UP", "DOWN", "RAND" } });
+            d.params.add ({ "OCT", 0.0f, 2.0f, 0.0f, T::Enum, { "1", "2", "3" } });
+            d.params.add ({ "GATE", 0.1f, 1.0f, 0.65f, T::Continuous, {} });
+            defs.add (d);
+        }
+
+        {
+            EffectTypeDef d;
+            d.id          = "transpose";
+            d.displayName = "TRANSPOSE";
+            d.tag         = "MIDI FX";
+            d.domain      = "midi";
+            d.colour      = Theme::Signal::midi;
+            d.params.add ({ "SHIFT", -24.0f, 24.0f, 0.0f, T::Continuous, {} });
+            d.params.add ({ "LOCK", 0.0f, 1.0f, 0.0f, T::Bool, {} });
+            d.params.add ({ "RANGE", 0.0f, 2.0f, 1.0f, T::Enum, { "LOW", "MID", "HIGH" } });
             defs.add (d);
         }
 
@@ -193,6 +228,7 @@ namespace EffectRegistry
         n.effectType = id;
         if (auto* def = find (id))
         {
+            n.effectDomain = def->domain;
             for (auto& p : def->params)
                 n.params.add (p.defaultVal);
         }

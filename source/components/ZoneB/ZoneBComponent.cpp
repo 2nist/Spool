@@ -1,4 +1,5 @@
 #include "ZoneBComponent.h"
+#include "../ZoneA/ZoneAControlStyle.h"
 
 //==============================================================================
 // Constructor / Destructor
@@ -13,8 +14,7 @@ ZoneBComponent::ZoneBComponent()
     addAndMakeVisible (m_rowsViewport);
 
     // ADD GROUP button (inside rows content)
-    m_addGroupBtn.setColour (juce::TextButton::buttonColourId,  juce::Colours::transparentBlack);
-    m_addGroupBtn.setColour (juce::TextButton::textColourOffId, Theme::Colour::inkGhost);
+    ZoneAControlStyle::styleTextButton (m_addGroupBtn, Theme::Zone::b.withAlpha (0.75f));
     m_addGroupBtn.setButtonText ("+  GROUP");
     m_addGroupBtn.onClick = [this]
     {
@@ -34,13 +34,13 @@ ZoneBComponent::ZoneBComponent()
         // Materialise the visual position before starting a drag if default (-1).
         if (m_splitY < 0)
             m_splitY = juce::jmax (kStripeH + kMinRowsH,
-                                   getHeight() - kHandleH - kMinBottomH);
+                                   getHeight() - kHandleH - minBottomHeight());
         m_splitDragStartY = m_splitY;
     };
     m_splitHandle.onDrag = [this] (int dy)
     {
         const int minSplit = kStripeH + kMinRowsH;
-        const int maxSplit = getHeight() - kHandleH - kMinBottomH;
+        const int maxSplit = getHeight() - kHandleH - minBottomHeight();
         m_splitY = juce::jlimit (minSplit, juce::jmax (minSplit, maxSplit),
                                  m_splitDragStartY + dy);
         resized();
@@ -122,6 +122,17 @@ ZoneBComponent::~ZoneBComponent()
 
     for (auto* hdr : m_groupHeaders)
         m_rowsContent.removeChildComponent (hdr);
+}
+
+void ZoneBComponent::setLooperVisible (bool shouldShow)
+{
+    if (m_showLooper == shouldShow)
+        return;
+
+    m_showLooper = shouldShow;
+    m_looperStrip.setVisible (shouldShow);
+    resized();
+    repaint();
 }
 
 ModuleRow* ZoneBComponent::rowForFlatSlot (int flatSlotIndex, int* groupIndexOut) noexcept
@@ -458,7 +469,7 @@ void ZoneBComponent::resized()
     const int h = getHeight();
 
     const int minSplit = kStripeH + kMinRowsH;
-    const int maxSplit = h - kHandleH - kMinBottomH;
+    const int maxSplit = h - kHandleH - minBottomHeight();
 
     if (m_splitY >= 0)
     {
@@ -472,8 +483,9 @@ void ZoneBComponent::resized()
     const int splitPos = (m_splitY >= 0) ? m_splitY
                                          : juce::jmax (minSplit, maxSplit);
 
-    // Dynamic grid height — fills all space between split handle and looper
-    m_gridH = juce::jmax ((int) kMinGridH, h - (splitPos + kHandleH) - kSeqHdrH - kLooperH);
+    // Dynamic grid height — fills all space between split handle and the optional looper
+    const int looperH = looperHeight();
+    m_gridH = juce::jmax ((int) kMinGridH, h - (splitPos + kHandleH) - kSeqHdrH - looperH);
 
     // Rows viewport
     m_rowsViewport.setBounds (0, kStripeH, w, rowsAreaH());
@@ -487,7 +499,11 @@ void ZoneBComponent::resized()
     m_seqHeader.setBounds      (0, y0,                   w, kSeqHdrH);
     m_stepGridSingle.setBounds (0, y0 + kSeqHdrH,        w, m_gridH);
     m_stepGridDrum.setBounds   (0, y0 + kSeqHdrH,        w, m_gridH);
-    m_looperStrip.setBounds    (0, y0 + kSeqHdrH + m_gridH, w, kLooperH);
+    m_looperStrip.setVisible (looperH > 0);
+    if (looperH > 0)
+        m_looperStrip.setBounds (0, y0 + kSeqHdrH + m_gridH, w, looperH);
+    else
+        m_looperStrip.setBounds (0, y0 + kSeqHdrH + m_gridH, 0, 0);
 
     if (m_loadDialog != nullptr)
         m_loadDialog->setBounds (m_loadDialog->getBounds().constrainedWithin (getLocalBounds()));
@@ -532,7 +548,7 @@ void ZoneBComponent::paint (juce::Graphics& g)
     {
         const int loopY = seqHeaderY() + kSeqHdrH + m_gridH;
         g.setColour (Theme::Colour::surface1);
-        g.fillRect  (0, loopY, getWidth(), kLooperH);
+        g.fillRect  (0, loopY, getWidth(), looperHeight());
         g.setColour (Theme::Colour::surfaceEdge);
         g.fillRect  (0, loopY, getWidth(), 1);
     }
@@ -651,6 +667,8 @@ void ZoneBComponent::setPlayheadStep (int step)
 
 void ZoneBComponent::setStructureContext (const juce::String& sectionName,
                                           const juce::String& positionLabel,
+                                          const juce::String& keyRoot,
+                                          const juce::String& keyScale,
                                           const juce::String& currentChord,
                                           const juce::String& nextChord,
                                           const juce::String& transitionIntent,
@@ -658,6 +676,7 @@ void ZoneBComponent::setStructureContext (const juce::String& sectionName,
                                           bool locallyOverriding)
 {
     m_seqHeader.setStructureContext (sectionName, positionLabel, currentChord, nextChord, transitionIntent, followingStructure, locallyOverriding);
+    m_stepGridSingle.setMusicalContext (keyRoot, keyScale, currentChord, nextChord, followingStructure, locallyOverriding);
 }
 
 void ZoneBComponent::seedPatternForSlot (int flatSlotIndex, int stepCount, const std::initializer_list<int>& activeSteps)

@@ -12,6 +12,8 @@ FXChainDisplay::FXChainDisplay()
 void FXChainDisplay::refresh (const ChainState* chain)
 {
     m_chain = chain;
+    if (m_chain != nullptr)
+        m_focusedNodeIndex = juce::jlimit (0, juce::jmax (0, m_chain->nodes.size() - 1), m_focusedNodeIndex);
     buildNodes();
 
     const int n = chain ? chain->nodes.size() : 0;
@@ -23,6 +25,13 @@ void FXChainDisplay::refresh (const ChainState* chain)
     m_addButtonY = firstNodeY() + n * kNodeStep;
 
     resized();
+    repaint();
+}
+
+void FXChainDisplay::setFocusedNode (int nodeIndex)
+{
+    m_focusedNodeIndex = juce::jmax (0, nodeIndex);
+    buildNodes();
     repaint();
 }
 
@@ -80,6 +89,17 @@ void FXChainDisplay::buildNodes()
         {
             if (onParamChanged) onParamChanged (idx, paramIdx, val);
         };
+
+        node->onFocused = [this] (int idx)
+        {
+            m_focusedNodeIndex = idx;
+            for (int n = 0; n < m_nodes.size(); ++n)
+                m_nodes[n]->setFocused (n == idx);
+            if (onNodeFocused)
+                onNodeFocused (idx);
+        };
+
+        node->setFocused (i == m_focusedNodeIndex);
 
         addAndMakeVisible (*node);
     }

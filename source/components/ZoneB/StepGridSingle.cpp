@@ -1,6 +1,22 @@
 #include "StepGridSingle.h"
 
 #include <cmath>
+#include <limits>
+
+namespace
+{
+std::array<int, 7> intervalsForMode (const juce::String& mode)
+{
+    auto lower = mode.trim().toLowerCase();
+    if (lower == "minor")      return { 0, 2, 3, 5, 7, 8, 10 };
+    if (lower == "dorian")     return { 0, 2, 3, 5, 7, 9, 10 };
+    if (lower == "mixolydian") return { 0, 2, 4, 5, 7, 9, 10 };
+    if (lower == "lydian")     return { 0, 2, 4, 6, 7, 9, 11 };
+    if (lower == "phrygian")   return { 0, 1, 3, 5, 7, 8, 10 };
+    if (lower == "locrian")    return { 0, 1, 3, 5, 6, 8, 10 };
+    return { 0, 2, 4, 5, 7, 9, 11 };
+}
+}
 
 StepGridSingle::StepGridSingle()
 {
@@ -36,6 +52,22 @@ void StepGridSingle::clearPattern ()
 void StepGridSingle::setPlayhead (int stepIndex)
 {
     m_playhead = stepIndex;
+    repaint();
+}
+
+void StepGridSingle::setMusicalContext (const juce::String& keyRoot,
+                                        const juce::String& keyScale,
+                                        const juce::String& currentChord,
+                                        const juce::String& nextChord,
+                                        bool followingStructure,
+                                        bool locallyOverriding)
+{
+    m_keyRoot = keyRoot.isNotEmpty() ? keyRoot : juce::String ("C");
+    m_keyScale = keyScale.isNotEmpty() ? keyScale : juce::String ("Major");
+    m_currentChord = currentChord.isNotEmpty() ? currentChord : juce::String ("Cmaj");
+    m_nextChord = nextChord.isNotEmpty() ? nextChord : m_currentChord;
+    m_followingStructure = followingStructure;
+    m_locallyOverriding = locallyOverriding;
     repaint();
 }
 
@@ -275,6 +307,223 @@ juce::String StepGridSingle::noteValueLabel (int value) const
     return {};
 }
 
+juce::String StepGridSingle::noteName (int midiNote) const
+{
+    return juce::MidiMessage::getMidiNoteName (juce::jlimit (0, 127, midiNote), true, true, 3);
+}
+
+int StepGridSingle::rootToPitchClass (const juce::String& root) const noexcept
+{
+    const auto r = root.trim();
+    if (r.equalsIgnoreCase ("C")) return 0;
+    if (r.equalsIgnoreCase ("C#") || r.equalsIgnoreCase ("Db")) return 1;
+    if (r.equalsIgnoreCase ("D")) return 2;
+    if (r.equalsIgnoreCase ("D#") || r.equalsIgnoreCase ("Eb")) return 3;
+    if (r.equalsIgnoreCase ("E")) return 4;
+    if (r.equalsIgnoreCase ("F")) return 5;
+    if (r.equalsIgnoreCase ("F#") || r.equalsIgnoreCase ("Gb")) return 6;
+    if (r.equalsIgnoreCase ("G")) return 7;
+    if (r.equalsIgnoreCase ("G#") || r.equalsIgnoreCase ("Ab")) return 8;
+    if (r.equalsIgnoreCase ("A")) return 9;
+    if (r.equalsIgnoreCase ("A#") || r.equalsIgnoreCase ("Bb")) return 10;
+    if (r.equalsIgnoreCase ("B")) return 11;
+    return 0;
+}
+
+juce::String StepGridSingle::chordRootString (const juce::String& chordLabel) const
+{
+    auto text = chordLabel.trim();
+    if (text.isEmpty())
+        return m_keyRoot;
+
+    if (text.length() >= 2)
+    {
+        const auto two = text.substring (0, 2);
+        if (two[1] == '#' || two[1] == 'b' || two[1] == 'B')
+            return two.replaceCharacter ('B', 'b');
+    }
+
+    return text.substring (0, 1);
+}
+
+juce::String StepGridSingle::chordTypeString (const juce::String& chordLabel) const
+{
+    auto text = chordLabel.trim();
+    if (text.isEmpty())
+        return "maj";
+
+    const auto root = chordRootString (text);
+    auto suffix = text.fromFirstOccurrenceOf (root, false, false).trim();
+    if (suffix.isEmpty())
+        suffix = "maj";
+    return suffix;
+}
+
+std::vector<int> StepGridSingle::chordIntervalsForLabel (const juce::String& chordLabel) const
+{
+    auto lowerType = chordTypeString (chordLabel).toLowerCase();
+    if (lowerType == "min" || lowerType == "m")
+        return { 0, 3, 7 };
+    if (lowerType == "dim")
+        return { 0, 3, 6 };
+    if (lowerType == "aug")
+        return { 0, 4, 8 };
+    if (lowerType == "sus2")
+        return { 0, 2, 7 };
+    if (lowerType == "sus4")
+        return { 0, 5, 7 };
+    if (lowerType == "7" || lowerType == "dom7")
+        return { 0, 4, 7, 10 };
+    if (lowerType == "maj7")
+        return { 0, 4, 7, 11 };
+    if (lowerType == "min7" || lowerType == "m7")
+        return { 0, 3, 7, 10 };
+    return { 0, 4, 7 };
+}
+
+std::vector<int> StepGridSingle::scalePitchClassesForKey() const
+{
+    std::vector<int> pcs;
+    pcs.reserve (7);
+    const int rootPc = rootToPitchClass (m_keyRoot);
+    const auto intervals = intervalsForMode (m_keyScale);
+    for (const auto interval : intervals)
+        pcs.push_back ((rootPc + interval) % 12);
+    return pcs;
+}
+
+int StepGridSingle::nearestNoteForPitchClass (int aroundNote, int targetPc) const noexcept
+{
+    int best = juce::jlimit (0, 127, aroundNote);
+    int bestDistance = std::numeric_limits<int>::max();
+    const int aroundOctave = aroundNote / 12;
+
+    for (int octave = aroundOctave - 2; octave <= aroundOctave + 2; ++octave)
+    {
+        const int candidate = octave * 12 + ((targetPc % 12 + 12) % 12);
+        if (candidate < 0 || candidate > 127)
+            continue;
+
+        const int distance = std::abs (candidate - aroundNote);
+        if (distance < bestDistance)
+        {
+            best = candidate;
+            bestDistance = distance;
+        }
+    }
+
+    return best;
+}
+
+juce::String StepGridSingle::chordTargetLabel (SlotPattern::HarmonicSource source) const
+{
+    switch (source)
+    {
+        case SlotPattern::HarmonicSource::key:       return m_keyRoot + " " + m_keyScale;
+        case SlotPattern::HarmonicSource::chord:     return m_currentChord;
+        case SlotPattern::HarmonicSource::nextChord: return m_nextChord;
+    }
+
+    return m_keyRoot + " " + m_keyScale;
+}
+
+int StepGridSingle::realizedPitchForPreview (const SlotPattern::Step& step, const SlotPattern::MicroEvent& event) const noexcept
+{
+    const int baseNote = step.anchorValue < 0 ? 60 : juce::jlimit (0, 127, step.anchorValue);
+    const int roleCenter = [&step, baseNote]
+    {
+        switch (step.role)
+        {
+            case SlotPattern::StepRole::bass:       return juce::jlimit (36, 52, baseNote - 12);
+            case SlotPattern::StepRole::chord:      return juce::jlimit (48, 72, baseNote + 2);
+            case SlotPattern::StepRole::lead:       return juce::jlimit (55, 84, baseNote + 12);
+            case SlotPattern::StepRole::fill:       return juce::jlimit (52, 88, baseNote + 7);
+            case SlotPattern::StepRole::transition: return juce::jlimit (40, 76, baseNote + 5);
+        }
+
+        return baseNote;
+    }();
+
+    const juce::String harmonicChord = (step.harmonicSource == SlotPattern::HarmonicSource::nextChord || step.lookAheadToNextChord)
+                                         ? m_nextChord
+                                         : m_currentChord;
+    const int harmonicRoot = rootToPitchClass (step.harmonicSource == SlotPattern::HarmonicSource::key ? m_keyRoot
+                                                                                                        : chordRootString (harmonicChord));
+
+    switch (step.noteMode)
+    {
+        case SlotPattern::NoteMode::absolute:
+        {
+            const int stored = event.pitchValue < 0 ? baseNote : event.pitchValue;
+            if (! step.followStructure)
+                return juce::jlimit (0, 127, stored);
+
+            const auto pcs = step.harmonicSource == SlotPattern::HarmonicSource::key ? scalePitchClassesForKey()
+                                                                                      : chordIntervalsForLabel (harmonicChord);
+            if (pcs.empty())
+                return juce::jlimit (0, 127, stored);
+
+            if (step.harmonicSource == SlotPattern::HarmonicSource::key)
+                return nearestNoteForPitchClass (stored, pcs[(size_t) (stored % juce::jmax (1, (int) pcs.size()))]);
+
+            const int nearestPc = (harmonicRoot + pcs[(size_t) (stored % juce::jmax (1, (int) pcs.size()))]) % 12;
+            return nearestNoteForPitchClass (stored, nearestPc);
+        }
+
+        case SlotPattern::NoteMode::degree:
+        {
+            const int raw = event.pitchValue < 0 ? 0 : event.pitchValue;
+            const int degreePc = (rootToPitchClass (m_keyRoot) + ((raw % 12) + 12) % 12) % 12;
+            const int octaveOffset = raw / 12;
+            return juce::jlimit (24, 108, nearestNoteForPitchClass (roleCenter + octaveOffset * 12, degreePc));
+        }
+
+        case SlotPattern::NoteMode::chordTone:
+        {
+            const auto intervals = chordIntervalsForLabel (harmonicChord);
+            const int toneIndex = juce::jmax (0, event.pitchValue < 0 ? 0 : event.pitchValue);
+            const int chordSize = juce::jmax (1, (int) intervals.size());
+            const int octaveOffset = toneIndex / chordSize;
+            const int intervalIndex = toneIndex % chordSize;
+            const int rootNote = nearestNoteForPitchClass (roleCenter, harmonicRoot);
+            return juce::jlimit (24, 108, rootNote + intervals[(size_t) intervalIndex] + octaveOffset * 12);
+        }
+
+        case SlotPattern::NoteMode::interval:
+        default:
+        {
+            const int offset = event.pitchValue < 0 ? 0 : event.pitchValue;
+            return juce::jlimit (24, 108, baseNote + offset);
+        }
+    }
+}
+
+juce::String StepGridSingle::storedEventLabel (const SlotPattern::Step& step, const SlotPattern::MicroEvent& event) const
+{
+    const int storedValue = event.pitchValue < 0 ? (step.anchorValue < 0 ? 60 : step.anchorValue)
+                                                 : event.pitchValue;
+    return noteValueLabel (storedValue);
+}
+
+juce::String StepGridSingle::realizedEventLabel (const SlotPattern::Step& step, const SlotPattern::MicroEvent& event) const
+{
+    return noteName (realizedPitchForPreview (step, event));
+}
+
+juce::String StepGridSingle::eventTimingLabel (const SlotPattern::MicroEvent& event) const
+{
+    const int offsetPct = juce::roundToInt (event.timeOffset * 100.0f);
+    const int lengthPct = juce::roundToInt (event.length * 100.0f);
+    return "at " + juce::String (offsetPct) + "%  len " + juce::String (lengthPct) + "%  vel " + juce::String ((int) event.velocity);
+}
+
+juce::String StepGridSingle::stepTimingLabel (const SlotPattern::Step& step) const
+{
+    return "step " + juce::String (m_selectedStep + 1)
+         + "  start " + juce::String (step.start + 1)
+         + "  dur " + juce::String (step.duration) + "u";
+}
+
 int StepGridSingle::pitchFromDetailY (int y) const noexcept
 {
     const auto detail = detailRect();
@@ -321,6 +570,15 @@ void StepGridSingle::paintStepLane (juce::Graphics& g) const
     g.setColour (Theme::Colour::surfaceEdge);
     g.drawRect (lane, 1);
 
+    const int patternUnits = juce::jmax (1, m_pattern->patternLength());
+    for (int unit = 1; unit < patternUnits; ++unit)
+    {
+        const int x = lane.getX() + (lane.getWidth() * unit) / patternUnits;
+        const bool strong = (unit % 4) == 0;
+        g.setColour (Theme::Colour::surfaceEdge.withAlpha (strong ? 0.45f : 0.2f));
+        g.fillRect (x, lane.getY(), 1, lane.getHeight());
+    }
+
     for (int i = 0; i < m_pattern->activeStepCount(); ++i)
     {
         const auto rect = stepRect (i).reduced (1.0f, 2.0f);
@@ -338,6 +596,7 @@ void StepGridSingle::paintStepLane (juce::Graphics& g) const
 
         const bool selected = (i == m_selectedStep);
         const bool hovered = (i == m_hoverStep);
+        const bool localOverride = ! step->followStructure;
         g.setColour (fill);
         g.fillRoundedRectangle (rect, 4.0f);
 
@@ -352,13 +611,20 @@ void StepGridSingle::paintStepLane (juce::Graphics& g) const
                                         : Theme::Colour::surfaceEdge);
         g.drawRoundedRectangle (rect, 4.0f, selected ? 2.0f : 1.0f);
 
+        if (localOverride)
+        {
+            g.setColour (Theme::Colour::warning.withAlpha (0.9f));
+            g.drawRoundedRectangle (rect.reduced (2.0f, 2.0f), 3.0f, 1.0f);
+        }
+
         const bool playheadInsideStep = m_playhead >= 0
             && m_playhead >= step->start
             && m_playhead < step->start + step->duration;
         if (playheadInsideStep)
         {
             g.setColour (Theme::Colour::error);
-            g.fillRoundedRectangle ({ rect.getX(), rect.getY(), 2.0f, rect.getHeight() }, 1.0f);
+            g.fillRoundedRectangle ({ rect.getX(), rect.getY(), 3.0f, rect.getHeight() }, 1.0f);
+            g.fillRoundedRectangle ({ rect.getX(), rect.getY(), rect.getWidth(), 2.0f }, 1.0f);
         }
 
         g.setColour (i == m_selectedStep ? Theme::Colour::inkLight : Theme::Colour::inkMid);
@@ -371,7 +637,7 @@ void StepGridSingle::paintStepLane (juce::Graphics& g) const
         g.setColour (selected ? Theme::Colour::inkLight.withAlpha (0.95f) : Theme::Colour::inkGhost.withAlpha (0.85f));
         g.drawText (duration, badgeRect.removeFromTop (10), juce::Justification::topRight, false);
         g.drawText (noteCount, badgeRect.removeFromTop (10), juce::Justification::topRight, false);
-        g.drawText (juce::String (step->followStructure ? "FOL" : "LOC") + "  " + SlotPattern::shortLabel (step->harmonicSource),
+        g.drawText (juce::String (step->followStructure ? "FOLLOW" : "LOCAL") + "  " + SlotPattern::shortLabel (step->harmonicSource),
                     badgeRect.removeFromBottom (10),
                     juce::Justification::bottomLeft,
                     false);
@@ -379,6 +645,16 @@ void StepGridSingle::paintStepLane (juce::Graphics& g) const
                     badgeRect.removeFromBottom (10),
                     juce::Justification::bottomLeft,
                     false);
+
+        if (step->microEventCount > 0)
+        {
+            const auto& event = step->microEvents[0];
+            g.setColour (selected ? Theme::Colour::inkLight.withAlpha (0.9f) : Theme::Colour::inkGhost.withAlpha (0.8f));
+            g.drawText ("now " + realizedEventLabel (*step, event),
+                        rect.toNearestInt().reduced (4, 3).removeFromBottom (10),
+                        juce::Justification::bottomRight,
+                        false);
+        }
 
         if (selected || hovered)
         {
@@ -412,6 +688,30 @@ void StepGridSingle::paintDetail (juce::Graphics& g) const
     const auto* step = selectedStepData();
     if (step == nullptr)
         return;
+
+    auto header = detail.removeFromTop (24);
+    g.setColour (Theme::Colour::surface1.withAlpha (0.8f));
+    g.fillRect (header);
+    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.5f));
+    g.drawLine ((float) header.getX(), (float) header.getBottom() - 1.0f, (float) header.getRight(), (float) header.getBottom() - 1.0f, 1.0f);
+
+    g.setFont (Theme::Font::micro());
+    g.setColour (step->followStructure ? Theme::Zone::a : Theme::Colour::warning);
+    g.drawText (step->followStructure ? "FOLLOWS STRUCTURE" : "LOCAL OVERRIDE",
+                header.removeFromLeft (96),
+                juce::Justification::centredLeft,
+                false);
+    g.setColour (Theme::Colour::inkGhost);
+    g.drawText (juce::String (SlotPattern::fullLabel (step->role)) + "  |  "
+                    + SlotPattern::fullLabel (step->noteMode) + "  |  "
+                    + SlotPattern::fullLabel (step->harmonicSource),
+                header.removeFromLeft (detail.getWidth() / 2),
+                juce::Justification::centredLeft,
+                true);
+    g.drawText (stepTimingLabel (*step),
+                header,
+                juce::Justification::centredRight,
+                false);
 
     const float rowH = detail.getHeight() / (float) kPitchRows;
     for (int row = 0; row < kPitchRows; ++row)
@@ -458,6 +758,12 @@ void StepGridSingle::paintDetail (juce::Graphics& g) const
                     rect.toNearestInt().reduced (3, 1),
                     juce::Justification::centredLeft,
                     false);
+
+        if (selected)
+        {
+            g.setColour (Theme::Colour::error.withAlpha (0.95f));
+            g.drawRoundedRectangle (rect.expanded (1.5f, 1.5f), 4.0f, 1.3f);
+        }
     }
 
     if (step->microEventCount == 0)
@@ -470,12 +776,29 @@ void StepGridSingle::paintDetail (juce::Graphics& g) const
                     false);
     }
 
-    g.setFont (Theme::Font::micro());
-    g.setColour (Theme::Colour::inkGhost);
-    g.drawText ("micro note editor  " + juce::String (SlotPattern::shortLabel (step->noteMode)),
-                detail.removeFromTop (12),
-                juce::Justification::centredLeft,
-                false);
+    auto footer = detail.removeFromTop (14);
+    if (m_selectedEvent >= 0 && juce::isPositiveAndBelow (m_selectedEvent, step->microEventCount))
+    {
+        const auto& event = step->microEvents[(size_t) m_selectedEvent];
+        g.setFont (Theme::Font::micro());
+        g.setColour (Theme::Colour::inkLight);
+        g.drawText ("stored " + storedEventLabel (*step, event)
+                        + "  ->  now " + realizedEventLabel (*step, event)
+                        + "  |  " + eventTimingLabel (event)
+                        + "  |  target " + chordTargetLabel (step->harmonicSource),
+                    footer,
+                    juce::Justification::centredLeft,
+                    true);
+    }
+    else
+    {
+        g.setFont (Theme::Font::micro());
+        g.setColour (Theme::Colour::inkGhost);
+        g.drawText ("micro note editor  |  stored values on the grid, realized pitch under current harmony in the footer",
+                    footer,
+                    juce::Justification::centredLeft,
+                    true);
+    }
 }
 
 void StepGridSingle::paintCompactBar (juce::Graphics& g) const
@@ -504,12 +827,15 @@ void StepGridSingle::paintCompactBar (juce::Graphics& g) const
     if (m_pattern != nullptr && selectedStepData() != nullptr)
     {
         auto info = c.withTrimmedLeft (followRect().getRight() + 8 - c.getX()).withTrimmedRight (72);
-        g.setColour (Theme::Colour::inkGhost);
+        g.setColour (selectedStepData()->followStructure ? Theme::Colour::inkGhost : Theme::Colour::warning);
         g.setFont (Theme::Font::micro());
-        g.drawFittedText ("step " + juce::String (m_selectedStep + 1) + "/" + juce::String (m_pattern->activeStepCount())
-                              + "  len " + juce::String (m_pattern->patternLength()) + "u"
-                              + "  notes " + juce::String (selectedStepData()->microEventCount)
-                              + "  clip " + juce::String (m_hasStepClipboard ? "ready" : "empty"),
+        auto summary = "step " + juce::String (m_selectedStep + 1) + "/" + juce::String (m_pattern->activeStepCount())
+                     + "  pat " + juce::String (m_pattern->patternLength()) + "u"
+                     + "  " + SlotPattern::fullLabel (selectedStepData()->harmonicSource)
+                     + "  " + (selectedStepData()->followStructure ? "follows structure" : "local phrase");
+        if (selectedStepData()->microEventCount > 0)
+            summary += "  now " + realizedEventLabel (*selectedStepData(), selectedStepData()->microEvents[0]);
+        g.drawFittedText (summary,
                           info,
                           juce::Justification::centredRight,
                           1);

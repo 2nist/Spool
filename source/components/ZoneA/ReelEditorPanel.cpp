@@ -186,6 +186,7 @@ void ReelEditorPanel::paintWaveform (juce::Graphics& g) const
 {
     const auto& wr = m_waveRect;
     if (wr.isEmpty()) return;
+    const auto& theme = ThemeManager::get().theme();
 
     const float rx = static_cast<float> (wr.getX());
     const float ry = static_cast<float> (wr.getY());
@@ -194,16 +195,16 @@ void ReelEditorPanel::paintWaveform (juce::Graphics& g) const
 
     // ── Tape base (same cylinder aesthetic as CylinderBand) ─────────────────
     juce::ColourGradient base (
-        TapeColors::tapeBase.darker  (0.58f), rx,      ry,
-        TapeColors::tapeBase.darker  (0.58f), rx + fw, ry,
+        theme.tapeBase.darker  (0.58f), rx,      ry,
+        theme.tapeBase.darker  (0.58f), rx + fw, ry,
         false);
-    base.addColour (0.07, TapeColors::tapeBase.darker  (0.42f));
-    base.addColour (0.17, TapeColors::tapeBase.darker  (0.18f));
-    base.addColour (0.40, TapeColors::tapeBase.brighter (0.05f));
-    base.addColour (0.50, TapeColors::tapeBase.brighter (0.24f));
-    base.addColour (0.60, TapeColors::tapeBase.brighter (0.05f));
-    base.addColour (0.83, TapeColors::tapeBase.darker  (0.18f));
-    base.addColour (0.93, TapeColors::tapeBase.darker  (0.42f));
+    base.addColour (0.07, theme.tapeBase.darker  (0.42f));
+    base.addColour (0.17, theme.tapeBase.darker  (0.18f));
+    base.addColour (0.40, theme.tapeBase.brighter (0.05f));
+    base.addColour (0.50, theme.tapeBase.brighter (0.24f));
+    base.addColour (0.60, theme.tapeBase.brighter (0.05f));
+    base.addColour (0.83, theme.tapeBase.darker  (0.18f));
+    base.addColour (0.93, theme.tapeBase.darker  (0.42f));
     g.setGradientFill (base);
     g.fillRect (wr);
 
@@ -211,7 +212,7 @@ void ReelEditorPanel::paintWaveform (juce::Graphics& g) const
     {
         // Empty state
         g.setFont (Theme::Font::micro());
-        g.setColour (TapeColors::inkOnTape.withAlpha (0.5f));
+        g.setColour (Theme::Colour::inkDark.interpolatedWith (theme.tapeBase, 0.16f).withAlpha (0.5f));
         g.drawText ("EMPTY — load audio to begin",
                     wr, juce::Justification::centred, false);
     }
@@ -352,7 +353,7 @@ void ReelEditorPanel::paintWaveform (juce::Graphics& g) const
 
     // ── Cylindrical rims and fades (drawn last, over content) ───────────────
     {
-        const juce::Colour edge = TapeColors::housingEdge;
+        const juce::Colour edge = theme.housingEdge;
         constexpr int kRimW  = 5;
         constexpr int kFadeW = 80;   // narrower for a panel — less depth needed
         const int iw = wr.getWidth();

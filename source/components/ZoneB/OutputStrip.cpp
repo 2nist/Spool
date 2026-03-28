@@ -56,12 +56,14 @@ void OutputStrip::paintSlider (juce::Graphics& g,
                                 bool  fromCenter,
                                 bool  active) const
 {
-    const auto col   = (juce::Colour) Theme::Colour::error;
-    const auto trackCol = (juce::Colour) Theme::Colour::surface0;
+    const auto& theme = ThemeManager::get().theme();
+    const auto col = theme.sliderTrack.interpolatedWith ((juce::Colour) Theme::Colour::error, 0.25f);
+    const auto trackCol = theme.controlBg.withAlpha (0.96f);
+    const auto thumbCol = theme.sliderThumb.interpolatedWith ((juce::Colour) Theme::Colour::error, 0.18f);
 
     // Track background
     g.setColour (trackCol);
-    g.fillRect  (tk);
+    g.fillRoundedRectangle (tk.toFloat(), 3.0f);
 
     if (fromCenter)
     {
@@ -72,14 +74,14 @@ void OutputStrip::paintSlider (juce::Graphics& g,
         if (fillW > 0)
         {
             g.setColour (col.withAlpha (0.7f));
-            g.fillRect  (fillX, tk.getY(), fillW, tk.getHeight());
+            g.fillRoundedRectangle (juce::Rectangle<int> (fillX, tk.getY(), fillW, tk.getHeight()).toFloat(), 3.0f);
         }
         // Center tick
-        g.setColour (col.withAlpha (0.4f));
+        g.setColour (theme.surfaceEdge.withAlpha (0.55f));
         g.fillRect  (cx, tk.getY() - 1, 1, tk.getHeight() + 2);
         // Thumb
         const float ty = static_cast<float> (tk.getCentreY()) - kThumbD * 0.5f;
-        g.setColour (active ? col.brighter (0.3f) : col);
+        g.setColour (active ? thumbCol.brighter (0.2f) : thumbCol);
         g.fillEllipse (static_cast<float> (thumbX) - kThumbD * 0.5f, ty, kThumbD, kThumbD);
     }
     else
@@ -88,11 +90,11 @@ void OutputStrip::paintSlider (juce::Graphics& g,
         if (fillW > 0)
         {
             g.setColour (col.withAlpha (0.7f));
-            g.fillRect  (tk.withWidth (fillW));
+            g.fillRoundedRectangle (tk.withWidth (fillW).toFloat(), 3.0f);
         }
         // Thumb
         const float ty = static_cast<float> (tk.getCentreY()) - kThumbD * 0.5f;
-        g.setColour (active ? col.brighter (0.3f) : col);
+        g.setColour (active ? thumbCol.brighter (0.2f) : thumbCol);
         g.fillEllipse (static_cast<float> (tk.getX() + fillW) - kThumbD * 0.5f, ty, kThumbD, kThumbD);
     }
 }

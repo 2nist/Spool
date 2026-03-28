@@ -91,3 +91,25 @@ For anything in the audio thread / hot DSP path (e.g. `processBlock`):
 ## Code Style
 
 Uses `.clang-format` with Allman-style braces, 4-space indentation, no column limit.
+
+## UI Density Rule
+
+When editing or creating UI in Spool, default to compact, information-dense layouts.
+Use `InstrumentPanel` as the baseline reference for Zone A density and proportion.
+
+Unless explicitly requested otherwise:
+- do not enlarge headers
+- do not increase row heights
+- do not add generous padding
+- do not create oversized card layouts
+- do not replace tight lists with airy panel stacks
+- do not introduce extra wrapper containers purely for visual separation
+
+Prefer:
+- compact spacing
+- clear hierarchy through colour and typography, not empty space
+- shared style helpers
+- existing Theme tokens
+- consistent header, badge, and row treatments
+
+If a layout needs more space for functional reasons, keep the increase minimal and document why.

@@ -151,11 +151,11 @@ private:
     //==========================================================================
     // Layout constants
 
-    static constexpr int TRACK_W    = 6;
+    static constexpr int TRACK_W    = 12;
     static constexpr int TRACK_H    = 70;
-    static constexpr int THUMB_SIZE = 10;
+    static constexpr int THUMB_SIZE = 8;
     static constexpr int CIRCLE_SIZE = 5;
-    static constexpr int LABEL_GAP  = 4;
+    static constexpr int LABEL_GAP  = 2;
     static constexpr int VALUE_AREA_H = 10;
 
     //==========================================================================

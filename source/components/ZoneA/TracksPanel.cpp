@@ -1,4 +1,5 @@
 #include "TracksPanel.h"
+#include "ZoneAStyle.h"
 
 //==============================================================================
 TracksPanel::TracksPanel()
@@ -49,18 +50,18 @@ void TracksPanel::setLaneHeightScale (float s)
 // Layout helpers
 //==============================================================================
 
-juce::Rectangle<int> TracksPanel::topSection()  const noexcept { return { 0, 0, getWidth(), kTopH }; }
-juce::Rectangle<int> TracksPanel::subTabBar()   const noexcept { return { 0, kTopH, getWidth(), kSubTabBarH }; }
+juce::Rectangle<int> TracksPanel::topSection()  const noexcept { return { 0, kHeaderH, getWidth(), kTopH }; }
+juce::Rectangle<int> TracksPanel::subTabBar()   const noexcept { return { 0, kHeaderH + kTopH, getWidth(), kSubTabBarH }; }
 juce::Rectangle<int> TracksPanel::contentArea() const noexcept
 {
-    return { 0, kTopH + kSubTabBarH, getWidth(),
-             juce::jmax (0, getHeight() - kTopH - kSubTabBarH) };
+    return { 0, kHeaderH + kTopH + kSubTabBarH, getWidth(),
+             juce::jmax (0, getHeight() - kHeaderH - kTopH - kSubTabBarH) };
 }
 
 juce::Rectangle<int> TracksPanel::subTabRect (int t) const noexcept
 {
     const int w = getWidth() / kSubTabCount;
-    return { t * w, kTopH, w, kSubTabBarH };
+    return { t * w, kHeaderH + kTopH, w, kSubTabBarH };
 }
 
 juce::Rectangle<int> TracksPanel::stopBtnRect() const noexcept
@@ -90,7 +91,9 @@ juce::Rectangle<int> TracksPanel::bpmRect() const noexcept
 
 void TracksPanel::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::Colour::surface1);
+    g.fillAll (Theme::Zone::bgA);
+    ZoneAStyle::drawHeader (g, { 0, 0, getWidth(), kHeaderH }, "TRACKS",
+                            ZoneAStyle::accentForTabId ("tracks"));
     paintTop       (g);
     paintSubTabBar (g);
 
@@ -158,9 +161,9 @@ void TracksPanel::paintTop (juce::Graphics& g) const
                 juce::Justification::centredLeft, false);
 
     // Transport buttons
-    paintTransportBtn (g, stopBtnRect(), "\xe2\x96\xa0", !m_playing);
-    paintTransportBtn (g, playBtnRect(), "\xe2\x96\xba", m_playing);
-    paintTransportBtn (g, recBtnRect(), "\xe2\x97\x8f", m_recording);
+    paintTransportBtn (g, stopBtnRect(), "STP", !m_playing);
+    paintTransportBtn (g, playBtnRect(), "PLY", m_playing);
+    paintTransportBtn (g, recBtnRect(), "REC", m_recording);
 }
 
 void TracksPanel::paintSubTabBar (juce::Graphics& g) const

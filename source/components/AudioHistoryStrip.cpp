@@ -2,11 +2,6 @@
 #include "TapeColors.h"
 
 //==============================================================================
-// Tape colours (shared with CylinderBand)
-static const juce::Colour kPlayheadColor { 0xFF694412 };
-static const juce::Colour kHousingEdge   { 0xFF080604 };
-
-//==============================================================================
 AudioHistoryStrip::AudioHistoryStrip()
 {
     startTimerHz (15);
@@ -264,12 +259,13 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
 {
     const auto wr = waveRect();
     if (wr.isEmpty()) return;
+    const auto& tapeTheme = ThemeManager::get().theme();
 
     // ─── colour palette (history-strip specific) ────────────────────────────
-    static const juce::Colour kTape   { 0xFFF5F1EC };   // warm off-white tape
-    static const juce::Colour kRim    { 0xFF100C03 };   // dark housing
-    static const juce::Colour kInk    { 0xFF1A0F06 };   // deep ink on white
-    static const juce::Colour kNeedle { 0xFF7B4A1C };   // amber/rust stylus
+    const auto kTape   = tapeTheme.tapeBase.brighter (0.52f);
+    const auto kRim    = tapeTheme.housingEdge;
+    const auto kInk    = Theme::Colour::inkDark.interpolatedWith (kTape, 0.10f);
+    const auto kNeedle = tapeTheme.playheadColor;
 
     // ─── 1  Tape surface ────────────────────────────────────────────────────
     g.setColour (kTape);

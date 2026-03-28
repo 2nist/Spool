@@ -22,12 +22,15 @@ public:
     juce::String getTitle() const noexcept { return m_titleText; }
 
     void setBpm (float bpm);
+    void setCompactMode (bool shouldCompact);
+    void setTitle (const juce::String& title);
 
     /** Called by PluginEditor when transport position updates. */
     void setPosition (float beatPosition, float bpm, float loopLengthBars);
 
     //--- Callbacks -----------------------------------------------------------
     std::function<void(float)> onBpmChanged;
+    std::function<void(const juce::String&)> onTitleChanged;
 
     //--- juce::Component -----------------------------------------------------
     void paint            (juce::Graphics&) override;
@@ -52,6 +55,7 @@ private:
     float        m_bpm         = 120.0f;
     bool         m_unsaved     = true;
     juce::String m_lengthStr   { "0:00" };
+    bool         m_compactMode = false;
 
     //--- BPM drag ------------------------------------------------------------
     bool  m_draggingBpm  = false;

@@ -56,6 +56,9 @@ add_subdirectory(JUCE)
 
 # Add any other modules you want modules here, before the juce_add_plugin call
 # juce_add_module(modules/my_module)
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/Bach/juce_module_info")
+    juce_add_module ("${CMAKE_CURRENT_SOURCE_DIR}/external/Bach")
+endif ()
 
 # This adds the melatonin inspector module
 add_subdirectory (modules/melatonin_inspector)
@@ -173,6 +176,10 @@ target_link_libraries(SharedCode
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+
+if (TARGET Bach)
+    target_link_libraries(SharedCode INTERFACE Bach)
+endif ()
 
 # Link Gin modules if the submodule has been added
 if (TARGET gin)

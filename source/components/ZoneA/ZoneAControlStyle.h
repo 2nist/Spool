@@ -9,6 +9,26 @@ inline constexpr int kBarHeight = 14;
 inline constexpr int kPad = 6;
 inline constexpr int kGap = 6;
 
+inline int sectionHeaderHeight() noexcept
+{
+    return juce::roundToInt (ThemeManager::get().theme().zoneASectionHeaderHeight);
+}
+
+inline int controlBarHeight() noexcept
+{
+    return juce::roundToInt (ThemeManager::get().theme().zoneAControlBarHeight);
+}
+
+inline int controlHeight() noexcept
+{
+    return juce::roundToInt (ThemeManager::get().theme().zoneAControlHeight);
+}
+
+inline int compactGap() noexcept
+{
+    return juce::roundToInt (ThemeManager::get().theme().zoneACompactGap);
+}
+
 class BarSliderLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
@@ -47,6 +67,21 @@ public:
         }
         else
         {
+            if (slider.getName() == "BARS")
+            {
+                const double maxV = slider.getMaximum();
+                for (int marker = 4; marker < static_cast<int> (maxV); marker += 4)
+                {
+                    const float markerPos = (float) slider.valueToProportionOfLength ((double) marker);
+                    if (markerPos <= 0.0f || markerPos >= 1.0f)
+                        continue;
+
+                    const float xPos = bounds.getX() + markerPos * bounds.getWidth();
+                    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.55f));
+                    g.fillRect (xPos, bounds.getY() + 2.0f, 1.0f, bounds.getHeight() - 4.0f);
+                }
+            }
+
             const float posX = juce::jlimit (bounds.getX(), bounds.getRight(), sliderPos);
             auto fillBounds = bounds.withWidth (juce::jmax (0.0f, posX - bounds.getX()));
             if (fillBounds.getWidth() > 0.0f)
@@ -56,7 +91,7 @@ public:
             }
         }
 
-        g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.85f));
+        g.setColour (ThemeManager::get().theme().surfaceEdge.withAlpha (0.85f));
         g.drawRoundedRectangle (bounds, 4.0f, 1.0f);
 
         const auto label = slider.getName();
@@ -95,9 +130,62 @@ public:
     }
 };
 
+class CompactButtonLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override
+    {
+        return buttonHeight <= 18 ? Theme::Font::microMedium() : Theme::Font::label();
+    }
+
+    void drawButtonBackground (juce::Graphics& g,
+                               juce::Button& button,
+                               const juce::Colour&,
+                               bool isHighlighted,
+                               bool isDown) override
+    {
+        const auto bounds = button.getLocalBounds().toFloat().reduced (0.5f);
+        const auto& theme = ThemeManager::get().theme();
+        const auto accent = button.findColour (juce::TextButton::buttonOnColourId);
+        auto fill = button.getToggleState() ? theme.controlOnBg : theme.controlBg;
+
+        if (isDown)
+            fill = fill.brighter (0.08f);
+        else if (isHighlighted)
+            fill = fill.interpolatedWith (theme.rowHover, 0.4f);
+
+        g.setColour (fill);
+        g.fillRoundedRectangle (bounds, 4.0f);
+
+        g.setColour (accent.withAlpha (button.getToggleState() ? 0.7f : 0.35f));
+        g.drawRoundedRectangle (bounds, 4.0f, 1.0f);
+    }
+};
+
+class CompactComboLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    juce::Font getComboBoxFont (juce::ComboBox&) override
+    {
+        return Theme::Font::micro();
+    }
+};
+
 inline BarSliderLookAndFeel& barLookAndFeel()
 {
     static BarSliderLookAndFeel lf;
+    return lf;
+}
+
+inline CompactButtonLookAndFeel& buttonLookAndFeel()
+{
+    static CompactButtonLookAndFeel lf;
+    return lf;
+}
+
+inline CompactComboLookAndFeel& comboLookAndFeel()
+{
+    static CompactComboLookAndFeel lf;
     return lf;
 }
 
@@ -106,11 +194,16 @@ inline void initBarSlider (juce::Slider& slider, const juce::String& label)
     slider.setName (label);
     slider.setSliderStyle (juce::Slider::LinearBar);
     slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    slider.setSliderSnapsToMousePosition (false);
+    slider.setScrollWheelEnabled (false);
+    slider.setVelocityBasedMode (false);
+    slider.setMouseDragSensitivity (900);
+    slider.setChangeNotificationOnlyOnRelease (true);
     slider.setLookAndFeel (&barLookAndFeel());
-    slider.setColour (juce::Slider::backgroundColourId, Theme::Colour::surface3.withAlpha (0.95f));
-    slider.setColour (juce::Slider::trackColourId, Theme::Colour::accentWarm);
-    slider.setColour (juce::Slider::thumbColourId, Theme::Colour::accentWarm.brighter (0.08f));
-    slider.setColour (juce::Slider::rotarySliderFillColourId, Theme::Colour::accentWarm);
+    slider.setColour (juce::Slider::backgroundColourId, ThemeManager::get().theme().controlBg.withAlpha (0.95f));
+    slider.setColour (juce::Slider::trackColourId, ThemeManager::get().theme().sliderTrack);
+    slider.setColour (juce::Slider::thumbColourId, ThemeManager::get().theme().sliderThumb);
+    slider.setColour (juce::Slider::rotarySliderFillColourId, ThemeManager::get().theme().sliderTrack);
 }
 
 inline void tintBarSlider (juce::Slider& slider, juce::Colour colour)
@@ -122,19 +215,36 @@ inline void tintBarSlider (juce::Slider& slider, juce::Colour colour)
 
 inline void styleTextButton (juce::TextButton& button, juce::Colour accent = Theme::Colour::surfaceEdge.withAlpha (0.7f))
 {
-    button.setColour (juce::TextButton::buttonColourId, Theme::Colour::surface2);
-    button.setColour (juce::TextButton::buttonOnColourId, accent.withAlpha (0.22f));
-    button.setColour (juce::TextButton::textColourOffId, Theme::Colour::inkGhost);
-    button.setColour (juce::TextButton::textColourOnId, Theme::Helper::inkFor (accent).withAlpha (0.96f));
+    button.setLookAndFeel (&buttonLookAndFeel());
+    button.setColour (juce::TextButton::buttonColourId, ThemeManager::get().theme().controlBg);
+    button.setColour (juce::TextButton::buttonOnColourId, accent);
+    button.setColour (juce::TextButton::textColourOffId, ThemeManager::get().theme().controlText);
+    button.setColour (juce::TextButton::textColourOnId, ThemeManager::get().theme().controlTextOn);
+}
+
+inline void styleComboBox (juce::ComboBox& combo, juce::Colour accent = Theme::Zone::a)
+{
+    combo.setLookAndFeel (&comboLookAndFeel());
+    combo.setColour (juce::ComboBox::backgroundColourId, ThemeManager::get().theme().controlBg);
+    combo.setColour (juce::ComboBox::textColourId, ThemeManager::get().theme().controlTextOn);
+    combo.setColour (juce::ComboBox::outlineColourId, ThemeManager::get().theme().surfaceEdge.withAlpha (0.55f));
+    combo.setColour (juce::ComboBox::arrowColourId, accent.withAlpha (0.9f));
 }
 
 inline void styleTextEditor (juce::TextEditor& editor)
 {
-    editor.setColour (juce::TextEditor::backgroundColourId, Theme::Colour::surface2);
-    editor.setColour (juce::TextEditor::outlineColourId, Theme::Colour::surfaceEdge.withAlpha (0.55f));
-    editor.setColour (juce::TextEditor::focusedOutlineColourId, Theme::Zone::a.withAlpha (0.8f));
-    editor.setColour (juce::TextEditor::textColourId, Theme::Colour::inkLight);
+    editor.setColour (juce::TextEditor::backgroundColourId, ThemeManager::get().theme().controlBg);
+    editor.setColour (juce::TextEditor::outlineColourId, ThemeManager::get().theme().surfaceEdge.withAlpha (0.55f));
+    editor.setColour (juce::TextEditor::focusedOutlineColourId, ThemeManager::get().theme().focusOutline.withAlpha (0.8f));
+    editor.setColour (juce::TextEditor::textColourId, ThemeManager::get().theme().controlTextOn);
     editor.setColour (juce::TextEditor::highlightColourId, Theme::Zone::a.withAlpha (0.25f));
     editor.setFont (Theme::Font::label());
+}
+
+inline void styleToggleButton (juce::ToggleButton& button, juce::Colour accent = Theme::Zone::a)
+{
+    button.setColour (juce::ToggleButton::textColourId, ThemeManager::get().theme().controlText);
+    button.setColour (juce::ToggleButton::tickColourId, accent);
+    button.setColour (juce::ToggleButton::tickDisabledColourId, ThemeManager::get().theme().surfaceEdge);
 }
 }

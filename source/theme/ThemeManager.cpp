@@ -42,6 +42,21 @@ juce::ValueTree ThemeManager::toValueTree() const
     vt.setProperty ("accentWarm", colourToString (t.accentWarm), nullptr);
     vt.setProperty ("accentDim",  colourToString (t.accentDim),  nullptr);
 
+    // UI chrome
+    vt.setProperty ("headerBg",      colourToString (t.headerBg),      nullptr);
+    vt.setProperty ("cardBg",        colourToString (t.cardBg),        nullptr);
+    vt.setProperty ("rowBg",         colourToString (t.rowBg),         nullptr);
+    vt.setProperty ("rowHover",      colourToString (t.rowHover),      nullptr);
+    vt.setProperty ("rowSelected",   colourToString (t.rowSelected),   nullptr);
+    vt.setProperty ("badgeBg",       colourToString (t.badgeBg),       nullptr);
+    vt.setProperty ("controlBg",     colourToString (t.controlBg),     nullptr);
+    vt.setProperty ("controlOnBg",   colourToString (t.controlOnBg),   nullptr);
+    vt.setProperty ("controlText",   colourToString (t.controlText),   nullptr);
+    vt.setProperty ("controlTextOn", colourToString (t.controlTextOn), nullptr);
+    vt.setProperty ("focusOutline",  colourToString (t.focusOutline),  nullptr);
+    vt.setProperty ("sliderTrack",   colourToString (t.sliderTrack),   nullptr);
+    vt.setProperty ("sliderThumb",   colourToString (t.sliderThumb),   nullptr);
+
     // Zones
     vt.setProperty ("zoneA",    colourToString (t.zoneA),    nullptr);
     vt.setProperty ("zoneB",    colourToString (t.zoneB),    nullptr);
@@ -69,6 +84,17 @@ juce::ValueTree ThemeManager::toValueTree() const
     vt.setProperty ("sizeMicro",     t.sizeMicro,     nullptr);
     vt.setProperty ("sizeValue",     t.sizeValue,     nullptr);
     vt.setProperty ("sizeTransport", t.sizeTransport, nullptr);
+
+    // Compact UI density
+    vt.setProperty ("zoneAHeaderHeight",        t.zoneAHeaderHeight,        nullptr);
+    vt.setProperty ("zoneAGroupHeaderHeight",   t.zoneAGroupHeaderHeight,   nullptr);
+    vt.setProperty ("zoneARowHeight",           t.zoneARowHeight,           nullptr);
+    vt.setProperty ("zoneABadgeHeight",         t.zoneABadgeHeight,         nullptr);
+    vt.setProperty ("zoneASectionHeaderHeight", t.zoneASectionHeaderHeight, nullptr);
+    vt.setProperty ("zoneAControlBarHeight",    t.zoneAControlBarHeight,    nullptr);
+    vt.setProperty ("zoneAControlHeight",       t.zoneAControlHeight,       nullptr);
+    vt.setProperty ("zoneACardRadius",          t.zoneACardRadius,          nullptr);
+    vt.setProperty ("zoneACompactGap",          t.zoneACompactGap,          nullptr);
 
     // Spacing
     vt.setProperty ("spaceXs",  t.spaceXs,  nullptr);
@@ -143,6 +169,20 @@ void ThemeManager::fromValueTree (const juce::ValueTree& vt)
     readColour ("accentWarm", t.accentWarm);
     readColour ("accentDim",  t.accentDim);
 
+    readColour ("headerBg",      t.headerBg);
+    readColour ("cardBg",        t.cardBg);
+    readColour ("rowBg",         t.rowBg);
+    readColour ("rowHover",      t.rowHover);
+    readColour ("rowSelected",   t.rowSelected);
+    readColour ("badgeBg",       t.badgeBg);
+    readColour ("controlBg",     t.controlBg);
+    readColour ("controlOnBg",   t.controlOnBg);
+    readColour ("controlText",   t.controlText);
+    readColour ("controlTextOn", t.controlTextOn);
+    readColour ("focusOutline",  t.focusOutline);
+    readColour ("sliderTrack",   t.sliderTrack);
+    readColour ("sliderThumb",   t.sliderThumb);
+
     readColour ("zoneA",    t.zoneA);
     readColour ("zoneB",    t.zoneB);
     readColour ("zoneC",    t.zoneC);
@@ -166,6 +206,16 @@ void ThemeManager::fromValueTree (const juce::ValueTree& vt)
     readFloat ("sizeMicro",     t.sizeMicro);
     readFloat ("sizeValue",     t.sizeValue);
     readFloat ("sizeTransport", t.sizeTransport);
+
+    readFloat ("zoneAHeaderHeight",        t.zoneAHeaderHeight);
+    readFloat ("zoneAGroupHeaderHeight",   t.zoneAGroupHeaderHeight);
+    readFloat ("zoneARowHeight",           t.zoneARowHeight);
+    readFloat ("zoneABadgeHeight",         t.zoneABadgeHeight);
+    readFloat ("zoneASectionHeaderHeight", t.zoneASectionHeaderHeight);
+    readFloat ("zoneAControlBarHeight",    t.zoneAControlBarHeight);
+    readFloat ("zoneAControlHeight",       t.zoneAControlHeight);
+    readFloat ("zoneACardRadius",          t.zoneACardRadius);
+    readFloat ("zoneACompactGap",          t.zoneACompactGap);
 
     readFloat ("spaceXs",  t.spaceXs);
     readFloat ("spaceSm",  t.spaceSm);
@@ -251,6 +301,13 @@ ThemeData ThemeManager::themeFromValueTree (const juce::ValueTree& vt)
     readColour ("inkDark",     t.inkDark);
     readColour ("accent",      t.accent);      readColour ("accentWarm",  t.accentWarm);
     readColour ("accentDim",   t.accentDim);
+    readColour ("headerBg",    t.headerBg);    readColour ("cardBg",      t.cardBg);
+    readColour ("rowBg",       t.rowBg);       readColour ("rowHover",    t.rowHover);
+    readColour ("rowSelected", t.rowSelected); readColour ("badgeBg",     t.badgeBg);
+    readColour ("controlBg",   t.controlBg);   readColour ("controlOnBg", t.controlOnBg);
+    readColour ("controlText", t.controlText); readColour ("controlTextOn", t.controlTextOn);
+    readColour ("focusOutline", t.focusOutline); readColour ("sliderTrack", t.sliderTrack);
+    readColour ("sliderThumb", t.sliderThumb);
     readColour ("zoneA",    t.zoneA);       readColour ("zoneB",       t.zoneB);
     readColour ("zoneC",       t.zoneC);       readColour ("zoneD",       t.zoneD);
     readColour ("zoneMenu",    t.zoneMenu);
@@ -262,6 +319,15 @@ ThemeData ThemeManager::themeFromValueTree (const juce::ValueTree& vt)
     readFloat  ("sizeLabel",     t.sizeLabel);    readFloat ("sizeBody",      t.sizeBody);
     readFloat  ("sizeMicro",     t.sizeMicro);    readFloat ("sizeValue",     t.sizeValue);
     readFloat  ("sizeTransport", t.sizeTransport);
+    readFloat  ("zoneAHeaderHeight",        t.zoneAHeaderHeight);
+    readFloat  ("zoneAGroupHeaderHeight",   t.zoneAGroupHeaderHeight);
+    readFloat  ("zoneARowHeight",           t.zoneARowHeight);
+    readFloat  ("zoneABadgeHeight",         t.zoneABadgeHeight);
+    readFloat  ("zoneASectionHeaderHeight", t.zoneASectionHeaderHeight);
+    readFloat  ("zoneAControlBarHeight",    t.zoneAControlBarHeight);
+    readFloat  ("zoneAControlHeight",       t.zoneAControlHeight);
+    readFloat  ("zoneACardRadius",          t.zoneACardRadius);
+    readFloat  ("zoneACompactGap",          t.zoneACompactGap);
     readFloat  ("spaceXs",  t.spaceXs);  readFloat ("spaceSm",  t.spaceSm);
     readFloat  ("spaceMd",  t.spaceMd);  readFloat ("spaceLg",  t.spaceLg);
     readFloat  ("spaceXl",  t.spaceXl);  readFloat ("spaceXxl", t.spaceXxl);

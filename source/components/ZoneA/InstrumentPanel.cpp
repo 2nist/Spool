@@ -18,23 +18,9 @@ InstrumentPanel::InstrumentPanel (PluginProcessor& p)
 // Static helpers
 //==============================================================================
 
-juce::Colour InstrumentPanel::typeColor (const juce::String& moduleType)
-{
-    if (moduleType == "SYNTH")  return juce::Colour (Theme::Zone::a);
-    if (moduleType == "DRUMS")  return juce::Colour (Theme::Zone::b);
-    if (moduleType == "REEL")   return juce::Colour (Theme::Zone::d);
-    if (moduleType == "OUTPUT") return juce::Colour (Theme::Colour::error);
-    return juce::Colour (Theme::Colour::inkGhost);
-}
-
 juce::String InstrumentPanel::typeShort (const juce::String& moduleType)
 {
-    if (moduleType == "SYNTH")  return "POLY";
-    if (moduleType == "DRUMS")  return "DRUM";
-    if (moduleType == "REEL")   return "REEL";
-    if (moduleType == "OUTPUT") return "OUT";
-    if (moduleType.isNotEmpty()) return moduleType.substring (0, 4);
-    return "";
+    return ZoneAStyle::shortBadgeForModuleType (moduleType);
 }
 
 //==============================================================================
@@ -255,18 +241,8 @@ void InstrumentPanel::paintBrowser (juce::Graphics& g) const
 {
     const int w = getWidth();
 
-    // Header
-    g.setColour (Theme::Colour::surface1);
-    g.fillRect  (0, 0, w, kBrowserHeaderH);
-    g.setColour (Theme::Zone::a.withAlpha (0.85f));
-    g.fillRect (0, 0, 3, kBrowserHeaderH);
-    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.5f));
-    g.fillRect  (0, kBrowserHeaderH - 1, w, 1);
-    g.setFont   (Theme::Font::micro());
-    g.setColour (Theme::Zone::a);
-    g.drawText  ("INSTRUMENT",
-                 juce::Rectangle<int> (0, 0, w, kBrowserHeaderH),
-                 juce::Justification::centred, false);
+    ZoneAStyle::drawHeader (g, { 0, 0, w, kBrowserHeaderH }, "INSTRUMENT",
+                            ZoneAStyle::accentForTabId ("instrument"));
 
     if (m_slots.isEmpty())
     {
@@ -294,15 +270,7 @@ void InstrumentPanel::paintBrowser (juce::Graphics& g) const
                     groupY = pair.second - kGroupHeaderH;
 
             const juce::Rectangle<int> grpR (0, groupY, w, kGroupHeaderH);
-            g.setColour (entry.groupColor.withAlpha (0.12f));
-            g.fillRect  (grpR);
-            g.setColour (entry.groupColor);
-            g.fillRect  (0, groupY, 2, kGroupHeaderH);
-            g.setFont   (Theme::Font::micro());
-            g.setColour (entry.groupColor);
-            g.drawText  (entry.groupName,
-                         juce::Rectangle<int> (6, groupY, w - 54, kGroupHeaderH),
-                         juce::Justification::centredLeft, false);
+            ZoneAStyle::drawGroupHeader (g, grpR, entry.groupName, entry.groupColor);
 
             int groupSlotCount = 0;
             for (const auto& s : m_slots)
@@ -334,10 +302,7 @@ void InstrumentPanel::paintBrowserSlot (juce::Graphics& g,
 {
     const int w = r.getWidth();
 
-    g.setColour (hovered ? Theme::Colour::surface3 : Theme::Colour::surface2);
-    g.fillRect  (r);
-    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.3f));
-    g.fillRect  (r.getX(), r.getBottom() - 1, w, 1);
+    ZoneAStyle::drawRowBackground (g, r, hovered);
 
     if (entry.moduleType.isEmpty())
     {
@@ -373,20 +338,12 @@ void InstrumentPanel::paintBrowserSlot (juce::Graphics& g,
 
     // Type badge
     const juce::String badge    = typeShort (entry.moduleType);
-    const juce::Colour badgeCol = typeColor (entry.moduleType);
-    const int badgeW = 36, badgeH = 12;
+    const juce::Colour badgeCol = ZoneAStyle::accentForModuleType (entry.moduleType);
+    const int badgeW = ZoneAStyle::badgeWidthForText (badge), badgeH = ZoneAStyle::badgeHeight();
     const int badgeX = r.getX() + w - badgeW - kPad;
     const int badgeY = r.getCentreY() - badgeH / 2;
 
-    g.setColour (badgeCol.withAlpha (0.15f));
-    g.fillRoundedRectangle (juce::Rectangle<int> (badgeX, badgeY, badgeW, badgeH).toFloat(), 2.5f);
-    g.setColour (badgeCol.withAlpha (0.5f));
-    g.drawRoundedRectangle (juce::Rectangle<int> (badgeX, badgeY, badgeW, badgeH).toFloat(), 2.5f, 0.5f);
-    g.setFont   (Theme::Font::micro());
-    g.setColour (badgeCol);
-    g.drawText  (badge,
-                 juce::Rectangle<int> (badgeX, badgeY, badgeW, badgeH),
-                 juce::Justification::centred, false);
+    ZoneAStyle::drawBadge (g, juce::Rectangle<int> (badgeX, badgeY, badgeW, badgeH), badge, badgeCol);
 }
 
 //==============================================================================
@@ -398,12 +355,9 @@ void InstrumentPanel::paintEditorHeader (juce::Graphics& g) const
     const int w     = getWidth();
     const auto* entry = getActiveEntry();
 
-    g.setColour (Theme::Colour::surface1);
-    g.fillRect  (0, 0, w, kEditorHeaderH);
-    g.setColour (Theme::Zone::a.withAlpha (0.85f));
-    g.fillRect (0, 0, 3, kEditorHeaderH);
-    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.5f));
-    g.fillRect  (0, kEditorHeaderH - 1, w, 1);
+    ZoneAStyle::HeaderOptions headerOptions;
+    headerOptions.justification = juce::Justification::centredLeft;
+    ZoneAStyle::drawHeader (g, { 0, 0, w, kEditorHeaderH }, {}, ZoneAStyle::accentForTabId ("instrument"), headerOptions);
 
     const auto backR = backBtnRect();
     g.setFont   (Theme::Font::label());
@@ -420,18 +374,12 @@ void InstrumentPanel::paintEditorHeader (juce::Graphics& g) const
                      juce::Justification::centredLeft, true);
 
         const juce::String badge    = typeShort (entry->moduleType);
-        const juce::Colour badgeCol = typeColor (entry->moduleType);
-        const int badgeW = 36, badgeH = 12;
+        const juce::Colour badgeCol = ZoneAStyle::accentForModuleType (entry->moduleType);
+        const int badgeW = ZoneAStyle::badgeWidthForText (badge), badgeH = ZoneAStyle::badgeHeight();
         const int badgeX = w - badgeW - kPad;
         const int badgeY = (kEditorHeaderH - badgeH) / 2;
 
-        g.setColour (badgeCol.withAlpha (0.15f));
-        g.fillRoundedRectangle (juce::Rectangle<int> (badgeX, badgeY, badgeW, badgeH).toFloat(), 2.5f);
-        g.setFont   (Theme::Font::micro());
-        g.setColour (badgeCol);
-        g.drawText  (badge,
-                     juce::Rectangle<int> (badgeX, badgeY, badgeW, badgeH),
-                     juce::Justification::centred, false);
+        ZoneAStyle::drawBadge (g, juce::Rectangle<int> (badgeX, badgeY, badgeW, badgeH), badge, badgeCol);
 
         // Stub message for types without a real editor
         if (entry->moduleType != "SYNTH" && entry->moduleType != "DRUMS")

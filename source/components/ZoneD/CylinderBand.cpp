@@ -1,12 +1,12 @@
 #include "CylinderBand.h"
 
-//==============================================================================
-// Local tape colour definitions
-const juce::Colour CylinderBand::tapeBase      { 0xFFbfaa82 };
-const juce::Colour CylinderBand::tapeSeam      { 0xFF9a8660 };
-const juce::Colour CylinderBand::tapeBeatTick  { 0xFF41300e };
-const juce::Colour CylinderBand::playheadColor { 0xFF694412 };
-const juce::Colour CylinderBand::housingEdge   { 0xFF080604 };
+namespace
+{
+const ThemeData& tapeTheme() noexcept
+{
+    return ThemeManager::get().theme();
+}
+}
 
 //==============================================================================
 CylinderBand::CylinderBand()
@@ -75,25 +75,27 @@ float CylinderBand::loopLengthPx() const noexcept
     return loopLengthBeats() * m_pxPerBeat;
 }
 
-float CylinderBand::scrollOffsetPx() const noexcept
+float CylinderBand::signedOffsetPxForBeat (float beatPosition) const noexcept
 {
-    // Bounded via fmod — never allows raw value to grow unbounded
-    return std::fmod (m_currentBeat * m_pxPerBeat, loopLengthPx());
+    const float loopBeats = loopLengthBeats();
+    if (loopBeats <= 0.0f)
+        return 0.0f;
+
+    float deltaBeats = std::fmod (beatPosition - m_currentBeat, loopBeats);
+
+    // Canonical timeline rule:
+    // earlier beats live to the left of the playhead, later beats to the right.
+    if (deltaBeats < -loopBeats * 0.5f)
+        deltaBeats += loopBeats;
+    else if (deltaBeats >= loopBeats * 0.5f)
+        deltaBeats -= loopBeats;
+
+    return deltaBeats * m_pxPerBeat;
 }
 
-float CylinderBand::wrappedX (float beatPosition, float centerX) const noexcept
+float CylinderBand::timelineXForBeat (float beatPosition, float centerX) const noexcept
 {
-    const float loopPx   = loopLengthPx();
-    float rawOffset      = beatPosition * m_pxPerBeat - scrollOffsetPx();
-    float r              = std::fmod (rawOffset, loopPx);
-
-    // CRITICAL: fmod preserves sign — negative means before current position;
-    // wrap to positive end of loop so element appears on the right side.
-    if (r < 0.0f) r += loopPx;
-
-    // Keep the current beat aligned to the playhead center.
-    // This avoids a visual half-loop phase offset vs structure lane timing.
-    return centerX + r;
+    return centerX + signedOffsetPxForBeat (beatPosition);
 }
 
 //==============================================================================
@@ -221,7 +223,7 @@ void CylinderBand::mouseDrag (const juce::MouseEvent& e)
     if (!m_isDragging)
         return;
     const float delta   = (e.position.x - m_dragStartX) / m_pxPerBeat;
-    float newBeat       = m_dragStartBeat - delta;
+    float newBeat       = m_dragStartBeat + delta;
     const float loopLen = loopLengthBeats();
     newBeat = std::fmod (newBeat, loopLen);
     if (newBeat < 0.0f)
@@ -250,6 +252,7 @@ void CylinderBand::paintTapeBase (juce::Graphics& g, int tapeH) const
 {
     const int   tapeW = m_tapeRect.getWidth();
     const float fw    = static_cast<float> (tapeW);
+    const auto  tapeBase = tapeTheme().tapeBase;
 
     // Cylindrical diffuse lighting: cos(θ) model.
     // Crown of the cylinder (center) faces the viewer and is brightest.
@@ -327,6 +330,7 @@ void CylinderBand::paintLaneContent (juce::Graphics& g,
     }
 
     // Lane separator
+    const auto tapeBeatTick = tapeTheme().tapeBeatTick;
     g.setColour (tapeBeatTick.withAlpha (0.18f));
     g.drawHorizontalLine (laneTopYVal + laneH() - 1, 0.0f, static_cast<float> (m_tapeRect.getWidth()));
 
@@ -335,6 +339,7 @@ void CylinderBand::paintLaneContent (juce::Graphics& g,
     {
         const int autoTop = laneTopYVal + laneH();
         // Background: tapeBase + black overlay at 10%
+        const auto tapeBase = tapeTheme().tapeBase;
         g.setColour (tapeBase);
         g.fillRect (0, autoTop, m_tapeRect.getWidth(), autoH());
         g.setColour (juce::Colours::black.withAlpha (0.10f));
@@ -353,10 +358,11 @@ void CylinderBand::paintBeatMarkers (juce::Graphics& g, float centerX, int tapeH
 {
     const float loopPx  = loopLengthPx();
     const int   numBeats = static_cast<int> (loopLengthBeats());
+    const auto  tapeBeatTick = tapeTheme().tapeBeatTick;
 
     for (int i = 0; i < numBeats; ++i)
     {
-        const float x = wrappedX (static_cast<float> (i), centerX);
+        const float x = timelineXForBeat (static_cast<float> (i), centerX);
         if (x <= 4.0f || x >= static_cast<float> (m_tapeRect.getWidth() - 4))
             continue;
 
@@ -384,8 +390,9 @@ void CylinderBand::paintBeatMarkers (juce::Graphics& g, float centerX, int tapeH
 
 void CylinderBand::paintSeam (juce::Graphics& g, float centerX, int tapeH) const
 {
-    const float x      = wrappedX (0.0f, centerX);
+    const float x      = timelineXForBeat (0.0f, centerX);
     const float halfW  = static_cast<float> (m_tapeRect.getWidth()) * 0.5f;
+    const auto  tapeSeam = tapeTheme().tapeSeam;
 
     if (x > 4.0f && x < static_cast<float> (m_tapeRect.getWidth() - 4))
     {
@@ -415,7 +422,7 @@ void CylinderBand::paintClips (juce::Graphics& g,
 
     for (const auto& clip : lane.clips)
     {
-        const float clipLeft  = wrappedX (clip.startBeat, centerX);
+        const float clipLeft  = timelineXForBeat (clip.startBeat, centerX);
         const float clipW     = clip.lengthBeats * m_pxPerBeat;
         const float clipRight = clipLeft + clipW;
 
@@ -432,12 +439,11 @@ void CylinderBand::paintClips (juce::Graphics& g,
 
         if (clipW < loopPx)
         {
-            // May split at loop boundary
+            // Draw the canonical visible segment plus wrapped neighbours so a
+            // clip remains continuous as it crosses the loop seam.
             drawClipAt (clipLeft, clipRight);
-
-            // Also render the wrapped copy
-            if (clipRight > centerX + loopPx * 0.5f)
-                drawClipAt (clipLeft - loopPx, clipRight - loopPx);
+            drawClipAt (clipLeft - loopPx, clipRight - loopPx);
+            drawClipAt (clipLeft + loopPx, clipRight + loopPx);
         }
         else
         {
@@ -449,6 +455,8 @@ void CylinderBand::paintClips (juce::Graphics& g,
 
 void CylinderBand::paintRimsAndFades (juce::Graphics& g, int tapeW, int tapeH) const
 {
+    const auto housingEdge = tapeTheme().housingEdge;
+
     // === RIM BEVEL — left (inner highlight suggests housing depth) ===
     g.setColour (juce::Colour (0xFF040302));   // outer very dark
     g.fillRect (0, 0, 2, tapeH);
@@ -542,6 +550,7 @@ void CylinderBand::paintRimsAndFades (juce::Graphics& g, int tapeW, int tapeH) c
 void CylinderBand::paintPlayhead (juce::Graphics& g, float centerX, int tapeH) const
 {
     // 1.5px vertical line
+    const auto playheadColor = tapeTheme().playheadColor;
     g.setColour (playheadColor);
     g.fillRect (centerX - 0.75f, 0.0f, 1.5f, static_cast<float> (tapeH));
 

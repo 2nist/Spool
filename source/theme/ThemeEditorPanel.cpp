@@ -1,5 +1,7 @@
 #include "ThemeEditorPanel.h"
 #include "ThemePresets.h"
+#include "../components/ZoneA/ZoneAStyle.h"
+#include "../components/ZoneA/ZoneAControlStyle.h"
 
 //==============================================================================
 // Helpers
@@ -7,11 +9,266 @@
 static void styleSmallButton (juce::TextButton& b)
 {
     b.setLookAndFeel (nullptr);
-    b.setColour (juce::TextButton::buttonColourId,   Theme::Colour::surface3);
+    b.setColour (juce::TextButton::buttonColourId,   ThemeManager::get().theme().controlBg);
     b.setColour (juce::TextButton::buttonOnColourId, Theme::Colour::accent.withAlpha (0.3f));
-    b.setColour (juce::TextButton::textColourOffId,  Theme::Colour::inkMuted);
-    b.setColour (juce::TextButton::textColourOnId,   Theme::Colour::inkLight);
+    b.setColour (juce::TextButton::textColourOffId,  ThemeManager::get().theme().controlText);
+    b.setColour (juce::TextButton::textColourOnId,   ThemeManager::get().theme().controlTextOn);
 }
+
+class ThemePreviewPane final : public juce::Component,
+                               private ThemeManager::Listener
+{
+public:
+    enum class Mode
+    {
+        full,
+        typography,
+        spacing,
+        tape
+    };
+
+    explicit ThemePreviewPane (Mode previewMode) : m_mode (previewMode)
+    {
+        ThemeManager::get().addListener (this);
+    }
+
+    ThemePreviewPane()
+    {
+        ThemeManager::get().addListener (this);
+    }
+
+    ~ThemePreviewPane() override
+    {
+        ThemeManager::get().removeListener (this);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto bounds = getLocalBounds().reduced (4);
+
+        switch (m_mode)
+        {
+            case Mode::typography:
+                drawTypographyPreview (g, bounds);
+                break;
+            case Mode::spacing:
+                drawSpacingPreview (g, bounds);
+                break;
+            case Mode::tape:
+                drawTapePreview (g, bounds);
+                break;
+            case Mode::full:
+            default:
+                drawZoneAPreview (g, bounds.removeFromTop (190));
+                bounds.removeFromTop (8);
+                drawTypographyPreview (g, bounds.removeFromTop (112));
+                bounds.removeFromTop (8);
+                drawSpacingPreview (g, bounds.removeFromTop (92));
+                bounds.removeFromTop (8);
+                drawTapePreview (g, bounds.removeFromTop (96));
+                break;
+        }
+    }
+
+private:
+    Mode m_mode { Mode::full };
+
+    void themeChanged() override
+    {
+        repaint();
+    }
+
+    static void drawZoneAPreview (juce::Graphics& g, juce::Rectangle<int> bounds)
+    {
+        const auto accent = juce::Colour (Theme::Zone::a);
+        ZoneAStyle::drawCard (g, bounds, accent);
+
+        auto inner = bounds.reduced (8);
+        const auto headerH = juce::jmax (18, ZoneAStyle::compactHeaderHeight());
+        const auto rowH = juce::jmax (18, ZoneAStyle::compactRowHeight());
+        const auto gap = juce::jmax (4, ZoneAControlStyle::compactGap());
+        const auto badgeH = juce::jmax (10, ZoneAStyle::badgeHeight());
+
+        auto header = inner.removeFromTop (headerH);
+        ZoneAStyle::drawHeader (g, header, "ZONE A PREVIEW", accent,
+                                { juce::Justification::centredLeft, true });
+
+        inner.removeFromTop (gap);
+        auto row1 = inner.removeFromTop (rowH);
+        auto row2 = inner.removeFromTop (rowH);
+        row2.removeFromTop (gap / 2);
+        auto row3 = inner.removeFromTop (rowH);
+        row3.removeFromTop (gap / 2);
+
+        ZoneAStyle::drawRowBackground (g, row1, false, false, accent);
+        ZoneAStyle::drawRowBackground (g, row2, true,  false, accent);
+        ZoneAStyle::drawRowBackground (g, row3, false, true,  accent);
+
+        drawRowText (g, row1, "Browser Row", "NEW", accent, badgeH);
+        drawRowText (g, row2, "Hovered Row", "ALT", juce::Colour (Theme::Colour::accentWarm), badgeH);
+        drawRowText (g, row3, "Selected Row", "SEL", accent, badgeH);
+
+        inner.removeFromTop (gap);
+        auto controls = inner.removeFromTop (juce::jmax (54, juce::roundToInt (ThemeManager::get().theme().zoneAControlHeight * 2.8f)));
+        drawControls (g, controls, accent);
+    }
+
+    static void drawTypographyPreview (juce::Graphics& g, juce::Rectangle<int> bounds)
+    {
+        ZoneAStyle::drawCard (g, bounds, juce::Colour (Theme::Colour::accentWarm));
+        auto inner = bounds.reduced (8);
+
+        g.setColour (Theme::Colour::inkGhost);
+        g.setFont (Theme::Font::micro());
+        g.drawText ("TYPOGRAPHY", inner.removeFromTop (14), juce::Justification::centredLeft, false);
+
+        auto line1 = inner.removeFromTop (20);
+        g.setColour (Theme::Colour::inkLight);
+        g.setFont (Theme::Font::heading());
+        g.drawText ("Heading / Section Title", line1, juce::Justification::centredLeft, true);
+
+        auto line2 = inner.removeFromTop (18);
+        g.setFont (Theme::Font::label());
+        g.drawText ("Label text and compact controls", line2, juce::Justification::centredLeft, true);
+
+        auto line3 = inner.removeFromTop (18);
+        g.setFont (Theme::Font::body());
+        g.drawText ("Body/value preview 1e&a", line3, juce::Justification::centredLeft, true);
+
+        auto line4 = inner.removeFromTop (20);
+        g.setFont (Theme::Font::transport());
+        g.drawText ("128.0 BPM", line4, juce::Justification::centredLeft, true);
+    }
+
+    static void drawSpacingPreview (juce::Graphics& g, juce::Rectangle<int> bounds)
+    {
+        const auto& theme = ThemeManager::get().theme();
+        ZoneAStyle::drawCard (g, bounds, juce::Colour (Theme::Zone::b));
+        auto inner = bounds.reduced (8);
+
+        g.setColour (Theme::Colour::inkGhost);
+        g.setFont (Theme::Font::micro());
+        g.drawText ("SPACING", inner.removeFromTop (14), juce::Justification::centredLeft, false);
+
+        auto row = inner.removeFromTop (24);
+        const int boxH = 14;
+        const float values[] = { theme.spaceXs, theme.spaceSm, theme.spaceMd, theme.spaceLg, theme.spaceXl };
+        const char* labels[] = { "XS", "SM", "MD", "LG", "XL" };
+        int x = row.getX();
+
+        for (int i = 0; i < 5; ++i)
+        {
+            const int w = juce::roundToInt (juce::jlimit (8.0f, 34.0f, values[i] * 1.5f));
+            auto box = juce::Rectangle<int> (x, row.getY() + 6, w, boxH);
+            g.setColour (Theme::Colour::surface4);
+            g.fillRoundedRectangle (box.toFloat(), 3.0f);
+            g.setColour (Theme::Colour::surfaceEdge);
+            g.drawRoundedRectangle (box.toFloat(), 3.0f, 1.0f);
+            g.setColour (Theme::Colour::inkMid);
+            g.setFont (Theme::Font::micro());
+            g.drawText (labels[i], x, row.getBottom() - 2, 30, 12, juce::Justification::centredLeft, false);
+            x += w + 10;
+        }
+
+        auto detail = inner.removeFromTop (18);
+        g.setColour (Theme::Colour::inkMuted);
+        g.setFont (Theme::Font::micro());
+        g.drawText ("Knob " + juce::String (juce::roundToInt (theme.knobSize))
+                    + "  Slot " + juce::String (juce::roundToInt (theme.moduleSlotHeight))
+                    + "  Step " + juce::String (juce::roundToInt (theme.stepWidth))
+                    + "x" + juce::String (juce::roundToInt (theme.stepHeight)),
+                    detail, juce::Justification::centredLeft, true);
+    }
+
+    static void drawTapePreview (juce::Graphics& g, juce::Rectangle<int> bounds)
+    {
+        const auto& theme = ThemeManager::get().theme();
+        ZoneAStyle::drawCard (g, bounds, juce::Colour (Theme::Zone::d));
+        auto inner = bounds.reduced (8);
+
+        g.setColour (Theme::Colour::inkGhost);
+        g.setFont (Theme::Font::micro());
+        g.drawText ("TAPE / TIMELINE", inner.removeFromTop (14), juce::Justification::centredLeft, false);
+
+        auto lane = inner.removeFromTop (48);
+        g.setColour (theme.tapeBase);
+        g.fillRoundedRectangle (lane.toFloat(), 6.0f);
+
+        auto clip = lane.reduced (10, 10).withWidth (juce::roundToInt (lane.getWidth() * 0.55f));
+        g.setColour (theme.tapeClipBg);
+        g.fillRoundedRectangle (clip.toFloat(), 4.0f);
+        g.setColour (theme.tapeClipBorder);
+        g.drawRoundedRectangle (clip.toFloat(), 4.0f, 1.0f);
+        g.setColour (theme.tapeSeam);
+        g.drawVerticalLine (clip.getCentreX(), (float) clip.getY() + 2.0f, (float) clip.getBottom() - 2.0f);
+
+        const int tickX = lane.getX() + lane.getWidth() * 3 / 4;
+        g.setColour (theme.tapeBeatTick);
+        g.drawVerticalLine (tickX, (float) lane.getY() + 6.0f, (float) lane.getBottom() - 6.0f);
+
+        const int playheadX = lane.getX() + lane.getWidth() / 2;
+        g.setColour (theme.playheadColor);
+        g.drawVerticalLine (playheadX, (float) lane.getY() + 2.0f, (float) lane.getBottom() - 2.0f);
+    }
+
+    static void drawRowText (juce::Graphics& g,
+                             juce::Rectangle<int> row,
+                             const juce::String& text,
+                             const juce::String& badge,
+                             juce::Colour accent,
+                             int badgeH)
+    {
+        g.setColour (Theme::Colour::inkLight);
+        g.setFont (Theme::Font::label());
+        g.drawText (text, row.reduced (8, 0).withTrimmedRight (56), juce::Justification::centredLeft, true);
+
+        const auto badgeW = ZoneAStyle::badgeWidthForText (badge);
+        auto badgeBounds = juce::Rectangle<int> (row.getRight() - badgeW - 8,
+                                                 row.getCentreY() - badgeH / 2,
+                                                 badgeW,
+                                                 badgeH);
+        ZoneAStyle::drawBadge (g, badgeBounds, badge, accent);
+    }
+
+    static void drawControls (juce::Graphics& g, juce::Rectangle<int> area, juce::Colour accent)
+    {
+        const auto& theme = ThemeManager::get().theme();
+        const auto controlH = juce::jmax (18, ZoneAControlStyle::controlHeight());
+        const auto barH = juce::jmax (12, ZoneAControlStyle::controlBarHeight());
+        const auto gap = juce::jmax (4, ZoneAControlStyle::compactGap());
+
+        auto topRow = area.removeFromTop (controlH);
+        auto button = topRow.removeFromLeft (64);
+        auto combo = topRow.removeFromLeft (92).translated (gap, 0);
+
+        g.setColour (theme.controlBg);
+        g.fillRoundedRectangle (button.toFloat(), 4.0f);
+        g.setColour (accent.withAlpha (0.45f));
+        g.drawRoundedRectangle (button.toFloat(), 4.0f, 1.0f);
+        g.setColour (theme.controlTextOn);
+        g.setFont (Theme::Font::microMedium());
+        g.drawText ("APPLY", button, juce::Justification::centred, false);
+
+        g.setColour (theme.controlBg);
+        g.fillRoundedRectangle (combo.toFloat(), 4.0f);
+        g.setColour (theme.surfaceEdge.withAlpha (0.55f));
+        g.drawRoundedRectangle (combo.toFloat(), 4.0f, 1.0f);
+        g.setColour (theme.controlTextOn);
+        g.drawText ("MODE v", combo.reduced (8, 0), juce::Justification::centredLeft, false);
+
+        area.removeFromTop (gap);
+        auto slider = area.removeFromTop (barH);
+        g.setColour (theme.controlBg);
+        g.fillRoundedRectangle (slider.toFloat(), 4.0f);
+        auto fill = slider.withWidth (slider.getWidth() * 3 / 5);
+        g.setColour (theme.sliderTrack);
+        g.fillRoundedRectangle (fill.toFloat(), 4.0f);
+        g.setColour (theme.surfaceEdge.withAlpha (0.85f));
+        g.drawRoundedRectangle (slider.toFloat(), 4.0f, 1.0f);
+        g.setColour (theme.controlTextOn);
+        g.drawText ("Control Height", slider.reduced (8, 0), juce::Justification::centredLeft, false);
+    }
+};
 
 //==============================================================================
 
@@ -26,9 +283,9 @@ ThemeEditorPanel::ThemeEditorPanel()
 
     // Preset combo
     m_presetCombo.setTextWhenNothingSelected ("Preset...");
-    m_presetCombo.setColour (juce::ComboBox::backgroundColourId, Theme::Colour::surface3);
-    m_presetCombo.setColour (juce::ComboBox::textColourId,       Theme::Colour::inkMid);
-    m_presetCombo.setColour (juce::ComboBox::outlineColourId,    Theme::Colour::surfaceEdge);
+    m_presetCombo.setColour (juce::ComboBox::backgroundColourId, ThemeManager::get().theme().controlBg);
+    m_presetCombo.setColour (juce::ComboBox::textColourId,       ThemeManager::get().theme().controlTextOn);
+    m_presetCombo.setColour (juce::ComboBox::outlineColourId,    ThemeManager::get().theme().surfaceEdge);
     m_presetCombo.onChange = [this] { onPresetSelected (m_presetCombo.getSelectedId()); };
     addAndMakeVisible (m_presetCombo);
     populatePresetCombo();
@@ -47,11 +304,14 @@ ThemeEditorPanel::ThemeEditorPanel()
         LucideIcons::signal,     // kSignal
         LucideIcons::typography, // kType
         LucideIcons::spacing,    // kSpace
+        LucideIcons::accent,     // kUi
+        LucideIcons::zones,      // kPreview
         LucideIcons::tape,       // kTape
     };
     static const char* kTooltips[kTabCount] = {
         "Surface Colors", "Ink & Text", "Accent Colors", "Zone Colors",
-        "Signal Colors",  "Typography", "Spacing",       "Tape Colors",
+        "Signal Colors",  "Typography", "Spacing", "UI Chrome",
+        "Zone A Preview", "Tape Colors",
     };
     for (int i = 0; i < kTabCount; ++i)
     {
@@ -109,7 +369,10 @@ void ThemeEditorPanel::resized()
     // Content
     for (auto& page : m_pages)
         if (page != nullptr)
+        {
             page->viewport.setBounds (r);
+            relayoutPage (*page);
+        }
 }
 
 void ThemeEditorPanel::paint (juce::Graphics& g)
@@ -139,6 +402,12 @@ void ThemeEditorPanel::paint (juce::Graphics& g)
 
 void ThemeEditorPanel::themeChanged()
 {
+    m_presetCombo.setColour (juce::ComboBox::backgroundColourId, ThemeManager::get().theme().controlBg);
+    m_presetCombo.setColour (juce::ComboBox::textColourId,       ThemeManager::get().theme().controlTextOn);
+    m_presetCombo.setColour (juce::ComboBox::outlineColourId,    ThemeManager::get().theme().surfaceEdge);
+    styleSmallButton (m_exportBtn);
+    styleSmallButton (m_saveAsBtn);
+    styleSmallButton (m_resetBtn);
     refreshAllRows();
     repaint();
 }
@@ -166,6 +435,8 @@ const char* ThemeEditorPanel::tabName (Tab t)
         case kSignal:  return "SIGNAL";
         case kType:    return "TYPE";
         case kSpace:   return "SPACE";
+        case kUi:      return "UI";
+        case kPreview: return "PREVIEW";
         case kTape:    return "TAPE";
         default:       return "?";
     }
@@ -186,18 +457,33 @@ void ThemeEditorPanel::switchTab (int newTab)
 //==============================================================================
 // Tab builders
 
-static void layoutRows (juce::Component& container,
-                        juce::OwnedArray<ColourRow>& crows,
-                        juce::OwnedArray<FloatRow>&  frows,
-                        int rowH, int gap)
+void ThemeEditorPanel::relayoutPage (TabPage& page)
 {
-    const int total = crows.size() + frows.size();
-    const int h     = total * (rowH + gap) + gap;
-    container.setSize (container.getWidth() > 0 ? container.getWidth() : 200, h);
+    const int width = juce::jmax (200, page.viewport.getWidth() - page.viewport.getScrollBarThickness());
+    int y = kRowGap;
 
-    int y = gap;
-    for (auto* r : crows) { r->setBounds (4, y, container.getWidth() - 8, rowH); y += rowH + gap; }
-    for (auto* r : frows) { r->setBounds (4, y, container.getWidth() - 8, rowH); y += rowH + gap; }
+    page.container.setSize (width, page.container.getHeight());
+
+    if (page.customContent != nullptr)
+    {
+        const int contentH = juce::jmax (page.contentHeight, 120);
+        page.customContent->setBounds (4, y, width - 8, contentH);
+        y = page.customContent->getBottom() + kRowGap + 2;
+    }
+
+    for (auto* row : page.colourRows)
+    {
+        row->setBounds (4, y, width - 8, kRowH);
+        y += kRowH + kRowGap;
+    }
+
+    for (auto* row : page.floatRows)
+    {
+        row->setBounds (4, y, width - 8, kRowH);
+        y += kRowH + kRowGap;
+    }
+
+    page.container.setSize (width, juce::jmax (y, 40));
 }
 
 void ThemeEditorPanel::buildAllTabs()
@@ -220,11 +506,13 @@ void ThemeEditorPanel::buildAllTabs()
             case kSignal:  buildSignalTab  (page.container); break;
             case kType:    buildTypeTab    (page.container); break;
             case kSpace:   buildSpaceTab   (page.container); break;
+            case kUi:      buildUiTab      (page.container); break;
+            case kPreview: buildPreviewTab (page.container); break;
             case kTape:    buildTapeTab    (page.container); break;
             default: break;
         }
 
-        layoutRows (page.container, page.colourRows, page.floatRows, kRowH, kRowGap);
+        relayoutPage (page);
     }
 }
 
@@ -300,6 +588,11 @@ void ThemeEditorPanel::buildSignalTab (juce::Component& c)
 
 void ThemeEditorPanel::buildTypeTab (juce::Component& c)
 {
+    auto& page = *m_pages[kType];
+    page.customContent = std::make_unique<ThemePreviewPane> (ThemePreviewPane::Mode::typography);
+    page.contentHeight = 110;
+    c.addAndMakeVisible (*page.customContent);
+
     auto& fr = m_pages[kType]->floatRows;
     addFR (c, fr, "Display size",   &ThemeData::sizeDisplay,   8.f, 24.f);
     addFR (c, fr, "Heading size",   &ThemeData::sizeHeading,   8.f, 24.f);
@@ -312,6 +605,11 @@ void ThemeEditorPanel::buildTypeTab (juce::Component& c)
 
 void ThemeEditorPanel::buildSpaceTab (juce::Component& c)
 {
+    auto& page = *m_pages[kSpace];
+    page.customContent = std::make_unique<ThemePreviewPane> (ThemePreviewPane::Mode::spacing);
+    page.contentHeight = 90;
+    c.addAndMakeVisible (*page.customContent);
+
     auto& fr = m_pages[kSpace]->floatRows;
     addFR (c, fr, "XS (4px base)",  &ThemeData::spaceXs,  2.f, 12.f, 1.f);
     addFR (c, fr, "SM (8px)",       &ThemeData::spaceSm,  4.f, 20.f, 1.f);
@@ -325,8 +623,51 @@ void ThemeEditorPanel::buildSpaceTab (juce::Component& c)
     addFR (c, fr, "Step W",         &ThemeData::stepWidth,  12.f, 48.f, 1.f);
 }
 
+void ThemeEditorPanel::buildUiTab (juce::Component& c)
+{
+    auto& cr = m_pages[kUi]->colourRows;
+    auto& fr = m_pages[kUi]->floatRows;
+
+    addCR (c, cr, "Header Bg",         &ThemeData::headerBg);
+    addCR (c, cr, "Card Bg",           &ThemeData::cardBg);
+    addCR (c, cr, "Row Bg",            &ThemeData::rowBg);
+    addCR (c, cr, "Row Hover",         &ThemeData::rowHover);
+    addCR (c, cr, "Row Selected",      &ThemeData::rowSelected);
+    addCR (c, cr, "Badge Bg",          &ThemeData::badgeBg);
+    addCR (c, cr, "Control Bg",        &ThemeData::controlBg);
+    addCR (c, cr, "Control On",        &ThemeData::controlOnBg);
+    addCR (c, cr, "Control Text",      &ThemeData::controlText);
+    addCR (c, cr, "Control Text On",   &ThemeData::controlTextOn);
+    addCR (c, cr, "Focus Outline",     &ThemeData::focusOutline);
+    addCR (c, cr, "Slider Track",      &ThemeData::sliderTrack);
+    addCR (c, cr, "Slider Thumb",      &ThemeData::sliderThumb);
+
+    addFR (c, fr, "Header H",          &ThemeData::zoneAHeaderHeight,        18.f, 32.f, 1.f);
+    addFR (c, fr, "Group H",           &ThemeData::zoneAGroupHeaderHeight,   14.f, 28.f, 1.f);
+    addFR (c, fr, "Row H",             &ThemeData::zoneARowHeight,           18.f, 32.f, 1.f);
+    addFR (c, fr, "Badge H",           &ThemeData::zoneABadgeHeight,         10.f, 18.f, 1.f);
+    addFR (c, fr, "Section H",         &ThemeData::zoneASectionHeaderHeight, 12.f, 24.f, 1.f);
+    addFR (c, fr, "Bar H",             &ThemeData::zoneAControlBarHeight,    10.f, 24.f, 1.f);
+    addFR (c, fr, "Control H",         &ThemeData::zoneAControlHeight,       16.f, 28.f, 1.f);
+    addFR (c, fr, "Card Radius",       &ThemeData::zoneACardRadius,           3.f, 12.f, 0.5f);
+    addFR (c, fr, "Compact Gap",       &ThemeData::zoneACompactGap,           3.f, 12.f, 1.f);
+}
+
+void ThemeEditorPanel::buildPreviewTab (juce::Component& c)
+{
+    auto& page = *m_pages[kPreview];
+    page.customContent = std::make_unique<ThemePreviewPane> (ThemePreviewPane::Mode::full);
+    page.contentHeight = 514;
+    c.addAndMakeVisible (*page.customContent);
+}
+
 void ThemeEditorPanel::buildTapeTab (juce::Component& c)
 {
+    auto& page = *m_pages[kTape];
+    page.customContent = std::make_unique<ThemePreviewPane> (ThemePreviewPane::Mode::tape);
+    page.contentHeight = 94;
+    c.addAndMakeVisible (*page.customContent);
+
     auto& cr = m_pages[kTape]->colourRows;
     addCR (c, cr, "Tape Base",        &ThemeData::tapeBase);
     addCR (c, cr, "Clip Background",  &ThemeData::tapeClipBg);
@@ -433,7 +774,9 @@ void ThemeEditorPanel::onSaveAsClicked()
                 ThemeData td  = ThemeManager::get().theme();
                 td.presetName = name;
                 ThemePresets::saveUserPreset (td);
+                ThemeManager::get().applyTheme (td);
                 populatePresetCombo();
+                m_presetCombo.setText (name, juce::dontSendNotification);
             }
         }
         delete w;

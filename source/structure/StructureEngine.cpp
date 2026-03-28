@@ -32,12 +32,13 @@ juce::String pitchClassToRoot (int pitchClass)
 }
 } // namespace
 
-StructureEngine::StructureEngine (StructureState& state) : stateRef (state)
+StructureEngine::StructureEngine (SongManager& songManager) : songManagerRef (songManager)
 {
 }
 
 std::optional<ResolvedSectionInstance> StructureEngine::getSectionAtBeat (double beat) const
 {
+    const auto& stateRef = songManagerRef.getStructureState();
     if (! structureHasScaffold (stateRef))
         return std::nullopt;
 
@@ -67,9 +68,10 @@ Chord StructureEngine::getChordAtBeat (double beat) const
     const auto perRepeatBeats = juce::jmax (1, instance->barsPerRepeat * instance->beatsPerBar);
     const auto localBeat = juce::jmax (0.0, beat - static_cast<double> (instance->startBeat));
     const auto beatInRepeat = std::fmod (localBeat, static_cast<double> (perRepeatBeats));
-    const auto barInRepeat = beatInRepeat / static_cast<double> (instance->beatsPerBar);
-    const auto slot = juce::jmax (0, static_cast<int> (barInRepeat)) % static_cast<int> (instance->section->progression.size());
-    return instance->section->progression[(size_t) slot];
+    const int chordIndex = chordIndexForLoopBeat (*instance->section, beatInRepeat);
+    if (chordIndex < 0 || chordIndex >= static_cast<int> (instance->section->progression.size()))
+        return { "C", "maj" };
+    return instance->section->progression[(size_t) chordIndex];
 }
 
 std::vector<int> StructureEngine::resolveChord (const Chord& chord) const
@@ -113,6 +115,7 @@ std::vector<int> StructureEngine::resolveChordAtBeat (double beat) const
 
 void StructureEngine::transpose (int semitones)
 {
+    auto& stateRef = songManagerRef.getStructureStateForEdit();
     for (auto& section : stateRef.sections)
     {
         for (auto& chord : section.progression)
@@ -121,11 +124,14 @@ void StructureEngine::transpose (int semitones)
             chord.root = pitchClassToRoot (rootPc + semitones);
         }
     }
+    songManagerRef.commitAuthoredState();
 }
 
 void StructureEngine::rebuild()
 {
+    auto& stateRef = songManagerRef.getStructureStateForEdit();
     stateRef.totalBars = computeStructureTotalBars (stateRef);
     stateRef.totalBeats = computeStructureTotalBeats (stateRef);
     stateRef.estimatedDurationSeconds = computeStructureEstimatedDurationSeconds (stateRef);
+    songManagerRef.commitAuthoredState();
 }

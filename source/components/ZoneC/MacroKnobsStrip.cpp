@@ -46,6 +46,7 @@ void MacroKnobsStrip::paint (juce::Graphics& g)
 
 void MacroKnobsStrip::paintKnob (juce::Graphics& g, int i) const
 {
+    const auto& theme = ThemeManager::get().theme();
     const auto  r   = knobBounds (i);
     const float val = m_values[i];
     const float cx  = r.getCentreX();
@@ -53,9 +54,9 @@ void MacroKnobsStrip::paintKnob (juce::Graphics& g, int i) const
     const float rad = r.getWidth() * 0.5f;
 
     // Background circle
-    g.setColour (Theme::Colour::surface2);
+    g.setColour (theme.controlBg.withAlpha (0.95f));
     g.fillEllipse (r);
-    g.setColour (Theme::Colour::surfaceEdge);
+    g.setColour (theme.surfaceEdge.withAlpha (0.85f));
     g.drawEllipse (r.reduced (0.5f), Theme::Stroke::subtle);
 
     // Arc angles: start 210° clockwise from top = 210°-90° = 120° in JUCE coords
@@ -70,7 +71,7 @@ void MacroKnobsStrip::paintKnob (juce::Graphics& g, int i) const
     {
         juce::Path track;
         track.addCentredArc (cx, cy, arcR, arcR, 0.0f, kStartAngle, kStartAngle + kSweep, true);
-        g.setColour (Theme::Colour::surface0);
+        g.setColour (theme.surfaceEdge.withAlpha (0.45f));
         g.strokePath (track, juce::PathStrokeType (2.0f));
     }
 
@@ -79,7 +80,7 @@ void MacroKnobsStrip::paintKnob (juce::Graphics& g, int i) const
         const float fillAngle = kStartAngle + val * kSweep;
         juce::Path fill;
         fill.addCentredArc (cx, cy, arcR, arcR, 0.0f, kStartAngle, fillAngle, true);
-        g.setColour (Theme::Zone::c);
+        g.setColour (theme.sliderTrack);
         g.strokePath (fill, juce::PathStrokeType (2.0f));
     }
 
@@ -88,7 +89,7 @@ void MacroKnobsStrip::paintKnob (juce::Graphics& g, int i) const
         const float angle = kStartAngle + val * kSweep;
         const float dotX  = cx + arcR * std::cos (angle);
         const float dotY  = cy + arcR * std::sin (angle);
-        g.setColour (Theme::Zone::c);
+        g.setColour (theme.sliderThumb);
         g.fillEllipse (dotX - 2.5f, dotY - 2.5f, 5.0f, 5.0f);
     }
 

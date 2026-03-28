@@ -1,12 +1,82 @@
 #include "MenuBarComponent.h"
 
+namespace
+{
+void drawCompactShellSlider (juce::Graphics& g,
+                             juce::Rectangle<float> bounds,
+                             const juce::String& label,
+                             float normalized,
+                             bool bipolar,
+                             bool active,
+                             juce::Colour accent)
+{
+    g.setColour (Theme::Colour::surface2);
+    g.fillRoundedRectangle (bounds, 3.0f);
+    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.65f));
+    g.drawRoundedRectangle (bounds, 3.0f, 0.8f);
+
+    auto track = bounds.reduced (18.0f, 3.0f);
+    g.setColour (Theme::Colour::surface0);
+    g.fillRoundedRectangle (track, 2.5f);
+
+    if (bipolar)
+    {
+        const float centerX = track.getCentreX();
+        const float thumbX = track.getX() + juce::jlimit (0.0f, 1.0f, normalized) * track.getWidth();
+        const float fillX = juce::jmin (centerX, thumbX);
+        const float fillW = std::abs (thumbX - centerX);
+        if (fillW > 0.0f)
+        {
+            g.setColour (accent.withAlpha (0.72f));
+            g.fillRoundedRectangle ({ fillX, track.getY(), fillW, track.getHeight() }, 2.5f);
+        }
+
+        g.setColour (accent.withAlpha (0.35f));
+        g.fillRect (centerX, track.getY() - 1.0f, 1.0f, track.getHeight() + 2.0f);
+    }
+    else
+    {
+        const float fillW = juce::jlimit (0.0f, track.getWidth(), normalized * track.getWidth());
+        if (fillW > 0.0f)
+        {
+            g.setColour (accent.withAlpha (0.72f));
+            g.fillRoundedRectangle ({ track.getX(), track.getY(), fillW, track.getHeight() }, 2.5f);
+        }
+    }
+
+    const float thumbX = track.getX() + juce::jlimit (0.0f, 1.0f, normalized) * track.getWidth();
+    g.setColour (active ? accent.brighter (0.18f) : accent);
+    g.fillEllipse (thumbX - 3.5f, track.getCentreY() - 3.5f, 7.0f, 7.0f);
+
+    g.setFont (Theme::Font::micro());
+    g.setColour (Theme::Colour::inkGhost);
+    g.drawText (label, bounds.removeFromLeft (16.0f), juce::Justification::centred, false);
+}
+}
+
 MenuBarComponent::MenuBarComponent()
 {
+    m_items.add ({ "file", "FILE", {}, true });
+    m_items.add ({ "edit", "EDIT", {}, true });
+    m_items.add ({ "view", "VIEW", {}, true });
+    m_items.add ({ "settings", "SETTINGS", {}, true });
+}
+
+void MenuBarComponent::setLevel (float value) noexcept
+{
+    m_level = juce::jlimit (0.0f, 1.0f, value);
+    repaint();
+}
+
+void MenuBarComponent::setPan (float value) noexcept
+{
+    m_pan = juce::jlimit (-1.0f, 1.0f, value);
+    repaint();
 }
 
 void MenuBarComponent::resized()
 {
-    // No child components — nothing to lay out
+    rebuildItemLayout();
 }
 
 void MenuBarComponent::paint (juce::Graphics& g)
@@ -16,36 +86,50 @@ void MenuBarComponent::paint (juce::Graphics& g)
     const float cy = h / 2.0f;
 
     // ── Background ────────────────────────────────────────────────────────────
-    g.setColour (Theme::Colour::surface0);
-    g.fillRect (0.0f, 0.0f, w, h);
+    Theme::Helper::drawPanel (g, getLocalBounds(), Theme::Colour::surface0, Theme::Colour::transparent,
+                              Theme::Radius::none, Theme::Stroke::subtle);
 
     // ── Bottom border ─────────────────────────────────────────────────────────
     g.setColour (Theme::Colour::surfaceEdge);
     g.fillRect (0.0f, h - Theme::Stroke::subtle, w, Theme::Stroke::subtle);
 
-    // ── Left side: menu items ─────────────────────────────────────────────────
-    {
-        const juce::StringArray items { "FILE", "EDIT", "VST BROWSER", "PRESETS", "AUDIO", "VIEW" };
-        const auto labelFont = Theme::Font::label();
-        g.setFont (labelFont);
-        g.setColour (Theme::Colour::inkMid);
+    rebuildItemLayout();
 
-        float lx = Theme::Space::lg;
-        for (const auto& item : items)
+    // ── Left side: menu items ─────────────────────────────────────────────────
+    const auto labelFont = Theme::Font::label();
+    g.setFont (labelFont);
+    for (const auto& item : m_items)
+    {
+        const bool hovered = item.id == m_hoveredItemId;
+        const bool actionable = item.interactive;
+
+        if (hovered)
         {
-            const float itemW = juce::GlyphArrangement::getStringWidth (labelFont, item);
-            g.drawText (item,
-                juce::Rectangle<float> (lx, 0.0f, itemW, h),
-                juce::Justification::centredLeft,
-                false);
-            lx += itemW + Theme::Space::lg;
+            Theme::Helper::drawInfoChip (g,
+                                         item.bounds.expanded (6.0f, -4.0f),
+                                         {},
+                                         actionable ? juce::Colour (Theme::Colour::accent)
+                                                    : juce::Colour (Theme::Colour::surfaceEdge),
+                                         Theme::Helper::VisualState::hover);
         }
+
+        g.setColour (actionable ? Theme::Helper::textForState (Theme::Helper::VisualState::idle)
+                                : juce::Colour (Theme::Colour::inkMid));
+        if (hovered && actionable)
+            g.setColour (Theme::Colour::accent);
+
+        g.drawText (item.label,
+                    item.bounds,
+                    juce::Justification::centredLeft,
+                    false);
     }
 
     // ── Right side: status indicators (right → left) ──────────────────────────
     {
         const auto headingFont = Theme::Font::heading();
         const auto microFont   = Theme::Font::micro();
+        const float shellSliderW = 48.0f;
+        const float shellSliderGap = 5.0f;
 
         // Pre-compute widths
         const float transportW  = juce::GlyphArrangement::getStringWidth (headingFont, "1 . 1 . 00");
@@ -97,12 +181,25 @@ void MenuBarComponent::paint (juce::Graphics& g)
         }
         rx -= bpmBlockW + 8.0f;   // 8px separator
 
-        // 3. Link indicator (circle + "LINK" label) ----------------------------
+        // 3. Compact master controls ------------------------------------------
+        m_panRect = { rx - shellSliderW, 4.0f, shellSliderW, h - 8.0f };
+        drawCompactShellSlider (g, m_panRect, "PAN", (m_pan + 1.0f) * 0.5f,
+                                true, m_dragTarget == DragTarget::pan, Theme::Colour::accentWarm);
+        rx -= shellSliderW + shellSliderGap;
+
+        m_levelRect = { rx - shellSliderW, 4.0f, shellSliderW, h - 8.0f };
+        drawCompactShellSlider (g, m_levelRect, "LVL", m_level,
+                                false, m_dragTarget == DragTarget::level, Theme::Colour::accent);
+        rx -= shellSliderW + 8.0f;
+
+        // 4. Link indicator (circle + "LINK" label) ----------------------------
         {
             const float linkLeft = rx - linkBlockW;
 
-            g.setColour (Theme::Zone::c);
-            g.fillEllipse (linkLeft, cy - 3.0f, 6.0f, 6.0f);
+            Theme::Helper::drawStateDot (g,
+                                         { linkLeft, cy - 3.0f, 6.0f, 6.0f },
+                                         Theme::Helper::VisualState::armed,
+                                         Theme::Zone::c);
 
             g.setFont (microFont);
             g.setColour (Theme::Colour::inkGhost);
@@ -116,7 +213,7 @@ void MenuBarComponent::paint (juce::Graphics& g)
         }
         rx -= linkBlockW + 8.0f;   // 8px separator
 
-        // 4. MIDI activity pips + "MIDI" label ---------------------------------
+        // 5. MIDI activity pips + "MIDI" label ---------------------------------
         {
             const float midiLeft = rx - midiBlockW;
 
@@ -130,7 +227,7 @@ void MenuBarComponent::paint (juce::Graphics& g)
                 for (int i = 0; i < 4; ++i)
                 {
                     const float pipX = midiLeft + static_cast<float> (i) * (pipD + pipGap);
-                    g.setColour (pipColours[i].withAlpha (0.30f));
+                    g.setColour (pipColours[i].withAlpha (Theme::Alpha::disabled));
                     g.fillEllipse (pipX, cy - pipD/2.0f, pipD, pipD);
                 }
 
@@ -146,12 +243,126 @@ void MenuBarComponent::paint (juce::Graphics& g)
         }
         rx -= midiBlockW + 8.0f;   // 8px gap before alert dot
 
-        // 5. Alert dot (inactive state) ----------------------------------------
+        // 6. Alert dot (inactive state) ----------------------------------------
         {
             constexpr float alertD = 5.0f;
             rx -= alertD;
-            g.setColour (Theme::Colour::inactive);
-            g.fillEllipse (rx, cy - alertD / 2.0f, alertD, alertD);
+            Theme::Helper::drawStateDot (g,
+                                         { rx, cy - alertD / 2.0f, alertD, alertD },
+                                         Theme::Helper::VisualState::disabled,
+                                         Theme::Colour::inactive);
         }
     }
+}
+
+void MenuBarComponent::mouseMove (const juce::MouseEvent& e)
+{
+    if (const auto* hit = itemAt (e.position))
+        m_hoveredItemId = hit->id;
+    else
+        m_hoveredItemId.clear();
+
+    repaint();
+}
+
+void MenuBarComponent::mouseExit (const juce::MouseEvent&)
+{
+    if (m_hoveredItemId.isNotEmpty())
+    {
+        m_hoveredItemId.clear();
+        repaint();
+    }
+}
+
+void MenuBarComponent::mouseDown (const juce::MouseEvent& e)
+{
+    if (m_levelRect.contains (e.position))
+    {
+        m_dragTarget = DragTarget::level;
+        setLevel ((e.position.x - m_levelRect.getX()) / juce::jmax (1.0f, m_levelRect.getWidth()));
+        if (onLevelChanged)
+            onLevelChanged (m_level);
+        return;
+    }
+
+    if (m_panRect.contains (e.position))
+    {
+        m_dragTarget = DragTarget::pan;
+        setPan (((e.position.x - m_panRect.getX()) / juce::jmax (1.0f, m_panRect.getWidth())) * 2.0f - 1.0f);
+        if (onPanChanged)
+            onPanChanged (m_pan);
+        return;
+    }
+
+    if (auto* hit = itemAt (e.position); hit != nullptr && hit->interactive)
+    {
+        if (onMenuClicked)
+            onMenuClicked (hit->id, hit->bounds.getSmallestIntegerContainer().translated (getX(), getY()));
+    }
+}
+
+void MenuBarComponent::mouseDrag (const juce::MouseEvent& e)
+{
+    if (m_dragTarget == DragTarget::level)
+    {
+        setLevel ((e.position.x - m_levelRect.getX()) / juce::jmax (1.0f, m_levelRect.getWidth()));
+        if (onLevelChanged)
+            onLevelChanged (m_level);
+        return;
+    }
+
+    if (m_dragTarget == DragTarget::pan)
+    {
+        setPan (((e.position.x - m_panRect.getX()) / juce::jmax (1.0f, m_panRect.getWidth())) * 2.0f - 1.0f);
+        if (onPanChanged)
+            onPanChanged (m_pan);
+    }
+}
+
+void MenuBarComponent::mouseUp (const juce::MouseEvent&)
+{
+    if (m_dragTarget != DragTarget::none)
+    {
+        m_dragTarget = DragTarget::none;
+        repaint();
+    }
+}
+
+juce::Rectangle<int> MenuBarComponent::getAnchorBoundsForItem (const juce::String& itemId) const noexcept
+{
+    for (const auto& item : m_items)
+        if (item.id == itemId)
+            return item.bounds.getSmallestIntegerContainer().translated (getX(), getY());
+
+    return getBounds().removeFromRight (88).reduced (4, 2);
+}
+
+void MenuBarComponent::rebuildItemLayout()
+{
+    const auto labelFont = Theme::Font::label();
+    float lx = Theme::Space::lg;
+    const auto h = static_cast<float> (getHeight());
+
+    for (auto& item : m_items)
+    {
+        const float itemW = juce::GlyphArrangement::getStringWidth (labelFont, item.label);
+        item.bounds = { lx, 0.0f, itemW, h };
+        lx += itemW + Theme::Space::lg;
+    }
+}
+
+MenuBarComponent::MenuItem* MenuBarComponent::itemAt (juce::Point<float> pos) noexcept
+{
+    for (auto& item : m_items)
+        if (item.bounds.contains (pos))
+            return &item;
+    return nullptr;
+}
+
+const MenuBarComponent::MenuItem* MenuBarComponent::itemAt (juce::Point<float> pos) const noexcept
+{
+    for (const auto& item : m_items)
+        if (item.bounds.contains (pos))
+            return &item;
+    return nullptr;
 }

@@ -1,5 +1,10 @@
 #include "SystemFeedCylinder.h"
 
+juce::Colour SystemFeedCylinder::tapeInk() noexcept
+{
+    return Theme::Colour::inkDark.interpolatedWith (ThemeManager::get().theme().tapeBase, 0.16f);
+}
+
 //==============================================================================
 SystemFeedCylinder::SystemFeedCylinder()
 {
@@ -90,9 +95,10 @@ void SystemFeedCylinder::paint (juce::Graphics& g)
 {
     const int w = getWidth();
     const int h = getHeight();
+    const auto& theme = ThemeManager::get().theme();
 
     // Housing background for the whole strip
-    g.setColour (TapeColors::housingEdge);
+    g.setColour (theme.housingEdge);
     g.fillRect (0, 0, w, h);
 
     // Left label tab
@@ -109,16 +115,16 @@ void SystemFeedCylinder::paint (juce::Graphics& g)
 
         // Cylindrical diffuse base — cos(θ) model matching CylinderBand
         juce::ColourGradient base (
-            TapeColors::tapeBase.darker  (0.58f), 0.0f, 0.0f,
-            TapeColors::tapeBase.darker  (0.58f), fw,   0.0f,
+            theme.tapeBase.darker  (0.58f), 0.0f, 0.0f,
+            theme.tapeBase.darker  (0.58f), fw,   0.0f,
             false);
-        base.addColour (0.07, TapeColors::tapeBase.darker  (0.42f));
-        base.addColour (0.17, TapeColors::tapeBase.darker  (0.18f));
-        base.addColour (0.40, TapeColors::tapeBase.brighter (0.05f));
-        base.addColour (0.50, TapeColors::tapeBase.brighter (0.24f));
-        base.addColour (0.60, TapeColors::tapeBase.brighter (0.05f));
-        base.addColour (0.83, TapeColors::tapeBase.darker  (0.18f));
-        base.addColour (0.93, TapeColors::tapeBase.darker  (0.42f));
+        base.addColour (0.07, theme.tapeBase.darker  (0.42f));
+        base.addColour (0.17, theme.tapeBase.darker  (0.18f));
+        base.addColour (0.40, theme.tapeBase.brighter (0.05f));
+        base.addColour (0.50, theme.tapeBase.brighter (0.24f));
+        base.addColour (0.60, theme.tapeBase.brighter (0.05f));
+        base.addColour (0.83, theme.tapeBase.darker  (0.18f));
+        base.addColour (0.93, theme.tapeBase.darker  (0.42f));
         g.setGradientFill (base);
         g.fillRect (0, 0, tapeW, h);
 
@@ -246,7 +252,7 @@ void SystemFeedCylinder::paintSpecularHighlight (juce::Graphics& g, float center
 //==============================================================================
 void SystemFeedCylinder::paintRimsAndFades (juce::Graphics& g, int tapeW, int tapeH) const
 {
-    const juce::Colour edge = TapeColors::housingEdge;
+    const juce::Colour edge = ThemeManager::get().theme().housingEdge;
 
     // === RIM BEVEL — left (inner highlight suggests housing depth) ===
     g.setColour (juce::Colour (0xFF040302));   // outer very dark

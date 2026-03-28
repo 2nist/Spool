@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../../Theme.h"
-#include "../TapeColors.h"
 #include "../../instruments/reel/ReelProcessor.h"
 
 //==============================================================================

@@ -37,9 +37,11 @@ public:
     void themeChanged() override;
 
 private:
+    struct TabPage;
+
     //==========================================================================
     // Tab identifiers
-    enum Tab { kSurface, kInk, kAccent, kZones, kSignal, kType, kSpace, kTape, kTabCount };
+    enum Tab { kSurface, kInk, kAccent, kZones, kSignal, kType, kSpace, kUi, kPreview, kTape, kTabCount };
     static const char* tabName (Tab t);
 
     void buildAllTabs();
@@ -50,7 +52,10 @@ private:
     void buildSignalTab   (juce::Component& container);
     void buildTypeTab     (juce::Component& container);
     void buildSpaceTab    (juce::Component& container);
+    void buildUiTab       (juce::Component& container);
+    void buildPreviewTab  (juce::Component& container);
     void buildTapeTab     (juce::Component& container);
+    void relayoutPage     (TabPage& page);
 
     void switchTab (int newTab);
     void refreshAllRows();
@@ -78,6 +83,8 @@ private:
         juce::Component                 container;
         juce::OwnedArray<ColourRow>     colourRows;
         juce::OwnedArray<FloatRow>      floatRows;
+        std::unique_ptr<juce::Component> customContent;
+        int contentHeight { 0 };
     };
     std::array<std::unique_ptr<TabPage>, kTabCount> m_pages;
 

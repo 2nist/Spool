@@ -130,6 +130,19 @@ struct SlotPattern
         return "ABS";
     }
 
+    static const char* fullLabel (NoteMode mode) noexcept
+    {
+        switch (mode)
+        {
+            case NoteMode::absolute:  return "Absolute";
+            case NoteMode::degree:    return "Scale Degree";
+            case NoteMode::chordTone: return "Chord Tone";
+            case NoteMode::interval:  return "Interval";
+        }
+
+        return "Absolute";
+    }
+
     static const char* shortLabel (StepRole role) noexcept
     {
         switch (role)
@@ -144,6 +157,20 @@ struct SlotPattern
         return "LEAD";
     }
 
+    static const char* fullLabel (StepRole role) noexcept
+    {
+        switch (role)
+        {
+            case StepRole::bass:       return "Bass";
+            case StepRole::chord:      return "Chord";
+            case StepRole::lead:       return "Lead";
+            case StepRole::fill:       return "Fill";
+            case StepRole::transition: return "Transition";
+        }
+
+        return "Lead";
+    }
+
     static const char* shortLabel (HarmonicSource source) noexcept
     {
         switch (source)
@@ -154,6 +181,18 @@ struct SlotPattern
         }
 
         return "KEY";
+    }
+
+    static const char* fullLabel (HarmonicSource source) noexcept
+    {
+        switch (source)
+        {
+            case HarmonicSource::key:       return "Song Key";
+            case HarmonicSource::chord:     return "Current Chord";
+            case HarmonicSource::nextChord: return "Next Chord";
+        }
+
+        return "Song Key";
     }
 
     const Step* getStep (int index) const noexcept

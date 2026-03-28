@@ -40,6 +40,11 @@ ZoneCComponent::ZoneCComponent()
         moveNode (fromIndex, toIndex);
     };
 
+    m_chainDisplay.onNodeFocused = [this] (int nodeIndex)
+    {
+        setFocusedNode (nodeIndex);
+    };
+
     // Show slot 0 chain by default so nodes are visible on launch
     applyDefaultChain (0);
     m_currentSlotIndex = 0;
@@ -84,6 +89,17 @@ int ZoneCComponent::currentWidth() const
     return m_isCollapsed ? kCollapsedW : m_expandedWidth;
 }
 
+void ZoneCComponent::setMacroStripVisible (bool shouldShow)
+{
+    if (m_showMacroStrip == shouldShow)
+        return;
+
+    m_showMacroStrip = shouldShow;
+    m_macroStrip.setVisible (shouldShow);
+    resized();
+    repaint();
+}
+
 //==============================================================================
 void ZoneCComponent::paint (juce::Graphics& g)
 {
@@ -104,7 +120,6 @@ void ZoneCComponent::paint (juce::Graphics& g)
     if (m_isPinned)
         paintPinBanner (g);
 
-    paintTabs (g);
 }
 
 void ZoneCComponent::resized()
@@ -120,7 +135,12 @@ void ZoneCComponent::resized()
     const int tabsH   = tabsHeight();
 
     // Macro strip at the bottom
-    m_macroStrip.setBounds (0, h - kMacroH, w, kMacroH);
+    const int macroH = macroStripHeight();
+    m_macroStrip.setVisible (macroH > 0);
+    if (macroH > 0)
+        m_macroStrip.setBounds (0, h - macroH, w, macroH);
+    else
+        m_macroStrip.setBounds (0, h, 0, 0);
 
     // Viewport fills the remaining area between tabs and macro strip
     const auto vr = chainRect();
@@ -136,7 +156,7 @@ void ZoneCComponent::resized()
                                + m_chainDisplay.addButtonY()
                                - m_chainViewport.getViewPosition().getY();
         const int overlayY   = juce::jmin (addBtnAbsY,
-                                           h - EffectPickerOverlay::kHeight - kMacroH);
+                                           h - EffectPickerOverlay::kHeight - macroH);
         m_picker->setBounds (0, overlayY, w, EffectPickerOverlay::kHeight);
     }
 
@@ -172,19 +192,6 @@ void ZoneCComponent::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Tab clicks
-    if (!m_isCollapsed)
-    {
-        for (int i = 0; i < 3; ++i)
-        {
-            if (m_tabRects[i].contains (pos))
-            {
-                m_activeTab = static_cast<Tab> (i);
-                repaint();
-                return;
-            }
-        }
-    }
 }
 
 //==============================================================================
@@ -209,7 +216,7 @@ juce::Rectangle<int> ZoneCComponent::chainRect() const
                        + kHeaderH
                        + pinBannerHeight()
                        + kTabsH;
-    const int bottom = h - kMacroH;
+    const int bottom = h - macroStripHeight();
     return { 0, top, w, juce::jmax (0, bottom - top) };
 }
 
@@ -255,6 +262,7 @@ void ZoneCComponent::applyDefaultChain (int slotIndex)
 void ZoneCComponent::refreshDisplay()
 {
     m_chainDisplay.refresh (currentChainPtr());
+    m_chainDisplay.setFocusedNode (m_focusedNodeIndex);
 }
 
 void ZoneCComponent::setPinned (bool pin)
@@ -267,6 +275,21 @@ void ZoneCComponent::setPinned (bool pin)
 
     refreshDisplay();
     resized();
+    repaint();
+}
+
+void ZoneCComponent::setFocusedNode (int nodeIndex)
+{
+    auto* chain = currentChainPtr();
+    if (chain == nullptr || chain->nodes.isEmpty())
+    {
+        m_focusedNodeIndex = 0;
+        repaint();
+        return;
+    }
+
+    m_focusedNodeIndex = juce::jlimit (0, chain->nodes.size() - 1, nodeIndex);
+    m_chainDisplay.setFocusedNode (m_focusedNodeIndex);
     repaint();
 }
 
@@ -315,6 +338,7 @@ void ZoneCComponent::addEffect (const juce::String& effectId)
         applyDefaultChain (idx);
 
     m_chains[idx].nodes.add (EffectRegistry::makeDefault (effectId));
+    m_focusedNodeIndex = juce::jmax (0, m_chains[idx].nodes.size() - 1);
     refreshDisplay();
     resized();
     if (onChainRebuilt) onChainRebuilt (idx, m_chains[idx]);
@@ -330,6 +354,7 @@ void ZoneCComponent::removeNode (int nodeIndex)
     if (nodeIndex >= 0 && nodeIndex < nodes.size())
     {
         nodes.remove (nodeIndex);
+        m_focusedNodeIndex = juce::jlimit (0, juce::jmax (0, nodes.size() - 1), m_focusedNodeIndex);
         refreshDisplay();
         resized();
         if (onChainRebuilt) onChainRebuilt (idx, m_chains[idx]);
@@ -448,13 +473,29 @@ void ZoneCComponent::paintHeader (juce::Graphics& g)
     // Module name centred
     if (m_currentSlotIndex >= 0 || m_isPinned)
     {
+        auto titleArea = headerR.withTrimmedLeft (56).withTrimmedRight (40);
         g.setFont (Theme::Font::label());
         g.setColour (Theme::Colour::inkMuted);
         const juce::String label = m_moduleTypeName.isNotEmpty()
                                    ? m_moduleTypeName : "SLOT " + juce::String (m_currentSlotIndex + 1);
         g.drawText (label,
-                    headerR.withTrimmedLeft (56).withTrimmedRight (40),
+                    titleArea.removeFromTop (14),
                     juce::Justification::centred, false);
+
+        if (auto* chain = currentChainPtr(); chain != nullptr && ! chain->nodes.isEmpty())
+        {
+            const int currentIndex = juce::jlimit (0, chain->nodes.size() - 1, m_focusedNodeIndex);
+            const auto& current = chain->nodes.getReference (currentIndex);
+            const juce::String previous = currentIndex > 0 ? chain->nodes[currentIndex - 1].effectType.toUpperCase() : "INPUT";
+            const juce::String next = currentIndex + 1 < chain->nodes.size() ? chain->nodes[currentIndex + 1].effectType.toUpperCase() : "ADD";
+            g.setFont (Theme::Font::micro());
+            g.setColour (Theme::Colour::inkGhost);
+            g.drawText ("IN " + previous + "  |  CUR " + current.effectType.toUpperCase()
+                            + " " + current.effectDomain.toUpperCase() + "  |  OUT " + next,
+                        titleArea,
+                        juce::Justification::centred,
+                        true);
+        }
     }
 
     // Pin button (16px, right area) — computed directly to avoid mutating const headerR
@@ -500,35 +541,3 @@ void ZoneCComponent::paintPinBanner (juce::Graphics& g)
     g.drawText ("UNPIN", m_unpinLinkRect, juce::Justification::centred, false);
 }
 
-void ZoneCComponent::paintTabs (juce::Graphics& g)
-{
-    const int w = getWidth();
-    const int stripeH = static_cast<int> (Theme::Space::zoneStripeHeight);
-    const int tabTop  = stripeH + kHeaderH + pinBannerHeight();
-    const juce::Rectangle<int> tabsR { 0, tabTop, w, kTabsH };
-
-    const int tabW = w / 3;
-    const juce::String tabLabels[3] = { "CHAIN", "ROUTING", "SETTINGS" };
-
-    for (int i = 0; i < 3; ++i)
-    {
-        m_tabRects[i] = { i * tabW, tabTop, tabW, kTabsH };
-        const bool active = (static_cast<int> (m_activeTab) == i);
-
-        if (active)
-        {
-            g.setColour (Theme::Zone::c.withAlpha (0.08f));
-            g.fillRect (m_tabRects[i]);
-
-            // Bottom indicator
-            g.setColour (Theme::Zone::c);
-            g.fillRect (m_tabRects[i].removeFromBottom (2));
-        }
-
-        g.setFont (Theme::Font::micro());
-        g.setColour (active ? Theme::Zone::c : Theme::Colour::inkGhost);
-        g.drawText (tabLabels[i], m_tabRects[i], juce::Justification::centred, false);
-    }
-
-    juce::ignoreUnused (tabsR);
-}

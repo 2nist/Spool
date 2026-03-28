@@ -52,10 +52,9 @@ void AssignDialog::paint (juce::Graphics& g)
     const auto card = getLocalBounds()
                           .reduced (static_cast<int> (Theme::Space::xl))
                           .toFloat();
-    g.setColour (Theme::Colour::surface3);
-    g.fillRoundedRectangle (card, Theme::Radius::md);
-    g.setColour (Theme::Colour::surfaceEdge);
-    g.drawRoundedRectangle (card, Theme::Radius::md, Theme::Stroke::normal);
+    Theme::Helper::drawPanel (g, card.toNearestInt(), Theme::Colour::surface3, Theme::Colour::surfaceEdge,
+                              Theme::Radius::md, Theme::Stroke::normal);
+    Theme::Helper::drawFocusRing (g, card, Theme::Zone::a, Theme::Radius::md);
 
     // Title
     g.setFont   (Theme::Font::heading());

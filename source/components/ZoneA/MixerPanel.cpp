@@ -141,17 +141,8 @@ void MixerPanel::paint (juce::Graphics& g)
 
 void MixerPanel::paintHeader (juce::Graphics& g) const
 {
-    const int w = getWidth();
-    g.setColour (Theme::Colour::surface1);
-    g.fillRect  (0, 0, w, kHeaderH);
-    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.5f));
-    g.fillRect  (0, kHeaderH - 1, w, 1);
-
-    g.setFont   (Theme::Font::micro());
-    g.setColour (Theme::Zone::b);
-    g.drawText  ("MIXER",
-                 juce::Rectangle<int> (0, 0, w - kPad, kHeaderH),
-                 juce::Justification::centredRight, false);
+    ZoneAStyle::drawHeader (g, { 0, 0, getWidth(), kHeaderH }, "MIXER",
+                            ZoneAStyle::accentForTabId ("mixer"));
 }
 
 void MixerPanel::paintStrip (juce::Graphics& g, int ri, const SlotInfo& slot) const
@@ -162,12 +153,7 @@ void MixerPanel::paintStrip (juce::Graphics& g, int ri, const SlotInfo& slot) co
     const float alpha = slot.muted ? Theme::Alpha::disabled : 1.0f;
 
     // Background
-    g.setColour (hov ? Theme::Colour::surface3 : Theme::Colour::surface2);
-    g.fillRect  (0, y, w, kStripH);
-
-    // Bottom divider
-    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.35f));
-    g.fillRect  (0, y + kStripH - 1, w, 1);
+    ZoneAStyle::drawRowBackground (g, { 0, y, w, kStripH }, hov);
 
     // Left group-colour stripe (full height)
     g.setColour (slot.groupColor.withAlpha (slot.muted ? 0.3f : 0.85f));
@@ -200,7 +186,7 @@ void MixerPanel::paintStrip (juce::Graphics& g, int ri, const SlotInfo& slot) co
         return false;
     }();
     const bool dimmedBySolo = anySolo && !slot.soloed;
-    g.setColour (slot.soloed ? juce::Colour (0xFF4B9EDB)
+    g.setColour (slot.soloed ? ZoneAStyle::accentForTabId ("mixer")
                              : Theme::Colour::surface3);
     g.fillRoundedRectangle (soloR.toFloat(), 2.0f);
     g.setFont   (Theme::Font::micro());

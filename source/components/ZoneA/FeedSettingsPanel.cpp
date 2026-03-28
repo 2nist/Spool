@@ -29,7 +29,8 @@ juce::Rectangle<int> FeedSettingsPanel::itemRect (int index) const noexcept
 
 void FeedSettingsPanel::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::Colour::surface1);
+    Theme::Helper::drawPanel (g, getLocalBounds(), Theme::Colour::surface1, Theme::Colour::transparent,
+                              Theme::Radius::none, Theme::Stroke::subtle);
 
     // Header
     g.setFont (Theme::Font::heading());
@@ -52,9 +53,14 @@ void FeedSettingsPanel::paint (juce::Graphics& g)
         const int cbSz = 12;
         const auto cb  = juce::Rectangle<int> (r.getX(), r.getCentreY() - cbSz / 2, cbSz, cbSz);
 
-        g.setColour (Theme::Colour::surface3);
+        g.setColour (Theme::Helper::fillForState (Theme::Colour::surface3,
+                                                  Theme::Zone::a,
+                                                  item.enabled ? Theme::Helper::VisualState::selected
+                                                               : Theme::Helper::VisualState::idle));
         g.fillRoundedRectangle (cb.toFloat(), 2.0f);
-        g.setColour (Theme::Colour::surfaceEdge);
+        g.setColour (Theme::Helper::emphasisForState (Theme::Zone::a,
+                                                      item.enabled ? Theme::Helper::VisualState::selected
+                                                                   : Theme::Helper::VisualState::disabled).withAlpha (0.55f));
         g.drawRoundedRectangle (cb.toFloat(), 2.0f, 0.5f);
 
         if (item.enabled)
@@ -65,7 +71,10 @@ void FeedSettingsPanel::paint (juce::Graphics& g)
 
         // Label
         g.setFont (Theme::Font::micro());
-        g.setColour (item.enabled ? Theme::Colour::inkMid : Theme::Colour::inkGhost);
+        g.setColour (Theme::Helper::textForState (item.enabled ? Theme::Helper::VisualState::selected
+                                                               : Theme::Helper::VisualState::disabled,
+                                                  item.enabled ? juce::Colour (Theme::Colour::inkMid)
+                                                               : juce::Colour (Theme::Colour::inkGhost)));
         g.drawText (item.name, r.withTrimmedLeft (cbSz + 6), juce::Justification::centredLeft, false);
     }
 

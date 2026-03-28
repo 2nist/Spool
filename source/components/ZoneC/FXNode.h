@@ -37,12 +37,14 @@ public:
     void setData (int nodeIndex, const EffectNode& data);
     void setDragging (bool isDragging);
     void showRemoveConfirmation (bool show);
+    void setFocused (bool isFocused);
 
     // Callbacks
     std::function<void(int nodeIndex)>                             onBypassToggled;
     std::function<void(int nodeIndex)>                             onRemoveClicked;
     std::function<void(int nodeIndex, const juce::MouseEvent&)>    onDragStarted;
     std::function<void(int nodeIndex, int paramIdx, float value)>  onParamChanged;
+    std::function<void(int nodeIndex)>                             onFocused;
 
     void paint   (juce::Graphics&) override;
     void resized () override;
@@ -57,6 +59,7 @@ private:
     int        m_nodeIndex  { 0 };
     EffectNode m_data;
     bool       m_isDragging { false };
+    bool       m_isFocused { false };
     bool       m_showConfirm { false };
     bool       m_hoverRemove { false };
 

@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "instruments/drum/DrumModuleState.h"
+#include "theme/ThemeEditorPanel.h"
 
 //==============================================================================
 // Helpers
@@ -15,8 +16,135 @@ TransportStrip::StructureFollowState computeFollowState (bool followEnabled, boo
 
 juce::String chordText (const Chord& chord)
 {
-    return chord.root.isNotEmpty() ? chord.root + chord.type : juce::String();
+    return abbreviatedChordLabel (chord);
 }
+
+constexpr int kFileMenuNew = 1;
+constexpr int kFileMenuOpen = 2;
+constexpr int kFileMenuSave = 3;
+constexpr int kFileMenuSaveAs = 4;
+constexpr int kFileMenuImportLyrics = 5;
+constexpr int kEditMenuUndo = 11;
+constexpr int kEditMenuRedo = 12;
+constexpr int kViewMenuSystemFeed = 21;
+constexpr int kViewMenuSongHeader = 22;
+constexpr int kViewMenuHistoryTape = 23;
+constexpr int kViewMenuLooper = 24;
+constexpr int kViewMenuZoneCMacros = 25;
+constexpr int kViewMenuCompactHeader = 26;
+constexpr int kSettingsMenuPreferences = 31;
+constexpr int kSettingsMenuThemeDesigner = 32;
+constexpr int kSettingsMenuImportTheme = 33;
+constexpr int kSettingsMenuExportTheme = 34;
+
+std::vector<juce::String> parseLyricImportLines (const juce::String& text)
+{
+    std::vector<juce::String> lines;
+    auto sourceLines = juce::StringArray::fromLines (text);
+    for (const auto& rawLine : sourceLines)
+    {
+        const auto trimmed = rawLine.trim();
+        if (trimmed.isNotEmpty())
+            lines.push_back (trimmed);
+    }
+
+    if (lines.empty())
+    {
+        const auto trimmed = text.trim();
+        if (trimmed.isNotEmpty())
+            lines.push_back (trimmed);
+    }
+
+    return lines;
+}
+
+class ThemeEditorModalContent final : public juce::Component
+{
+public:
+    ThemeEditorModalContent()
+        : m_snapshot (ThemeManager::get().theme())
+    {
+        addAndMakeVisible (m_editor);
+
+        styleButton (m_doneButton, Theme::Zone::a);
+        m_doneButton.onClick = [this]
+        {
+            m_cancelled = false;
+            if (const auto presetName = ThemeManager::get().theme().presetName.trim();
+                presetName.isNotEmpty())
+            {
+                AppPreferences::get().setThemePresetName (presetName);
+            }
+            closeSelf();
+        };
+        addAndMakeVisible (m_doneButton);
+
+        styleButton (m_cancelButton, Theme::Colour::accentWarm);
+        m_cancelButton.onClick = [this]
+        {
+            restoreSnapshot();
+            closeSelf();
+        };
+        addAndMakeVisible (m_cancelButton);
+    }
+
+    ~ThemeEditorModalContent() override
+    {
+        if (m_cancelled)
+            restoreSnapshot();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (Theme::Colour::surface1);
+        g.setColour (Theme::Colour::surfaceEdge);
+        g.drawRect (getLocalBounds(), 1);
+        g.drawHorizontalLine (getHeight() - kFooterH, 0.0f, (float) getWidth());
+    }
+
+    void resized() override
+    {
+        auto bounds = getLocalBounds();
+        auto footer = bounds.removeFromBottom (kFooterH).reduced (8, 6);
+        m_doneButton.setBounds (footer.removeFromRight (72));
+        footer.removeFromRight (6);
+        m_cancelButton.setBounds (footer.removeFromRight (72));
+        m_editor.setBounds (bounds);
+    }
+
+private:
+    static constexpr int kFooterH = 34;
+
+    ThemeEditorPanel m_editor;
+    juce::TextButton m_doneButton { "DONE" };
+    juce::TextButton m_cancelButton { "CANCEL" };
+    ThemeData m_snapshot;
+    bool m_cancelled { true };
+
+    static void styleButton (juce::TextButton& button, juce::Colour accent)
+    {
+        button.setColour (juce::TextButton::buttonColourId, ThemeManager::get().theme().controlBg);
+        button.setColour (juce::TextButton::buttonOnColourId, accent.withAlpha (0.28f));
+        button.setColour (juce::TextButton::textColourOffId, ThemeManager::get().theme().controlTextOn);
+        button.setColour (juce::TextButton::textColourOnId, ThemeManager::get().theme().controlTextOn);
+    }
+
+    void restoreSnapshot()
+    {
+        ThemeManager::get().applyTheme (m_snapshot);
+        if (m_snapshot.presetName.isNotEmpty())
+            AppPreferences::get().setThemePresetName (m_snapshot.presetName);
+    }
+
+    void closeSelf()
+    {
+        if (auto* dialog = findParentComponentOfClass<juce::DialogWindow>())
+        {
+            dialog->exitModalState (0);
+            dialog->setVisible (false);
+        }
+    }
+};
 }
 
 //==============================================================================
@@ -123,6 +251,10 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p), zoneA (p)
 {
     juce::ignoreUnused (processorRef);
+    setWantsKeyboardFocus (true);
+
+    ThemeManager::get().applyTheme (ThemePresets::presetByName (AppPreferences::get().getThemePresetName()));
+
     addAndMakeVisible (menuBar);
     addAndMakeVisible (songHeader);
     addAndMakeVisible (systemFeed);
@@ -134,17 +266,21 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     addAndMakeVisible (zoneC);
     addAndMakeVisible (zoneD);
     addAndMakeVisible (historyStrip);
+    zoneB.setLooperVisible (AppPreferences::get().getShowLooper());
+    zoneC.setMacroStripVisible (AppPreferences::get().getShowZoneCMacros());
 
-    // Wire Zone A's output strip to processor master controls
-    zoneA.setOnLevelChanged ([this] (float v) { processorRef.setMasterGain (v); });
-    zoneA.setOnPanChanged   ([this] (float p) { processorRef.setMasterPan  (p); });
+    // Wire compact shell master controls to processor master output
+    menuBar.onLevelChanged = [this] (float v) { processorRef.setMasterGain (v); };
+    menuBar.onPanChanged   = [this] (float p) { processorRef.setMasterPan  (p); };
+    menuBar.setLevel (processorRef.getMasterGain());
+    menuBar.setPan   (processorRef.getMasterPan());
 
     // Wire routing changes from Zone A to the processor, and push initial state
-    zoneA.setOnRoutingChanged ([this] (const std::array<uint8_t,8>& m)
+    zoneA.setOnRoutingChanged ([this] (const RoutingState& state)
     {
-        processorRef.setRoutingMatrix (m);
+        processorRef.setRoutingState (state);
     });
-    zoneA.setRoutingMatrix (processorRef.getRoutingMatrix());
+    zoneA.setRoutingState (processorRef.getRoutingState());
 
     // Wire Zone B module list changes to patch bay, instrument browser, and mixer
     zoneB.onModuleListChanged = [this] (const juce::StringArray& names)
@@ -179,19 +315,28 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         resized();
     };
 
+    menuBar.onMenuClicked = [this] (const juce::String& menuId, juce::Rectangle<int> anchorBounds)
+    {
+        showMenuPopup (menuId, anchorBounds);
+    };
+
     // Wire BPM drag in song header to the processor
     songHeader.onBpmChanged = [this] (float bpm)
     {
-        auto& appState = processorRef.getAppState();
-        appState.transport.bpm = bpm;
-        appState.song.bpm = static_cast<int> (bpm);
-        appState.structure.songTempo = static_cast<int> (bpm);
-        processorRef.getStructureEngine().rebuild();
-        processorRef.syncTransportFromAppState();
+        processorRef.getSongManager().setTempo (juce::roundToInt (bpm));
+        processorRef.syncAuthoredSongToRuntime();
         if (auto* tp = zoneA.getTracksPanel())
             tp->setBpm (bpm);
         if (auto* sp = zoneA.getSongPanel())
             sp->setBpm (bpm);
+    };
+    songHeader.onTitleChanged = [this] (const juce::String& title)
+    {
+        processorRef.getSongManager().setSongTitle (title);
+        processorRef.syncAuthoredSongToRuntime();
+
+        if (auto* song = zoneA.getSongPanel())
+            song->setTitle (processorRef.getSongManager().getSongTitle());
     };
 
     // Wire TracksPanel transport callbacks to processor and Zone D
@@ -220,12 +365,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             tp->onRecord = [this] { zoneD.setRecording (true);  };
             tp->onBpmChanged = [this] (float bpm)
             {
-                auto& appState = processorRef.getAppState();
-                appState.transport.bpm = bpm;
-                appState.song.bpm = static_cast<int> (bpm);
-                appState.structure.songTempo = static_cast<int> (bpm);
-                processorRef.getStructureEngine().rebuild();
-                processorRef.syncTransportFromAppState();
+                processorRef.getSongManager().setTempo (juce::roundToInt (bpm));
+                processorRef.syncAuthoredSongToRuntime();
                 songHeader.setBpm   (bpm);
             };
 
@@ -249,40 +390,43 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     {
         if (auto* sp = zoneA.getSongPanel())
         {
-            sp->setStructureSummary (processorRef.getAppState().structure);
+            sp->setTitle (processorRef.getSongManager().getSongTitle());
+            sp->setStructureSummary (processorRef.getSongManager().getStructureState());
+            sp->onTitleChanged = [this] (const juce::String& title)
+            {
+                processorRef.getSongManager().setSongTitle (title);
+                processorRef.syncAuthoredSongToRuntime();
+                songHeader.setTitle (processorRef.getSongManager().getSongTitle());
+            };
             sp->onBpmChanged = [this] (float bpm)
             {
-                auto& appState = processorRef.getAppState();
-                appState.transport.bpm = bpm;
-                appState.song.bpm = static_cast<int> (bpm);
-                appState.structure.songTempo = static_cast<int> (bpm);
-                processorRef.getStructureEngine().rebuild();
-                processorRef.syncTransportFromAppState();
+                processorRef.getSongManager().setTempo (juce::roundToInt (bpm));
+                processorRef.syncAuthoredSongToRuntime();
                 songHeader.setBpm   (bpm);
                 if (auto* song = zoneA.getSongPanel())
-                    song->setStructureSummary (processorRef.getAppState().structure);
+                    song->setStructureSummary (processorRef.getSongManager().getStructureState());
             };
 
             sp->onKeyChanged = [this] (const juce::String& key)
             {
-                auto& appState = processorRef.getAppState();
-                appState.song.keyRoot = key.trim();
-                appState.structure.songKey = appState.song.keyRoot;
+                processorRef.getSongManager().setKeyRoot (key);
+                processorRef.syncAuthoredSongToRuntime();
                 if (auto* song = zoneA.getSongPanel())
-                    song->setStructureSummary (processorRef.getAppState().structure);
+                    song->setStructureSummary (processorRef.getSongManager().getStructureState());
                 if (auto* structure = zoneA.getStructurePanel())
-                    structure->setIntentKeyMode (appState.song.keyRoot, appState.song.keyScale);
+                    structure->setIntentKeyMode (processorRef.getSongManager().getKeyRoot(),
+                                                 processorRef.getSongManager().getKeyScale());
             };
 
             sp->onScaleChanged = [this] (const juce::String& scale)
             {
-                auto& appState = processorRef.getAppState();
-                appState.song.keyScale = scale.trim();
-                appState.structure.songMode = appState.song.keyScale;
+                processorRef.getSongManager().setKeyScale (scale);
+                processorRef.syncAuthoredSongToRuntime();
                 if (auto* song = zoneA.getSongPanel())
-                    song->setStructureSummary (processorRef.getAppState().structure);
+                    song->setStructureSummary (processorRef.getSongManager().getStructureState());
                 if (auto* structure = zoneA.getStructurePanel())
-                    structure->setIntentKeyMode (appState.song.keyRoot, appState.song.keyScale);
+                    structure->setIntentKeyMode (processorRef.getSongManager().getKeyRoot(),
+                                                 processorRef.getSongManager().getKeyScale());
             };
         }
     };
@@ -305,12 +449,12 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             {
                 for (const auto slot : slots)
                     zoneB.seedPatternForSlot (slot, 16, { 0, 4, 8, 12 });
-                zoneD.seedStructureRails (processorRef.getAppState().structure);
+                zoneD.seedStructureRails (processorRef.getSongManager().getStructureState());
             };
 
             sp->onStructureFollowModeChanged = [this] (bool enabled)
             {
-                const bool hasStructure = structureHasScaffold (processorRef.getAppState().structure);
+                const bool hasStructure = structureHasScaffold (processorRef.getSongManager().getStructureState());
                 zoneD.setStructureFollowState (computeFollowState (enabled, hasStructure));
                 updateSequencerStructureContext (processorRef.getCurrentSongBeat());
                 systemFeed.addMessage (enabled ? "Structure follow enabled" : "Structure follow disabled");
@@ -318,20 +462,21 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
             sp->onStructureApplied = [this]
             {
-                zoneD.setStructureView (&processorRef.getAppState().structure, &processorRef.getStructureEngine());
-                zoneD.seedStructureRails (processorRef.getAppState().structure);
+                const auto& structure = processorRef.getSongManager().getStructureState();
+                zoneD.setStructureView (&structure, &processorRef.getStructureEngine());
+                zoneD.seedStructureRails (structure);
                 zoneD.setStructureBeat (processorRef.getAppState().transport.playheadBeats);
                 zoneD.setStructureFollowState (computeFollowState (processorRef.isStructureFollowForTracksEnabled(),
-                                                                   structureHasScaffold (processorRef.getAppState().structure)));
+                                                                   structureHasScaffold (structure)));
                 if (auto* song = zoneA.getSongPanel())
                 {
-                    song->setKey (processorRef.getAppState().song.keyRoot);
-                    song->setScale (processorRef.getAppState().song.keyScale);
-                    song->setStructureSummary (processorRef.getAppState().structure);
+                    song->setKey (processorRef.getSongManager().getKeyRoot());
+                    song->setScale (processorRef.getSongManager().getKeyScale());
+                    song->setStructureSummary (structure);
                 }
                 updateSequencerStructureContext (processorRef.getCurrentSongBeat());
                 systemFeed.addMessage ("Structure applied: "
-                                       + juce::String (processorRef.getAppState().structure.arrangement.size())
+                                       + juce::String (structure.arrangement.size())
                                        + " block(s)");
             };
         }
@@ -505,6 +650,49 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             // 0 = MIX (maps to -1 in circular buffer), 1+ = slot index (0-based)
             processorRef.getCircularBuffer().setSource (sourceIndex - 1);
         };
+
+        ls.onEditedClipChanged = [this] (const CapturedAudioClip& clip)
+        {
+            m_looperClip = clip;
+            processorRef.setLooperPreviewClip (clip.buffer, clip.sampleRate);
+        };
+
+        ls.onPreviewStateChanged = [this] (bool playing, bool looping)
+        {
+            processorRef.setLooperPreviewState (playing, looping);
+        };
+
+        ls.onEditedClipSendToReel = [this] (const CapturedAudioClip& clip)
+        {
+            const int targetSlot = (m_focusedSlotIndex >= 0) ? m_focusedSlotIndex : 0;
+            loadClipToReelSlot (clip, targetSlot);
+            systemFeed.addMessage ("Looper -> REEL");
+        };
+
+        ls.onEditedClipSendToTimeline = [this] (const CapturedAudioClip& clip)
+        {
+            routeClipToTimeline (clip);
+        };
+
+        ls.onEditedClipDragStarted = [this] (const CapturedAudioClip& clip)
+        {
+            m_dragClip = clip;
+        };
+
+        ls.onStatus = [this] (const juce::String& message)
+        {
+            systemFeed.addMessage (message);
+        };
+
+        ls.onQueryPreviewProgress = [this]()
+        {
+            return processorRef.getLooperPreviewProgress();
+        };
+
+        ls.onQueryPreviewPlaying = [this]()
+        {
+            return processorRef.isLooperPreviewPlaying();
+        };
     }
 
     // Wire drum machine focus → load kit + sync DSP
@@ -561,11 +749,12 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     processorRef.onStepAdvanced = [this] (int step) { onStepAdvanced (step); };
 
     // Wire gear button in Zone D transport strip → TPRT panel
-    zoneD.onSettingsClicked = [this] { openTransportSettings(); };
+    zoneD.onSettingsClicked = [this] { openSettingsPanel(); };
 
     zoneB.addListener (this);
     zoneD.addTransportListener (this);
     ThemeManager::get().addListener (this);
+    AppPreferences::get().addListener (this);
 
     // Re-broadcast the current module list now that all callbacks are wired.
     // ZoneBComponent fires onModuleListChanged during its own construction
@@ -708,21 +897,8 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     zoneA.setActivePanel ("song");
 
     // Read flow: initialize controls from AppState.
-    songHeader.setBpm (static_cast<float> (processorRef.getAppState().transport.bpm));
-    if (auto* song = zoneA.getSongPanel())
-    {
-        song->setKey (processorRef.getAppState().song.keyRoot);
-        song->setScale (processorRef.getAppState().song.keyScale);
-        song->setStructureSummary (processorRef.getAppState().structure);
-    }
-    if (auto* structure = zoneA.getStructurePanel())
-        structure->setIntentKeyMode (processorRef.getAppState().song.keyRoot, processorRef.getAppState().song.keyScale);
-    zoneD.setStructureView (&processorRef.getAppState().structure, &processorRef.getStructureEngine());
-    zoneD.seedStructureRails (processorRef.getAppState().structure);
-    zoneD.setStructureBeat (processorRef.getAppState().transport.playheadBeats);
-    zoneD.setStructureFollowState (computeFollowState (processorRef.isStructureFollowForTracksEnabled(),
-                                                       structureHasScaffold (processorRef.getAppState().structure)));
-    updateSequencerStructureContext (processorRef.getCurrentSongBeat());
+    processorRef.syncAuthoredSongToRuntime();
+    applyAuthoredSongToUi();
 }
 
 PluginEditor::~PluginEditor()
@@ -730,6 +906,7 @@ PluginEditor::~PluginEditor()
     zoneB.removeListener (this);
     zoneD.removeTransportListener (this);
     ThemeManager::get().removeListener (this);
+    AppPreferences::get().removeListener (this);
 }
 
 void PluginEditor::paint (juce::Graphics& g)
@@ -737,18 +914,59 @@ void PluginEditor::paint (juce::Graphics& g)
     g.fillAll (Theme::Colour::surface1);
 }
 
+bool PluginEditor::keyPressed (const juce::KeyPress& key)
+{
+    const bool commandDown = key.getModifiers().isCommandDown() || key.getModifiers().isCtrlDown();
+    if (! commandDown)
+        return false;
+
+    if (key.getTextCharacter() == 'z' || key.getKeyCode() == 'z')
+    {
+        if (key.getModifiers().isShiftDown())
+        {
+            if (processorRef.getUndoManager().canRedo())
+            {
+                processorRef.getUndoManager().redo();
+                refreshFromAuthoredSong();
+                return true;
+            }
+        }
+        else if (processorRef.getUndoManager().canUndo())
+        {
+            processorRef.getUndoManager().undo();
+            refreshFromAuthoredSong();
+            return true;
+        }
+    }
+
+    if ((key.getTextCharacter() == 'y' || key.getKeyCode() == 'y') && processorRef.getUndoManager().canRedo())
+    {
+        processorRef.getUndoManager().redo();
+        refreshFromAuthoredSong();
+        return true;
+    }
+
+    return false;
+}
+
+void PluginEditor::refreshFromAuthoredSong()
+{
+    applyAuthoredSongToUi();
+}
+
 void PluginEditor::resized()
 {
     const int w      = getWidth();
     const int h      = getHeight();
     const int menuH  = m_menuBarHeight;
-    const int hdrH   = m_songHeaderH;
-    const int feedH  = m_sysFeedHeight;
+    const int hdrH   = songHeaderHeight();
+    const int feedH  = systemFeedHeight();
     const int topOff = topOffset();
 
-    const int zoneCW  = zoneC.currentWidth();
-    const int zoneDH  = zoneD.currentHeight();
-    const int zoneH   = h - topOff - zoneDH - m_historyStripHeight;
+    const int zoneCW    = zoneC.currentWidth();
+    const int zoneDH    = zoneD.currentHeight();
+    const int historyH  = historyTapeHeight();
+    const int zoneH     = h - topOff - zoneDH - historyH;
 
     // Tab strip and content panel widths
     const int kTabW      = TabStrip::kWidth;         // 28
@@ -760,12 +978,26 @@ void PluginEditor::resized()
     static constexpr int kResizerH = 6;
 
     // Fixed strips at top
-    menuBar.setBounds    (0, 0,            w, menuH);
-    songHeader.setBounds (0, menuH,        w, hdrH);
-    systemFeed.setBounds (0, menuH + hdrH, w, feedH);
+    menuBar.setBounds (0, 0, w, menuH);
+
+    songHeader.setVisible (hdrH > 0);
+    if (hdrH > 0)
+        songHeader.setBounds (0, menuH, w, hdrH);
+    else
+        songHeader.setBounds (0, menuH, 0, 0);
+
+    systemFeed.setVisible (feedH > 0);
+    if (feedH > 0)
+        systemFeed.setBounds (0, menuH + hdrH, w, feedH);
+    else
+        systemFeed.setBounds (0, menuH + hdrH, 0, 0);
 
     // Vertical resizer between system feed and zones
-    m_resizerSysB.setBounds (0, topOff - kResizerH / 2, w, kResizerH);
+    m_resizerSysB.setVisible (feedH > 0);
+    if (feedH > 0)
+        m_resizerSysB.setBounds (0, topOff - kResizerH / 2, w, kResizerH);
+    else
+        m_resizerSysB.setBounds (0, topOff, 0, 0);
 
     // Tab strip — full height from topOffset to window bottom (alongside Zone D)
     m_tabStrip.setBounds (0, topOff, kTabW, h - topOff);
@@ -781,7 +1013,11 @@ void PluginEditor::resized()
 
     // Audio History Strip — sits between Zone B/C and Zone D, full width
     const int contentBottom = topOff + zoneH;
-    historyStrip.setBounds (0, contentBottom, w, m_historyStripHeight);
+    historyStrip.setVisible (historyH > 0);
+    if (historyH > 0)
+        historyStrip.setBounds (0, contentBottom, w, historyH);
+    else
+        historyStrip.setBounds (0, contentBottom, 0, 0);
 
     // Zone D
     zoneD.setBounds (0, h - zoneDH, w, zoneDH);
@@ -882,7 +1118,7 @@ void PluginEditor::positionChanged (float beat)
     double structureBeat = processorBeat;
     {
         const juce::ScopedReadLock structureRead (processorRef.getStructureLock());
-        const double totalBeats = static_cast<double> (juce::jmax (0, processorRef.getAppState().structure.totalBeats));
+        const double totalBeats = static_cast<double> (juce::jmax (0, processorRef.getSongManager().getStructureState().totalBeats));
         if (totalBeats > 0.0)
             structureBeat = std::fmod (juce::jmax (0.0, processorBeat), totalBeats);
     }
@@ -896,6 +1132,8 @@ void PluginEditor::positionChanged (float beat)
 void PluginEditor::updateSequencerStructureContext (double structureBeat)
 {
     juce::String sectionName, positionLabel, currentChord, nextChord, transitionIntent;
+    const auto keyRoot = processorRef.getSongManager().getKeyRoot();
+    const auto keyScale = processorRef.getSongManager().getKeyScale();
     bool followingStructure = processorRef.isStructureFollowForTracksEnabled();
     bool locallyOverriding = ! followingStructure;
 
@@ -918,16 +1156,17 @@ void PluginEditor::updateSequencerStructureContext (double structureBeat)
                 const int barsPerRepeat = juce::jmax (1, instance->barsPerRepeat);
                 const int perRepeatBeats = juce::jmax (1, beatsPerBar * barsPerRepeat);
                 const double beatInsideSection = juce::jmax (0.0, structureBeat - static_cast<double> (instance->startBeat));
-                const int currentBar = static_cast<int> (std::floor (std::fmod (beatInsideSection, static_cast<double> (perRepeatBeats))
-                                                                     / static_cast<double> (beatsPerBar)));
-                const int nextBar = (currentBar + 1) % barsPerRepeat;
-                const int nextIndex = nextBar % static_cast<int> (instance->section->progression.size());
+                const double beatInRepeat = std::fmod (beatInsideSection, static_cast<double> (perRepeatBeats));
+                const int currentIndex = chordIndexForLoopBeat (*instance->section, beatInRepeat);
+                const int nextIndex = currentIndex >= 0
+                                    ? (currentIndex + 1) % static_cast<int> (instance->section->progression.size())
+                                    : 0;
                 nextChord = chordText (instance->section->progression[(size_t) nextIndex]);
             }
         }
     }
 
-    zoneB.setStructureContext (sectionName, positionLabel, currentChord, nextChord, transitionIntent, followingStructure, locallyOverriding);
+    zoneB.setStructureContext (sectionName, positionLabel, keyRoot, keyScale, currentChord, nextChord, transitionIntent, followingStructure, locallyOverriding);
 }
 
 void PluginEditor::recordStateChanged (bool recording)
@@ -1012,11 +1251,13 @@ CapturedAudioClip PluginEditor::buildGrabClip() const
 
 void PluginEditor::routeClipToLooper (const CapturedAudioClip& clip)
 {
-    // LOOPER destination — clip handed off to the looper workspace.
-    // m_looperClip persists the clip until a loop DSP engine consumes it.
-    // Visual: LooperStrip shows "clip loaded" state for all row-2 buttons.
-    m_looperClip = clip;
-    zoneB.getLooperStrip().setHasGrabbedClip (true);
+    auto& looper = zoneB.getLooperStrip();
+    looper.setHasGrabbedClip (true);
+
+    if (looper.hasEditedClip() && looper.isOverdubEnabled())
+        looper.overdubClip (clip);
+    else
+        looper.loadClip (clip);
 
     juce::String msg = "LOOPER \xc2\xb7 " + juce::String (clip.durationSeconds(), 1)
                        + "s from " + clip.sourceName;
@@ -1125,17 +1366,433 @@ void PluginEditor::replaceDrumStateForSlot (int slotIndex, const DrumMachineData
     applyDrumStateToRuntime (slotIndex);
 }
 
-void PluginEditor::openTransportSettings()
+int PluginEditor::songHeaderHeight() const
 {
-    m_contentPanelOpen = true;
-    m_tabStrip.setActiveTab ("tracks");
-    zoneA.setActivePanel ("transport");
+    const auto& prefs = AppPreferences::get();
+    if (! prefs.getShowSongHeader())
+        return 0;
+    return prefs.getCompactSongHeader() ? m_songHeaderCompactH : m_songHeaderH;
+}
+
+int PluginEditor::systemFeedHeight() const
+{
+    return AppPreferences::get().getShowSystemFeed() ? m_sysFeedHeight : 0;
+}
+
+int PluginEditor::historyTapeHeight() const
+{
+    return AppPreferences::get().getShowHistoryTape() ? m_historyStripHeight : 0;
+}
+
+int PluginEditor::topOffset() const
+{
+    return m_menuBarHeight + songHeaderHeight() + systemFeedHeight();
+}
+
+void PluginEditor::showMenuPopup (const juce::String& menuId, juce::Rectangle<int> anchorBounds)
+{
+    if (menuId == "file")      { showFileMenu (anchorBounds); return; }
+    if (menuId == "edit")      { showEditMenu (anchorBounds); return; }
+    if (menuId == "view")      { showViewMenu (anchorBounds); return; }
+    if (menuId == "settings")  { showSettingsMenu (anchorBounds); return; }
+}
+
+void PluginEditor::showFileMenu (juce::Rectangle<int> anchorBounds)
+{
+    juce::PopupMenu menu;
+    menu.addItem (kFileMenuNew, "New Song");
+    menu.addItem (kFileMenuOpen, "Open Song...");
+    menu.addSeparator();
+    menu.addItem (kFileMenuSave, "Save");
+    menu.addItem (kFileMenuSaveAs, "Save As...");
+    menu.addSeparator();
+    menu.addItem (kFileMenuImportLyrics, "Import Lyrics Text...");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (anchorBounds),
+                        juce::ModalCallbackFunction::create ([this] (int result)
+                        {
+                            if (result == kFileMenuNew) newSong();
+                            else if (result == kFileMenuOpen) openSong();
+                            else if (result == kFileMenuSave) saveSong();
+                            else if (result == kFileMenuSaveAs) saveSongAs();
+                            else if (result == kFileMenuImportLyrics) importLyricsText();
+                        }));
+}
+
+void PluginEditor::showEditMenu (juce::Rectangle<int> anchorBounds)
+{
+    auto& undo = processorRef.getUndoManager();
+    juce::PopupMenu menu;
+    menu.addItem (kEditMenuUndo,
+                  undo.getUndoDescription().isNotEmpty() ? "Undo " + undo.getUndoDescription() : "Undo",
+                  undo.canUndo());
+    menu.addItem (kEditMenuRedo,
+                  undo.getRedoDescription().isNotEmpty() ? "Redo " + undo.getRedoDescription() : "Redo",
+                  undo.canRedo());
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (anchorBounds),
+                        juce::ModalCallbackFunction::create ([this] (int result)
+                        {
+                            if (result == kEditMenuUndo && processorRef.getUndoManager().canUndo())
+                            {
+                                processorRef.getUndoManager().undo();
+                                refreshFromAuthoredSong();
+                            }
+                            else if (result == kEditMenuRedo && processorRef.getUndoManager().canRedo())
+                            {
+                                processorRef.getUndoManager().redo();
+                                refreshFromAuthoredSong();
+                            }
+                        }));
+}
+
+void PluginEditor::showViewMenu (juce::Rectangle<int> anchorBounds)
+{
+    auto& prefs = AppPreferences::get();
+    juce::PopupMenu menu;
+    menu.addItem (kViewMenuSystemFeed, "Show System Feed", true, prefs.getShowSystemFeed());
+    menu.addItem (kViewMenuSongHeader, "Show Song Header", true, prefs.getShowSongHeader());
+    menu.addItem (kViewMenuHistoryTape, "Show History Tape", true, prefs.getShowHistoryTape());
+    menu.addItem (kViewMenuLooper, "Show Looper", true, prefs.getShowLooper());
+    menu.addItem (kViewMenuZoneCMacros, "Show Zone C Macros", true, prefs.getShowZoneCMacros());
+    menu.addItem (kViewMenuCompactHeader, "Compact Song Header", prefs.getShowSongHeader(), prefs.getCompactSongHeader());
+    menu.addSeparator();
+    menu.addItem (kSettingsMenuPreferences, "Open Settings...");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (anchorBounds),
+                        juce::ModalCallbackFunction::create ([this, anchorBounds] (int result)
+                        {
+                            auto& prefs = AppPreferences::get();
+                            if (result == kViewMenuSystemFeed) prefs.setShowSystemFeed (! prefs.getShowSystemFeed());
+                            else if (result == kViewMenuSongHeader) prefs.setShowSongHeader (! prefs.getShowSongHeader());
+                            else if (result == kViewMenuHistoryTape) prefs.setShowHistoryTape (! prefs.getShowHistoryTape());
+                            else if (result == kViewMenuLooper) prefs.setShowLooper (! prefs.getShowLooper());
+                            else if (result == kViewMenuZoneCMacros) prefs.setShowZoneCMacros (! prefs.getShowZoneCMacros());
+                            else if (result == kViewMenuCompactHeader) prefs.setCompactSongHeader (! prefs.getCompactSongHeader());
+                            else if (result == kSettingsMenuPreferences) openSettingsPanel (anchorBounds);
+                        }));
+}
+
+void PluginEditor::showSettingsMenu (juce::Rectangle<int> anchorBounds)
+{
+    juce::PopupMenu menu;
+    menu.addItem (kSettingsMenuPreferences, "Preferences...");
+    menu.addItem (kSettingsMenuThemeDesigner, "Theme Designer...");
+    menu.addSeparator();
+    menu.addItem (kSettingsMenuImportTheme, "Import Theme...");
+    menu.addItem (kSettingsMenuExportTheme, "Export Current Theme...");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (anchorBounds),
+                        juce::ModalCallbackFunction::create ([this, anchorBounds] (int result)
+                        {
+                            if (result == kSettingsMenuPreferences) openSettingsPanel (anchorBounds);
+                            else if (result == kSettingsMenuThemeDesigner) openThemeDesigner (anchorBounds);
+                            else if (result == kSettingsMenuImportTheme) importThemeFile();
+                            else if (result == kSettingsMenuExportTheme) exportThemeFile();
+                        }));
+}
+
+void PluginEditor::newSong()
+{
+    processorRef.getSongManager().resetToDefault();
+    processorRef.getStructureEngine().rebuild();
+    processorRef.syncAuthoredSongToRuntime();
+    m_currentSongFile = {};
+    applyAuthoredSongToUi();
+    systemFeed.addMessage ("New song");
+}
+
+void PluginEditor::openSong()
+{
+    auto chooser = std::make_shared<juce::FileChooser> ("Open Spool Song",
+                                                         m_currentSongFile.existsAsFile() ? m_currentSongFile : juce::File(),
+                                                         "*.spool-song;*.json");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this, chooser] (const juce::FileChooser& fc)
+                          {
+                              const auto file = fc.getResult();
+                              if (file == juce::File())
+                                  return;
+
+                              if (! processorRef.getSongManager().loadFromFile (file))
+                              {
+                                  systemFeed.addMessage ("Open failed: " + file.getFileName());
+                                  return;
+                              }
+
+                              processorRef.getStructureEngine().rebuild();
+                              processorRef.syncAuthoredSongToRuntime();
+                              m_currentSongFile = file;
+                              applyAuthoredSongToUi();
+                              systemFeed.addMessage ("Opened song: " + file.getFileName());
+                          });
+}
+
+void PluginEditor::saveSong()
+{
+    if (! m_currentSongFile.existsAsFile())
+    {
+        saveSongAs();
+        return;
+    }
+
+    if (processorRef.getSongManager().saveToFile (m_currentSongFile))
+        systemFeed.addMessage ("Saved song: " + m_currentSongFile.getFileName());
+    else
+        systemFeed.addMessage ("Save failed: " + m_currentSongFile.getFileName());
+}
+
+void PluginEditor::saveSongAs()
+{
+    auto chooser = std::make_shared<juce::FileChooser> ("Save Spool Song",
+                                                         m_currentSongFile.existsAsFile() ? m_currentSongFile
+                                                                                          : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                                                                                                .getChildFile ("Untitled.spool-song"),
+                                                         "*.spool-song");
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode
+                          | juce::FileBrowserComponent::canSelectFiles
+                          | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [this, chooser] (const juce::FileChooser& fc)
+                          {
+                              auto file = fc.getResult();
+                              if (file == juce::File())
+                                  return;
+
+                              if (! file.hasFileExtension ("spool-song"))
+                                  file = file.withFileExtension ("spool-song");
+
+                              if (processorRef.getSongManager().saveToFile (file))
+                              {
+                                  m_currentSongFile = file;
+                                  systemFeed.addMessage ("Saved song: " + file.getFileName());
+                              }
+                              else
+                              {
+                                  systemFeed.addMessage ("Save failed: " + file.getFileName());
+                              }
+                          });
+}
+
+void PluginEditor::importLyricsText()
+{
+    auto chooser = std::make_shared<juce::FileChooser> ("Import Lyrics Text",
+                                                         juce::File(),
+                                                         "*.txt;*.md");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this, chooser] (const juce::FileChooser& fc)
+                          {
+                              const auto file = fc.getResult();
+                              if (file == juce::File())
+                                  return;
+
+                              const auto importedLines = parseLyricImportLines (file.loadFileAsString());
+                              if (importedLines.empty())
+                              {
+                                  systemFeed.addMessage ("No lyric text found: " + file.getFileName());
+                                  return;
+                              }
+
+                              auto& lyrics = processorRef.getSongManager().getLyricsStateForEdit();
+                              for (const auto& line : importedLines)
+                              {
+                                  LyricItem item;
+                                  item.id = lyrics.nextId++;
+                                  item.text = line;
+                                  lyrics.items.push_back (item);
+                              }
+
+                              processorRef.getSongManager().commitAuthoredState();
+                              processorRef.syncAuthoredSongToRuntime();
+                              applyAuthoredSongToUi();
+                              m_tabStrip.setActiveTab ("lyrics");
+                              zoneA.setActivePanel ("lyrics");
+                              m_contentPanelOpen = true;
+                              resized();
+                              systemFeed.addMessage ("Imported lyrics: " + juce::String (static_cast<int> (importedLines.size())) + " line(s)");
+                          });
+}
+
+void PluginEditor::importThemeFile()
+{
+    auto chooser = std::make_shared<juce::FileChooser> ("Import Theme",
+                                                         ThemeManager::get().getUserThemeDir(),
+                                                         "*.spool-theme;*.xml");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this, chooser] (const juce::FileChooser& fc)
+                          {
+                              const auto file = fc.getResult();
+                              if (file == juce::File())
+                                  return;
+
+                              if (ThemeManager::get().loadFromFile (file))
+                              {
+                                  const auto presetName = ThemeManager::get().theme().presetName.trim();
+                                  if (presetName.isNotEmpty())
+                                      AppPreferences::get().setThemePresetName (presetName);
+                                  systemFeed.addMessage ("Imported theme: " + file.getFileNameWithoutExtension());
+                              }
+                              else
+                              {
+                                  systemFeed.addMessage ("Theme import failed: " + file.getFileName());
+                              }
+                          });
+}
+
+void PluginEditor::exportThemeFile()
+{
+    auto chooser = std::make_shared<juce::FileChooser> ("Export Current Theme",
+                                                         ThemeManager::get().getUserThemeDir().getChildFile ("Spool Theme.spool-theme"),
+                                                         "*.spool-theme");
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode
+                          | juce::FileBrowserComponent::canSelectFiles
+                          | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [this, chooser] (const juce::FileChooser& fc)
+                          {
+                              auto file = fc.getResult();
+                              if (file == juce::File())
+                                  return;
+
+                              if (! file.hasFileExtension ("spool-theme"))
+                                  file = file.withFileExtension ("spool-theme");
+
+                              ThemeManager::get().saveToFile (file);
+                              systemFeed.addMessage ("Exported theme: " + file.getFileName());
+                          });
+}
+
+void PluginEditor::applyAuthoredSongToUi()
+{
+    auto& appState = processorRef.getAppState();
+    const auto& authoredStructure = processorRef.getSongManager().getStructureState();
+
+    songHeader.setCompactMode (AppPreferences::get().getCompactSongHeader());
+    songHeader.setTitle (processorRef.getSongManager().getSongTitle());
+    songHeader.setBpm (static_cast<float> (processorRef.getSongManager().getTempo()));
+
+    if (auto* song = zoneA.getSongPanel())
+    {
+        song->setTitle (processorRef.getSongManager().getSongTitle());
+        song->setBpm (static_cast<float> (processorRef.getSongManager().getTempo()));
+        song->setKey (processorRef.getSongManager().getKeyRoot());
+        song->setScale (processorRef.getSongManager().getKeyScale());
+        song->setStructureSummary (authoredStructure);
+    }
+
+    if (auto* tracks = zoneA.getTracksPanel())
+        tracks->setBpm (static_cast<float> (processorRef.getSongManager().getTempo()));
+
+    if (auto* structurePanel = zoneA.getStructurePanel())
+        structurePanel->setIntentKeyMode (processorRef.getSongManager().getKeyRoot(),
+                                          processorRef.getSongManager().getKeyScale());
+
+    if (auto* lyricsPanel = zoneA.getLyricsPanel())
+        lyricsPanel->refreshFromModel();
+
+    if (auto* autoPanel = zoneA.getAutoPanel())
+        autoPanel->refreshFromModel();
+
+    if (auto* structurePanel = zoneA.getStructurePanel())
+        structurePanel->refreshFromModel();
+
+    zoneD.setStructureView (&authoredStructure, &processorRef.getStructureEngine());
+    zoneD.setAuthoredTimelineData (&processorRef.getSongManager().getLyricsState(),
+                                   &processorRef.getSongManager().getAutomationState());
+    zoneD.seedStructureRails (authoredStructure);
+    zoneD.setStructureBeat (appState.transport.playheadBeats);
+    zoneD.setStructureFollowState (computeFollowState (processorRef.isStructureFollowForTracksEnabled(),
+                                                       structureHasScaffold (authoredStructure)));
+    updateSequencerStructureContext (processorRef.getCurrentSongBeat());
     resized();
+    repaint();
+}
+
+void PluginEditor::openSettingsPanel (juce::Rectangle<int> anchorBounds)
+{
+    if (anchorBounds.isEmpty())
+        anchorBounds = menuBar.getAnchorBoundsForItem ("settings");
+
+    if (m_settingsCallout != nullptr)
+    {
+        m_settingsCallout->dismiss();
+        m_settingsCallout = nullptr;
+    }
+
+    auto settingsPanel = std::make_unique<SettingsPanel>();
+    settingsPanel->onOpenThemeDesigner = [this] (juce::Rectangle<int> themeAnchor)
+    {
+        openThemeDesigner (themeAnchor);
+    };
+    settingsPanel->onImportTheme = [this]
+    {
+        importThemeFile();
+    };
+    settingsPanel->onExportTheme = [this]
+    {
+        exportThemeFile();
+    };
+
+    auto& box = juce::CallOutBox::launchAsynchronously (std::move (settingsPanel),
+                                                        anchorBounds,
+                                                        this);
+    box.setDismissalMouseClicksAreAlwaysConsumed (true);
+    m_settingsCallout = &box;
+}
+
+void PluginEditor::openThemeDesigner (juce::Rectangle<int> anchorBounds)
+{
+    if (m_settingsCallout != nullptr)
+    {
+        m_settingsCallout->dismiss();
+        m_settingsCallout = nullptr;
+    }
+
+    if (m_themeDesignerWindow != nullptr)
+    {
+        m_themeDesignerWindow->exitModalState (0);
+        m_themeDesignerWindow->setVisible (false);
+        m_themeDesignerWindow = nullptr;
+    }
+
+    juce::ignoreUnused (anchorBounds);
+
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned (new ThemeEditorModalContent());
+    options.dialogTitle = "Theme Utility";
+    options.dialogBackgroundColour = Theme::Colour::surface1;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = false;
+    options.resizable = true;
+    options.useBottomRightCornerResizer = true;
+    options.componentToCentreAround = this;
+
+    auto* dialog = options.launchAsync();
+    if (dialog != nullptr)
+    {
+        dialog->setName ("Theme Utility");
+        dialog->setResizable (true, true);
+        dialog->centreWithSize (520, 760);
+        m_themeDesignerWindow = dialog;
+    }
+
+    systemFeed.addMessage ("Theme utility opened");
 }
 
 void PluginEditor::themeChanged()
 {
+    const auto presetName = ThemeManager::get().theme().presetName.trim();
+    if (presetName.isNotEmpty())
+        AppPreferences::get().setThemePresetName (presetName);
+
     repaintAll (*this);
+}
+
+void PluginEditor::appPreferencesChanged()
+{
+    songHeader.setCompactMode (AppPreferences::get().getCompactSongHeader());
+    zoneB.setLooperVisible (AppPreferences::get().getShowLooper());
+    zoneC.setMacroStripVisible (AppPreferences::get().getShowZoneCMacros());
+    resized();
+    repaint();
 }
 
 void PluginEditor::repaintAll (juce::Component& root)

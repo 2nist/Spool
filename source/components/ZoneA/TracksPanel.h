@@ -92,10 +92,11 @@ private:
     float m_dragStartBpm { 120.0f };
 
     //--- Layout constants -----------------------------------------------------
-    static constexpr int kPad        = 6;
-    static constexpr int kTopH       = 100;  // transport section height
-    static constexpr int kSubTabBarH = 20;
-    static constexpr int kBtnSz      = 28;
+    static constexpr int kPad        = 5;
+    static constexpr int kHeaderH    = 22;
+    static constexpr int kTopH       = 88;  // transport section height
+    static constexpr int kSubTabBarH = 18;
+    static constexpr int kBtnSz      = 22;
     static constexpr int kLaneRowH   = 24;
 
     //--- Layout helpers -------------------------------------------------------

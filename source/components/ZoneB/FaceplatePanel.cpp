@@ -1,5 +1,6 @@
 #include "FaceplatePanel.h"
 #include "ModuleRow.h"   // for paramColorForLabel
+#include "../ZoneA/ZoneAControlStyle.h"
 
 //==============================================================================
 // Constructor / Destructor
@@ -239,6 +240,8 @@ void FaceplatePanel::applySlotToKnob (int idx)
     auto*       knob = m_knobWidgets[idx];
     if (knob == nullptr) return;
 
+    const auto& theme = ThemeManager::get().theme();
+
     if (slot.assigned)
     {
         knob->setRange (slot.minVal, slot.maxVal);
@@ -246,10 +249,10 @@ void FaceplatePanel::applySlotToKnob (int idx)
         knob->setDoubleClickReturnValue (true, slot.defVal);
 
         const juce::Colour col = ModuleRow::paramColorForLabel (slot.paramId);
-        knob->setColour (juce::Slider::rotarySliderFillColourId,    col.withAlpha (0.7f));
-        knob->setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xFF1a1410));
-        knob->setColour (juce::Slider::thumbColourId,               juce::Colour (0xFFc8a97e));
-        knob->setColour (juce::Slider::backgroundColourId,          juce::Colour (0xFF0e0c09));
+        knob->setColour (juce::Slider::rotarySliderFillColourId,    col.withAlpha (0.75f));
+        knob->setColour (juce::Slider::rotarySliderOutlineColourId, theme.surfaceEdge.withAlpha (0.8f));
+        knob->setColour (juce::Slider::thumbColourId,               theme.sliderThumb);
+        knob->setColour (juce::Slider::backgroundColourId,          theme.controlBg.withAlpha (0.95f));
         knob->setEnabled (true);
         knob->setAlpha   (1.0f);
     }
@@ -257,8 +260,10 @@ void FaceplatePanel::applySlotToKnob (int idx)
     {
         knob->setRange (0.f, 1.f);
         knob->setValue (0.5, juce::dontSendNotification);
-        knob->setColour (juce::Slider::rotarySliderFillColourId,    juce::Colour (0xFF222222));
-        knob->setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xFF1a1410));
+        knob->setColour (juce::Slider::rotarySliderFillColourId,    theme.surfaceEdge.withAlpha (0.5f));
+        knob->setColour (juce::Slider::rotarySliderOutlineColourId, theme.surfaceEdge.withAlpha (0.7f));
+        knob->setColour (juce::Slider::thumbColourId,               theme.sliderThumb.withAlpha (0.65f));
+        knob->setColour (juce::Slider::backgroundColourId,          theme.controlBg.withAlpha (0.92f));
         knob->setAlpha   (0.4f);
     }
 
@@ -278,19 +283,14 @@ void FaceplatePanel::applySlotToButton (int idx)
                            || slot.behavior == QuickControlSlot::Behavior::EnumStep);
     btn->setClickingTogglesState (isToggle);
     btn->setToggleState (false, juce::dontSendNotification);
+    ZoneAControlStyle::styleTextButton (*btn, Theme::Zone::b.withAlpha (0.75f));
 
     if (slot.assigned)
     {
-        btn->setColour (juce::TextButton::buttonColourId,   juce::Colour (0xFF1a1610));
-        btn->setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xFF3a2e1e));
-        btn->setColour (juce::TextButton::textColourOffId,  juce::Colour (0xFFa09080));
-        btn->setColour (juce::TextButton::textColourOnId,   juce::Colour (0xFFe8d4a0));
         btn->setAlpha  (1.0f);
     }
     else
     {
-        btn->setColour (juce::TextButton::buttonColourId,   juce::Colour (0xFF141210));
-        btn->setColour (juce::TextButton::textColourOffId,  juce::Colour (0xFF3a3028));
         btn->setAlpha  (0.5f);
     }
 

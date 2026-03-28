@@ -1,5 +1,6 @@
 #pragma once
 #include "../../Theme.h"
+#include "ZoneAStyle.h"
 
 class PluginProcessor;
 
@@ -36,7 +37,7 @@ public:
         int          slotIndex  { -1 };
         juce::String name;
         juce::String groupName;
-        juce::Colour groupColor { 0xFF4B9EDB };
+        juce::Colour groupColor { Theme::Zone::b };
         float        level      { 0.8f };   // gain 0..1 (UI range)
         float        meter      { 0.0f };   // live RMS from audio graph
         bool         muted      { false };

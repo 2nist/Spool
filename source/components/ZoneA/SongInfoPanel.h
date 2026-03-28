@@ -2,6 +2,8 @@
 
 #include "../../Theme.h"
 #include "../../structure/StructureState.h"
+#include "ZoneAControlStyle.h"
+#include "ZoneAStyle.h"
 
 //==============================================================================
 /**
@@ -45,6 +47,9 @@ private:
     static const juce::StringArray kScales;
 
     juce::TextEditor  m_titleEditor;
+    juce::Label       m_titleLabel;
+    juce::Label       m_defaultsLabel;
+    juce::Label       m_notesLabel;
     juce::ComboBox    m_keyCombo;
     juce::ComboBox    m_scaleCombo;
     juce::Label       m_bpmLabel;
@@ -56,12 +61,10 @@ private:
     juce::Label       m_summaryMode;
     juce::Label       m_summaryBars;
     juce::Label       m_summaryDuration;
+    juce::Label       m_summarySections;
+    juce::Label       m_summaryBlocks;
 
     float m_bpm = 120.0f;
-
-    static constexpr int kPad   = 8;
-    static constexpr int kRowH  = 28;
-    static constexpr int kLabelH = 14;
 
     // BPM drag
     bool  m_draggingBpm  = false;

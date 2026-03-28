@@ -9,61 +9,65 @@ TabStrip::TabStrip()
 
 void TabStrip::initGroups()
 {
-    // SESSION group — inkMid
     {
         Group g;
-        g.name  = "SESSION";
-        g.color = juce::Colour (Theme::Colour::inkMid);
-        g.tabs.add ({ "song",      "SONG" });
-        g.tabs.add ({ "structure", "STR"  });
-        g.tabs.add ({ "lyrics",    "LYR"  });
+        g.name   = "SESSION";
+        g.accent = ZoneAStyle::accentForGroupName (g.name);
+        g.tabs.add ({ "song", "SONG", BinaryData::audiowaveform_png, BinaryData::audiowaveform_pngSize,
+                     ZoneAStyle::accentForTabId ("song") });
+        g.tabs.add ({ "structure", "STR", BinaryData::form_png, BinaryData::form_pngSize,
+                     ZoneAStyle::accentForTabId ("structure") });
+        g.tabs.add ({ "lyrics", "LYR", BinaryData::notebookpen_png, BinaryData::notebookpen_pngSize,
+                     ZoneAStyle::accentForTabId ("lyrics") });
         m_groups.add (std::move (g));
     }
 
-    // INSTRUMENT group — Zone::a
     {
         Group g;
-        g.name  = "INSTR";
-        g.color = juce::Colour (Theme::Zone::a);
-        g.tabs.add ({ "instrument", "INST" });
+        g.name   = "INSTR";
+        g.accent = ZoneAStyle::accentForGroupName (g.name);
+        g.tabs.add ({ "instrument", "INST", BinaryData::keyboardmusic_png, BinaryData::keyboardmusic_pngSize,
+                     ZoneAStyle::accentForTabId ("instrument") });
         m_groups.add (std::move (g));
     }
 
-    // PERFORMANCE group — Zone::b
     {
         Group g;
-        g.name  = "PERF";
-        g.color = juce::Colour (Theme::Zone::b);
-        g.tabs.add ({ "mixer", "MIX"  });
-        g.tabs.add ({ "macro", "MCRO" });
+        g.name   = "PERF";
+        g.accent = ZoneAStyle::accentForGroupName (g.name);
+        g.tabs.add ({ "mixer", "MIX", BinaryData::chartarea_png, BinaryData::chartarea_pngSize,
+                     ZoneAStyle::accentForTabId ("mixer") });
+        g.tabs.add ({ "macro", "MCRO", BinaryData::circlegauge_png, BinaryData::circlegauge_pngSize,
+                     ZoneAStyle::accentForTabId ("macro") });
         m_groups.add (std::move (g));
     }
 
-    // SIGNAL group — Zone::c
     {
         Group g;
-        g.name  = "SIGNAL";
-        g.color = juce::Colour (Theme::Zone::c);
-        g.tabs.add ({ "routing", "RTE" });
+        g.name   = "SIGNAL";
+        g.accent = ZoneAStyle::accentForGroupName (g.name);
+        g.tabs.add ({ "routing", "RTE", BinaryData::merge_png, BinaryData::merge_pngSize,
+                     ZoneAStyle::accentForTabId ("routing") });
         m_groups.add (std::move (g));
     }
 
-    // CAPTURE group — Zone::d
     {
         Group g;
-        g.name  = "CAPTURE";
-        g.color = juce::Colour (Theme::Zone::d);
-        g.tabs.add ({ "tape", "TAPE" });
+        g.name   = "CAPTURE";
+        g.accent = ZoneAStyle::accentForGroupName (g.name);
+        g.tabs.add ({ "tape", "TAPE", BinaryData::voicemail_png, BinaryData::voicemail_pngSize,
+                     ZoneAStyle::accentForTabId ("tape") });
         m_groups.add (std::move (g));
     }
 
-    // TRACK group — inkMid
     {
         Group g;
-        g.name  = "TRACK";
-        g.color = juce::Colour (Theme::Colour::inkMid);
-        g.tabs.add ({ "tracks",   "TRK"  });
-        g.tabs.add ({ "automate", "AUTO" });
+        g.name   = "TRACK";
+        g.accent = ZoneAStyle::accentForGroupName (g.name);
+        g.tabs.add ({ "tracks", "TRK", BinaryData::brackets_png, BinaryData::brackets_pngSize,
+                     ZoneAStyle::accentForTabId ("tracks") });
+        g.tabs.add ({ "automate", "AUTO", BinaryData::workflow_png, BinaryData::workflow_pngSize,
+                     ZoneAStyle::accentForTabId ("automate") });
         m_groups.add (std::move (g));
     }
 }
@@ -100,15 +104,6 @@ juce::String TabStrip::tabAtPos (juce::Point<int> pos) const noexcept
     return {};
 }
 
-juce::Colour TabStrip::groupColorForTab (const juce::String& tabId) const noexcept
-{
-    for (const auto& grp : m_groups)
-        for (const auto& tab : grp.tabs)
-            if (tab.id == tabId)
-                return grp.color;
-    return juce::Colour (Theme::Zone::a);
-}
-
 void TabStrip::setActiveTab (const juce::String& tabId)
 {
     m_activeTabId = tabId;
@@ -123,6 +118,13 @@ void TabStrip::paint (juce::Graphics& g)
 {
     g.fillAll (Theme::Colour::surface0);
 
+    for (auto& group : m_groups)
+    {
+        group.accent = ZoneAStyle::accentForGroupName (group.name);
+        for (auto& tab : group.tabs)
+            tab.accent = ZoneAStyle::accentForTabId (tab.id);
+    }
+
     // Right border
     g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.5f));
     g.fillRect (kWidth - 1, 0, 1, getHeight());
@@ -134,50 +136,46 @@ void TabStrip::paint (juce::Graphics& g)
         // Group header band (apply scroll offset)
         paintGroupHeader (g,
                           { 0, groupHeaderY (gi) - m_scrollY, kWidth, kGroupH },
-                          group.name);
+                          group);
 
         for (int ti = 0; ti < group.tabs.size(); ++ti)
         {
             const auto& tab    = group.tabs[ti];
             const bool active  = (tab.id == m_activeTabId);
             const bool hovered = !active && (tab.id == m_hoveredTabId);
-            paintTab (g, tabRect (gi, ti), tab.label, active, hovered, group.color);
+            paintTab (g, tabRect (gi, ti), tab, active, hovered);
         }
     }
 }
 
 void TabStrip::paintGroupHeader (juce::Graphics& g,
                                   juce::Rectangle<int> r,
-                                  const juce::String& name) const
+                                  const Group& group) const
 {
-    // Slightly elevated background
     g.setColour (Theme::Colour::surface1.withAlpha (0.6f));
-    g.fillRect  (r);
-
-    // Separator line at top of header band
+    g.fillRect (r);
     g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.5f));
-    g.fillRect  (2, r.getY(), kWidth - 4, 1);
+    g.fillRect (2, r.getY(), kWidth - 4, 1);
 
-    // Group name — 6px uppercase, centred
-    g.setFont   (juce::Font (juce::FontOptions{}.withHeight (6.0f)));
-    g.setColour (Theme::Colour::inkGhost.withAlpha (0.6f));
-    g.drawText  (name, r.reduced (1, 1), juce::Justification::centred, false);
+    g.setFont (juce::Font (juce::FontOptions{}.withHeight (6.0f)));
+    g.setColour (group.accent.withAlpha (0.72f));
+    g.drawText (group.name, r.reduced (1, 1), juce::Justification::centred, false);
 }
 
 void TabStrip::paintTab (juce::Graphics& g,
                           const juce::Rectangle<int>& r,
-                          const juce::String& label,
+                          const Tab& tab,
                           bool isActive,
-                          bool isHovered,
-                          juce::Colour groupColor) const
+                          bool isHovered) const
 {
+    const auto accent = tab.accent;
+
     // Background
     if (isActive)
     {
-        g.setColour (groupColor.withAlpha (0.15f));
+        g.setColour (accent.withAlpha (0.15f));
         g.fillRect  (r);
-        // 2px left accent border
-        g.setColour (groupColor);
+        g.setColour (accent);
         g.fillRect  (r.withWidth (2));
     }
     else if (isHovered)
@@ -186,58 +184,12 @@ void TabStrip::paintTab (juce::Graphics& g,
         g.fillRect  (r);
     }
 
-    // Rotated label — 90° CCW (bottom → top)
-    g.setFont (Theme::Font::micro());
-    g.setColour (isActive  ? groupColor.brighter (0.1f)
-               : isHovered ? Theme::Colour::inkMid
-                           : Theme::Colour::inkGhost);
-
-    const float cx = static_cast<float> (r.getCentreX());
-    const float cy = static_cast<float> (r.getCentreY());
-
-    juce::Graphics::ScopedSaveState saved (g);
-    g.addTransform (juce::AffineTransform::rotation (
-        -juce::MathConstants<float>::halfPi, cx, cy));
-
-    const auto textR = juce::Rectangle<float>(
-        cx - static_cast<float> (kTabH) * 0.5f,
-        cy - static_cast<float> (kWidth) * 0.5f,
-        static_cast<float> (kTabH),
-        static_cast<float> (kWidth));
-
-    // Attempt to draw a 22x22 icon for the tab (BinaryData embedded).
-    // There are exactly 10 tabs — no text fallback is used.
-    auto getIconForTab = [&]() -> juce::Image
-    {
-        if (label == "SONG")
-            return juce::ImageCache::getFromMemory (BinaryData::audiowaveform_png, BinaryData::audiowaveform_pngSize);
-        if (label == "STR")
-            return juce::ImageCache::getFromMemory (BinaryData::form_png, BinaryData::form_pngSize);
-        if (label == "LYR")
-            return juce::ImageCache::getFromMemory (BinaryData::notebookpen_png, BinaryData::notebookpen_pngSize);
-        if (label == "INST")
-            return juce::ImageCache::getFromMemory (BinaryData::keyboardmusic_png, BinaryData::keyboardmusic_pngSize);
-        if (label == "MCRO")
-            return juce::ImageCache::getFromMemory (BinaryData::circlegauge_png, BinaryData::circlegauge_pngSize);
-        if (label == "TAPE")
-            return juce::ImageCache::getFromMemory (BinaryData::voicemail_png, BinaryData::voicemail_pngSize);
-        if (label == "TRK")
-            return juce::ImageCache::getFromMemory (BinaryData::brackets_png, BinaryData::brackets_pngSize);
-        // Icon swap: MIX <- RTE, RTE <- AUTO, AUTO <- MIX (cycle)
-        if (label == "MIX")
-            return juce::ImageCache::getFromMemory (BinaryData::merge_png, BinaryData::merge_pngSize);       // use routing icon for Mix
-        if (label == "RTE")
-            return juce::ImageCache::getFromMemory (BinaryData::workflow_png, BinaryData::workflow_pngSize); // use automation icon for Routing
-        if (label == "AUTO")
-            return juce::ImageCache::getFromMemory (BinaryData::chartarea_png, BinaryData::chartarea_pngSize); // use mix icon for Automation
-
-        return {};
-    };
-
-    auto img = getIconForTab();
+    auto img = (tab.iconData != nullptr && tab.iconSize > 0)
+                 ? juce::ImageCache::getFromMemory (tab.iconData, tab.iconSize)
+                 : juce::Image();
     if (img.isValid())
     {
-        const auto imgR = textR.withSizeKeepingCentre (22.0f, 22.0f).toNearestInt();
+        const auto imgR = r.toFloat().withSizeKeepingCentre (16.0f, 16.0f).toNearestInt();
         g.drawImageWithin (img, imgR.getX(), imgR.getY(), imgR.getWidth(), imgR.getHeight(), juce::RectanglePlacement::centred);
     }
     // No text fallback: tabs are icon-only (there are 10 embedded icons)

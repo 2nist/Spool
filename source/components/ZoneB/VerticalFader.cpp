@@ -1,4 +1,5 @@
 #include "VerticalFader.h"
+#include "../ZoneA/ZoneAControlStyle.h"
 
 //==============================================================================
 // Constructor / Destructor
@@ -74,9 +75,8 @@ void VerticalFader::setStatus (Status s)
 
 int VerticalFader::getPreferredWidth() const
 {
-    // Track/thumb column (THUMB_SIZE) + gap + rotated-label column (font height ≈ 14px)
-    const float fontH = Theme::Font::labelMedium().getHeight();
-    return THUMB_SIZE + LABEL_GAP + static_cast<int> (fontH) + 4;
+    // Match Zone A compact vertical bar footprint.
+    return 18;
 }
 
 //==============================================================================
@@ -87,7 +87,7 @@ void VerticalFader::resized() {}
 
 juce::Rectangle<int> VerticalFader::trackBounds() const noexcept
 {
-    const int trackX = (THUMB_SIZE - TRACK_W) / 2;   // centred within thumb column
+    const int trackX = (getWidth() - TRACK_W) / 2;
     return { trackX, VALUE_AREA_H, TRACK_W, TRACK_H };
 }
 
@@ -110,7 +110,6 @@ void VerticalFader::paint (juce::Graphics& g)
 {
     paintTrack  (g);
     paintFill   (g);
-    paintLine   (g);
     paintThumb  (g);
     paintCircle (g);
     paintValue  (g);
@@ -119,38 +118,41 @@ void VerticalFader::paint (juce::Graphics& g)
 
 void VerticalFader::paintTrack (juce::Graphics& g)
 {
+    const auto& theme = ThemeManager::get().theme();
     const float a  = (m_status == Status::bypassed) ? Theme::Alpha::disabled : 1.0f;
     const auto  tb = trackBounds().toFloat();
 
-    // Background — near-black warm
-    g.setColour (juce::Colour (0xFF0a0806).withMultipliedAlpha (a));
+    // Background
+    g.setColour (theme.controlBg.withMultipliedAlpha (a).withAlpha (0.96f));
     g.fillRoundedRectangle (tb, 4.0f);
 
     // Border — brightens on hover
-    const juce::Colour borderCol = m_hovered ? juce::Colour (0xFF6a5a48)
-                                             : juce::Colour (0xFF524640);
+    const juce::Colour borderCol = m_hovered ? theme.surfaceEdge.brighter (0.12f)
+                                             : theme.surfaceEdge;
     g.setColour (borderCol.withMultipliedAlpha (a));
-    g.drawRoundedRectangle (tb, 4.0f, 1.5f);
+    g.drawRoundedRectangle (tb, 4.0f, 1.0f);
 
     // Bipolar centre mark — always visible (structural, not decorative)
     if (m_bipolar)
     {
         const float cy = static_cast<float> (trackBounds().getCentreY());
-        g.setColour (juce::Colour (0xFF3a2e1e).withMultipliedAlpha (a));
+        g.setColour (theme.surfaceEdge.withMultipliedAlpha (a).withAlpha (0.55f));
         g.drawLine (tb.getX(), cy, tb.getRight(), cy, 0.5f);
     }
 }
 
 void VerticalFader::paintFill (juce::Graphics& g)
 {
+    const auto& theme = ThemeManager::get().theme();
     const float a  = (m_status == Status::bypassed) ? Theme::Alpha::disabled : 1.0f;
     const auto  tb = trackBounds();
+    const auto fillCol = theme.sliderTrack.interpolatedWith (m_paramColor, 0.4f);
 
     if (!m_bipolar)
     {
         auto fillR = tb;
         fillR.setTop (valueToY (m_value));
-        g.setColour (m_paramColor.withAlpha (0.5f * a));
+        g.setColour (fillCol.withAlpha (0.55f * a));
         g.fillRoundedRectangle (fillR.toFloat(), 3.0f);
     }
     else
@@ -160,48 +162,39 @@ void VerticalFader::paintFill (juce::Graphics& g)
         const juce::Rectangle<int> fillR =
             (ty < cy) ? juce::Rectangle<int> (tb.getX(), ty,  tb.getWidth(), cy - ty)
                       : juce::Rectangle<int> (tb.getX(), cy,  tb.getWidth(), ty - cy);
-        g.setColour (m_paramColor.withAlpha (0.4f * a));
+        g.setColour (fillCol.withAlpha (0.45f * a));
         g.fillRect (fillR);
     }
 }
 
 void VerticalFader::paintLine (juce::Graphics& g)
 {
+    const auto& theme = ThemeManager::get().theme();
     if (m_status == Status::bypassed) return;
     const auto  tb = trackBounds();
     const float y  = static_cast<float> (valueToY (m_value));
-    g.setColour (m_paramColor.withAlpha (0.9f));
+    g.setColour (theme.sliderThumb.interpolatedWith (m_paramColor, 0.35f).withAlpha (0.92f));
     g.drawLine (static_cast<float> (tb.getX()), y,
                 static_cast<float> (tb.getRight()), y, 1.0f);
 }
 
 void VerticalFader::paintThumb (juce::Graphics& g)
 {
+    const auto& theme = ThemeManager::get().theme();
     const float a      = (m_status == Status::bypassed) ? Theme::Alpha::disabled : 1.0f;
     const float bright = m_flashAlpha;  // >1.0 briefly after double-click reset
     const auto  tb     = thumbBounds().toFloat();
+    const auto thumbBase = theme.sliderThumb.interpolatedWith (m_paramColor, 0.2f);
 
-    // Kraft paper fill — brightened on flash
-    g.setColour (juce::Colour (0xFFc8a97e).withMultipliedAlpha (a).withMultipliedBrightness (bright));
-    g.fillRoundedRectangle (tb, 3.0f);
-
-    // Highlight top edge
-    g.setColour (juce::Colour (0xFFe8c99e).withMultipliedAlpha (a));
-    g.drawLine (tb.getX() + 3.0f, tb.getY() + 1.0f,
-                tb.getRight() - 3.0f, tb.getY() + 1.0f, 1.0f);
-
-    // Shadow bottom edge
-    g.setColour (juce::Colour (0xFF7a5930).withMultipliedAlpha (a));
-    g.drawLine (tb.getX() + 3.0f, tb.getBottom() - 1.0f,
-                tb.getRight() - 3.0f, tb.getBottom() - 1.0f, 1.0f);
-
-    // Left/right subtle edges
-    g.setColour (juce::Colour (0xFFb89060).withMultipliedAlpha (a * 0.5f));
-    g.drawRoundedRectangle (tb, 3.0f, 0.5f);
+    g.setColour (thumbBase.withMultipliedAlpha (a).withMultipliedBrightness (bright));
+    g.fillEllipse (tb);
+    g.setColour (theme.surfaceEdge.withMultipliedAlpha (a * 0.8f));
+    g.drawEllipse (tb, 1.0f);
 }
 
 void VerticalFader::paintCircle (juce::Graphics& g)
 {
+    const auto& theme = ThemeManager::get().theme();
     const float a  = (m_status == Status::bypassed) ? Theme::Alpha::disabled : 1.0f;
     const auto  cb = circleBounds().toFloat();
 
@@ -221,17 +214,14 @@ void VerticalFader::paintCircle (juce::Graphics& g)
         case Status::bypassed:     fill = juce::Colour (0xFF3a2e1e); break;
     }
 
-    // Dark separator ring around circle
-    g.setColour (juce::Colour (0xFF1c1610).withMultipliedAlpha (a));
-    g.fillEllipse (cb.expanded (1.5f));
-
-    // Status fill
+    // Small status marker at thumb centre (not a second large control).
     g.setColour (fill.withMultipliedAlpha (a));
-    g.fillEllipse (cb);
+    g.fillEllipse (cb.withSizeKeepingCentre (3.0f, 3.0f));
 }
 
 void VerticalFader::paintValue (juce::Graphics& g)
 {
+    const auto& theme = ThemeManager::get().theme();
     const juce::String text = formatValue (m_value);
     const auto         font = Theme::Font::micro();
     const float textW = juce::GlyphArrangement::getStringWidth (font, text);
@@ -244,43 +234,41 @@ void VerticalFader::paintValue (juce::Graphics& g)
     const juce::Rectangle<float> bg (textX - 2.0f, textY - 1.0f, textW + 4.0f, 12.0f);
 
     // Background block masks the track behind the value text
-    g.setColour (juce::Colour (0xFF1c1610));
+    g.setColour (theme.controlBg);
     g.fillRoundedRectangle (bg, 2.0f);
 
     // Value text — param colour while dragging, light otherwise
     g.setFont (font);
-    g.setColour (m_dragging ? m_paramColor : juce::Colour (0xFFf8f4ec));
+    g.setColour (m_dragging ? m_paramColor : theme.controlTextOn);
     g.drawText  (text, bg.withTrimmedLeft (2.0f).withTrimmedRight (2.0f),
                  juce::Justification::centred, false);
 }
 
 void VerticalFader::paintLabel (juce::Graphics& g)
 {
+    const auto& theme = ThemeManager::get().theme();
     if (m_displayName.isEmpty()) return;
 
-    const auto   tb   = trackBounds();
-    const auto   font = Theme::Font::labelMedium();
-    const float  textW = juce::GlyphArrangement::getStringWidth (font, m_displayName);
+    const auto tb = trackBounds().toFloat();
+    const auto fillCol = theme.sliderTrack.interpolatedWith (m_paramColor, 0.4f);
+    const float proportion = juce::jlimit (0.0f, 1.0f, m_value);
+    const bool overFill = proportion >= 0.58f;
+    const auto labelBg = overFill ? fillCol : theme.controlBg;
+    const auto textColour = Theme::Helper::inkFor (labelBg).withAlpha (0.97f);
+    const auto shadowColour = textColour.getPerceivedBrightness() > 0.5f
+                                ? Theme::Colour::inkDark.withAlpha (0.24f)
+                                : Theme::Colour::inkLight.withAlpha (0.16f);
 
-    // Place glyphs at origin, then rotate -90° and translate to screen position.
-    // After rotation(-π/2): (x,y)→(y,-x)
-    //   screen_y = -x + ty  →  centre at ty - textW/2 = tb.getCentreY()  →  ty = tb.getCentreY() + textW/2
-    //   screen_x = y + tx   →  y≈0 (baseline), tx = right of track + gap + half font-height
-    juce::GlyphArrangement ga;
-    ga.addLineOfText (font, m_displayName, 0.0f, 0.0f);
+    g.setFont (Theme::Font::microMedium());
+    juce::Graphics::ScopedSaveState state (g);
+    const auto centre = tb.getCentre();
+    g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, centre.x, centre.y));
 
-    const float fontH = font.getHeight();
-    const float tx    = static_cast<float> (tb.getRight() + LABEL_GAP) + fontH * 0.5f + 1.0f;
-    const float ty    = static_cast<float> (tb.getCentreY()) + textW * 0.5f;
-
-    g.setColour (m_hovered ? (juce::Colour) Theme::Colour::inkLight
-                           : juce::Colour (0xFFd4c9b0));
-
-    g.saveState();
-    g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi)
-                                          .translated (tx, ty));
-    ga.draw (g);
-    g.restoreState();
+    auto textBounds = tb.toNearestInt().reduced (0, 5);
+    g.setColour (shadowColour);
+    g.drawText (m_displayName, textBounds.translated (1, 1), juce::Justification::centred, false);
+    g.setColour (textColour);
+    g.drawText (m_displayName, textBounds, juce::Justification::centred, false);
 }
 
 //==============================================================================
@@ -498,9 +486,8 @@ void VerticalFader::showValueEditor()
 {
     m_textEditor = std::make_unique<juce::TextEditor>();
     m_textEditor->setFont (Theme::Font::micro());
-    m_textEditor->setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xFF1c1610));
-    m_textEditor->setColour (juce::TextEditor::textColourId, juce::Colour (0xFFf8f4ec));
-    m_textEditor->setColour (juce::TextEditor::outlineColourId, m_paramColor);
+    ZoneAControlStyle::styleTextEditor (*m_textEditor);
+    m_textEditor->setColour (juce::TextEditor::focusedOutlineColourId, m_paramColor);
     m_textEditor->setText (formatValue (m_value), false);
     m_textEditor->setSelectAllWhenFocused (true);
 

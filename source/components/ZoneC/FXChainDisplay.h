@@ -32,6 +32,9 @@ public:
     std::function<void(int nodeIndex)>                onNodeRemoved;
     std::function<void(int nodeIndex, int paramIdx, float value)> onParamChanged;
     std::function<void(int nodeIndexFrom, int nodeIndexTo)>       onNodeMoved;
+    std::function<void(int nodeIndex)>                onNodeFocused;
+
+    void setFocusedNode (int nodeIndex);
 
     void paint   (juce::Graphics&) override;
     void resized () override;
@@ -42,6 +45,7 @@ private:
     const ChainState* m_chain         { nullptr };
     int               m_addButtonY    { 0 };
     bool              m_addHover      { false };
+    int               m_focusedNodeIndex { 0 };
 
     // FXNode children — one per effect node in the chain
     juce::OwnedArray<FXNode>  m_nodes;

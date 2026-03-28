@@ -1,14 +1,12 @@
 #pragma once
 
 #include "../../Theme.h"
+#include "../../state/RoutingState.h"
+#include "ZoneAStyle.h"
+#include "ZoneAControlStyle.h"
 
-//==============================================================================
-/**
-    RoutingPanel — simple routing UI for the RTE tab.
-
-    Minimal skeleton: shows main output summary and a small "Open routing" button.
-*/
-class RoutingPanel : public juce::Component
+class RoutingPanel : public juce::Component,
+                     private juce::ListBoxModel
 {
 public:
     RoutingPanel();
@@ -17,26 +15,56 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    // For tests / external control
-    static constexpr int kSources = 4;
-    static constexpr int kOutputs = 2;
+    void setRoutingState (const RoutingState& state);
+    const RoutingState& getRoutingState() const noexcept { return routingState; }
+
+    std::function<void (const RoutingState&)> onRoutingStateChanged;
+    std::function<void (const std::vector<uint8_t>&)> onMatrixChanged;
+    juce::String getSummary() const;
+    void setMatrix (const std::vector<uint8_t>& vals);
 
 private:
-    juce::Rectangle<int> headerRect() const noexcept;
+    enum class Tab
+    {
+        midi = 0,
+        audio,
+        fx
+    };
 
-    std::vector<std::unique_ptr<juce::ToggleButton>> m_buttons;
-    juce::StringArray m_sourceNames { "Input", "Synth", "Sampler", "FX" };
-    juce::StringArray m_outputNames { "L", "R" };
+    RoutingState routingState;
+    Tab activeTab { Tab::midi };
+    juce::ListBox routeList;
+    juce::TextButton addRouteButton { "+ ROUTE" };
+    juce::TextButton deleteRouteButton { "DEL" };
+    juce::TextButton toggleRouteButton { "TOGGLE" };
+    juce::Label headerLabel;
+    juce::Label hintLabel;
+    juce::Label sourceLabel;
+    juce::Label destinationLabel;
+    juce::Label busLabel;
+    juce::ComboBox sourceBox;
+    juce::ComboBox destinationBox;
+    juce::ComboBox busBox;
+    juce::TextButton midiTabButton { "MIDI" };
+    juce::TextButton audioTabButton { "AUDIO" };
+    juce::TextButton fxTabButton { "FX" };
+    int selectedIndex { -1 };
+    bool suppressCallbacks { false };
 
-public:
-    /** Returns a compact summary string for display (e.g. "Stereo", "Mono L"). */
-    juce::String getSummary() const;
+    int getNumRows() override;
+    void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
+    void selectedRowsChanged (int row) override;
 
-    /** Called when the matrix changes. Args: flat row-major vector of kSources*kOutputs bytes (0/1). */
-    std::function<void (const std::vector<uint8_t>&)> onMatrixChanged;
-
-    /** Programmatically set the matrix. */
-    void setMatrix (const std::vector<uint8_t>& vals);
+    std::vector<RouteEntry>& activeRoutes();
+    const std::vector<RouteEntry>& activeRoutes() const;
+    RouteEntry* selectedRoute();
+    void refreshAll();
+    void refreshInspector();
+    void commitChanges();
+    void addRoute();
+    void deleteRoute();
+    void toggleSelectedRoute();
+    void rebuildChoiceLists();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RoutingPanel)
 };

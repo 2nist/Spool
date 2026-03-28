@@ -1,64 +1,349 @@
 #include "StructurePanel.h"
 #include "../../PluginProcessor.h"
+#include "../../PluginEditor.h"
+#include "../../theory/DiatonicHarmony.h"
 #include "../ZoneD/ClipData.h"
 #include "ZoneAControlStyle.h"
 
+#include <cmath>
+
 namespace
 {
+constexpr int kProgressionGridSteps = 64;
+constexpr int kProgressionGridColumns = 8;
+constexpr int kProgressionGridRows = kProgressionGridSteps / kProgressionGridColumns;
 constexpr const char* kRoots[] = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
 constexpr const char* kModes[] = { "Major", "Minor", "Dorian", "Mixolydian", "Lydian", "Phrygian", "Locrian" };
 constexpr const char* kDegrees[] = { "I", "II", "III", "IV", "V", "VI", "VII" };
 constexpr const char* kTypes[] = { "maj", "min", "maj7", "min7", "7", "sus4", "dim" };
 constexpr const char* kTransitions[] = { "None", "Pickup", "Cadence", "Lift", "Drop", "Fill Launch", "Soft Resolve", "Dominant Push" };
-enum Cmd { dupCell = 1, clearCell, splitCell, diatonicSub, secondaryDom, borrowedChord, extendChord, rootBase = 100, typeBase = 200 };
+enum Cmd { dupCell = 1, clearCell, splitCell, diatonicSub, secondaryDom, borrowedChord, extendChord, shortenBeat, lengthenBeat, flattenRoot, sharpenRoot, setMaj, setMin, setDim, setSus, rootBase = 100, typeBase = 200 };
 void styleTitle (juce::Label& l) { l.setFont (Theme::Font::micro()); l.setColour (juce::Label::textColourId, Theme::Zone::a); l.setJustificationType (juce::Justification::centredLeft); }
 void styleHint (juce::Label& l) { l.setFont (Theme::Font::micro()); l.setColour (juce::Label::textColourId, Theme::Colour::inkMid); l.setJustificationType (juce::Justification::centredLeft); }
 void styleSummary (juce::Label& l) { l.setFont (Theme::Font::label()); l.setColour (juce::Label::textColourId, Theme::Colour::inkLight); }
-void styleCombo (juce::ComboBox& c) { c.setColour (juce::ComboBox::backgroundColourId, Theme::Colour::surface2); c.setColour (juce::ComboBox::textColourId, Theme::Colour::inkLight); c.setColour (juce::ComboBox::outlineColourId, Theme::Colour::surfaceEdge.withAlpha (0.55f)); }
-void header (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& t) { g.setColour (Theme::Colour::surface1); g.fillRect (r); g.setColour (Theme::Zone::a.withAlpha (0.9f)); g.fillRect (r.removeFromLeft (3)); g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.45f)); g.fillRect (r.getX(), r.getBottom() - 1, r.getWidth(), 1); g.setColour (Theme::Zone::a); g.setFont (Theme::Font::micro()); g.drawText (t.toUpperCase(), r.reduced (8, 0), juce::Justification::centredLeft, false); }
-void card (juce::Graphics& g, juce::Rectangle<int> r) { g.setColour (Theme::Colour::surface2); g.fillRoundedRectangle (r.toFloat(), 6.0f); g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.55f)); g.drawRoundedRectangle (r.toFloat(), 6.0f, 1.0f); }
-int pc (juce::String root) { root = root.trim().toUpperCase(); if (root == "C") return 0; if (root == "C#" || root == "DB") return 1; if (root == "D") return 2; if (root == "D#" || root == "EB") return 3; if (root == "E") return 4; if (root == "F") return 5; if (root == "F#" || root == "GB") return 6; if (root == "G") return 7; if (root == "G#" || root == "AB") return 8; if (root == "A") return 9; if (root == "A#" || root == "BB") return 10; return 11; }
-juce::String rootName (int pitchClass) { return kRoots[(pitchClass % 12 + 12) % 12]; }
-int deg (juce::String roman) { roman = roman.trim().toUpperCase(); for (int i = 0; i < 7; ++i) if (roman == kDegrees[i]) return i; return 0; }
-std::array<int, 7> intervals (juce::String mode) { mode = mode.trim().toLowerCase(); if (mode == "minor") return { 0, 2, 3, 5, 7, 8, 10 }; if (mode == "dorian") return { 0, 2, 3, 5, 7, 9, 10 }; if (mode == "mixolydian") return { 0, 2, 4, 5, 7, 9, 10 }; if (mode == "lydian") return { 0, 2, 4, 6, 7, 9, 11 }; if (mode == "phrygian") return { 0, 1, 3, 5, 7, 8, 10 }; if (mode == "locrian") return { 0, 1, 3, 5, 6, 8, 10 }; return { 0, 2, 4, 5, 7, 9, 11 }; }
-std::array<juce::String, 7> qualities (juce::String mode) { mode = mode.trim().toLowerCase(); if (mode == "minor") return { "min", "dim", "maj", "min", "min", "maj", "maj" }; return { "maj", "min", "min", "maj", "maj", "min", "dim" }; }
-Chord buildDegreeChord (const Section& s, int degree) { auto root = s.keyRoot.isNotEmpty() ? s.keyRoot : juce::String ("C"); auto mode = s.mode.isNotEmpty() ? s.mode : juce::String ("Major"); return { rootName (pc (root) + intervals (mode)[(size_t) juce::jlimit (0, 6, degree)]), qualities (mode)[(size_t) juce::jlimit (0, 6, degree)] }; }
+void styleCombo (juce::ComboBox& c, juce::Colour accent) { ZoneAControlStyle::styleComboBox (c, accent); }
 juce::String durationText (double seconds) { const int s = juce::jmax (0, juce::roundToInt (seconds)); return juce::String (s / 60) + ":" + juce::String (s % 60).paddedLeft ('0', 2); }
-juce::String chordLabel (const Chord& chord) { return chord.root.isNotEmpty() ? chord.root + chord.type : juce::String ("Rest"); }
+juce::String chordLabel (const Chord& chord) { return abbreviatedChordLabel (chord); }
+int limitedProgressionBeats (const Section& section)
+{
+    return juce::jlimit (1, kProgressionGridSteps, computeSectionLoopBeats (section));
+}
+juce::Path hexagonPath (juce::Point<float> center, float radius)
+{
+    juce::Path path;
+    constexpr float rotation = juce::MathConstants<float>::pi / 6.0f;
+    for (int i = 0; i < 6; ++i)
+    {
+        const auto angle = juce::MathConstants<float>::twoPi * (0.1666667f * (float) i)
+                         - juce::MathConstants<float>::halfPi
+                         + rotation;
+        const auto point = juce::Point<float> (center.x + std::cos (angle) * radius,
+                                               center.y + std::sin (angle) * radius);
+        if (i == 0)
+            path.startNewSubPath (point);
+        else
+            path.lineTo (point);
+    }
+    path.closeSubPath();
+    return path;
+}
+
+struct StructureUndoAction final : public juce::UndoableAction
+{
+    StructureUndoAction (PluginProcessor& processorIn,
+                         const StructureState& beforeIn,
+                         const StructureState& afterIn)
+        : processor (processorIn), beforeState (beforeIn), afterState (afterIn) {}
+
+    bool perform() override
+    {
+        processor.getSongManager().replaceStructureState (afterState);
+        processor.getStructureEngine().rebuild();
+        processor.syncAuthoredSongToRuntime();
+        if (auto* editor = dynamic_cast<PluginEditor*> (processor.getActiveEditor()))
+            editor->refreshFromAuthoredSong();
+        return true;
+    }
+
+    bool undo() override
+    {
+        processor.getSongManager().replaceStructureState (beforeState);
+        processor.getStructureEngine().rebuild();
+        processor.syncAuthoredSongToRuntime();
+        if (auto* editor = dynamic_cast<PluginEditor*> (processor.getActiveEditor()))
+            editor->refreshFromAuthoredSong();
+        return true;
+    }
+
+    int getSizeInUnits() override { return 1; }
+
+    PluginProcessor& processor;
+    StructureState beforeState;
+    StructureState afterState;
+};
 }
 
 StructurePanel::StructurePanel (PluginProcessor& p) : processorRef (p)
 {
+    const auto accent = ZoneAStyle::accentForTabId ("structure");
     addAndMakeVisible (viewport);
     viewport.setScrollBarsShown (true, false);
     viewport.setViewedComponent (&content, false);
-    for (juce::Component* c : { static_cast<juce::Component*> (&structureFollowToggle), static_cast<juce::Component*> (&seedRailsButton), static_cast<juce::Component*> (&sectionListTitle), static_cast<juce::Component*> (&sectionList), static_cast<juce::Component*> (&addSectionButton), static_cast<juce::Component*> (&duplicateSectionButton), static_cast<juce::Component*> (&deleteSectionButton), static_cast<juce::Component*> (&moveSectionUpButton), static_cast<juce::Component*> (&moveSectionDownButton), static_cast<juce::Component*> (&arrangementTitle), static_cast<juce::Component*> (&arrangementList), static_cast<juce::Component*> (&addArrangementButton), static_cast<juce::Component*> (&duplicateArrangementButton), static_cast<juce::Component*> (&deleteArrangementButton), static_cast<juce::Component*> (&moveArrangementUpButton), static_cast<juce::Component*> (&moveArrangementDownButton), static_cast<juce::Component*> (&editorHeader), static_cast<juce::Component*> (&editorHint), static_cast<juce::Component*> (&nameLabel), static_cast<juce::Component*> (&barsLabel), static_cast<juce::Component*> (&repeatsLabel), static_cast<juce::Component*> (&transitionLabel), static_cast<juce::Component*> (&beatsLabel), static_cast<juce::Component*> (&keyLabel), static_cast<juce::Component*> (&modeLabel), static_cast<juce::Component*> (&centerLabel), static_cast<juce::Component*> (&nameEditor), static_cast<juce::Component*> (&barsSlider), static_cast<juce::Component*> (&repeatsSlider), static_cast<juce::Component*> (&beatsPerBarBox), static_cast<juce::Component*> (&transitionIntentBox), static_cast<juce::Component*> (&keyRootBox), static_cast<juce::Component*> (&modeBox), static_cast<juce::Component*> (&harmonicCenterBox), static_cast<juce::Component*> (&progressionHeader), static_cast<juce::Component*> (&progressionHint), static_cast<juce::Component*> (&chordRootLabel), static_cast<juce::Component*> (&chordTypeLabel), static_cast<juce::Component*> (&progressionStrip), static_cast<juce::Component*> (&addChordCellButton), static_cast<juce::Component*> (&removeChordCellButton), static_cast<juce::Component*> (&chordRootBox), static_cast<juce::Component*> (&chordTypeBox), static_cast<juce::Component*> (&summaryHeader), static_cast<juce::Component*> (&summaryTempo), static_cast<juce::Component*> (&summaryKey), static_cast<juce::Component*> (&summaryMode), static_cast<juce::Component*> (&summaryBars), static_cast<juce::Component*> (&summaryDuration) }) content.addAndMakeVisible (*c);
-    for (auto* l : { &sectionListTitle, &arrangementTitle, &editorHeader, &progressionHeader, &summaryHeader }) styleTitle (*l); for (auto* l : { &editorHint, &progressionHint, &nameLabel, &barsLabel, &repeatsLabel, &transitionLabel, &beatsLabel, &keyLabel, &modeLabel, &centerLabel, &chordRootLabel, &chordTypeLabel }) styleHint (*l); for (auto* l : { &summaryTempo, &summaryKey, &summaryMode, &summaryBars, &summaryDuration }) styleSummary (*l);
-    ZoneAControlStyle::styleTextEditor (nameEditor); for (auto* c : { &beatsPerBarBox, &transitionIntentBox, &keyRootBox, &modeBox, &harmonicCenterBox, &chordRootBox, &chordTypeBox }) styleCombo (*c);
-    for (auto* b : { &addSectionButton, &duplicateSectionButton, &deleteSectionButton, &moveSectionUpButton, &moveSectionDownButton, &addArrangementButton, &duplicateArrangementButton, &deleteArrangementButton, &moveArrangementUpButton, &moveArrangementDownButton, &addChordCellButton, &removeChordCellButton, &seedRailsButton }) ZoneAControlStyle::styleTextButton (*b, Theme::Zone::a);
-    ZoneAControlStyle::initBarSlider (barsSlider, "BARS"); barsSlider.setRange (1, 32, 1); ZoneAControlStyle::initBarSlider (repeatsSlider, "REPEATS"); repeatsSlider.setRange (1, 8, 1);
-    sectionList.setColour (juce::ListBox::backgroundColourId, Theme::Colour::surface2); sectionList.setRowHeight (28); arrangementList.setColour (juce::ListBox::backgroundColourId, Theme::Colour::surface2); arrangementList.setRowHeight (26);
+    for (juce::Component* c : { static_cast<juce::Component*> (&structureFollowToggle), static_cast<juce::Component*> (&seedRailsButton), static_cast<juce::Component*> (&sectionListTitle), static_cast<juce::Component*> (&sectionListHint), static_cast<juce::Component*> (&sectionList), static_cast<juce::Component*> (&addSectionButton), static_cast<juce::Component*> (&duplicateSectionButton), static_cast<juce::Component*> (&deleteSectionButton), static_cast<juce::Component*> (&moveSectionUpButton), static_cast<juce::Component*> (&moveSectionDownButton), static_cast<juce::Component*> (&inlineSectionNameEditor), static_cast<juce::Component*> (&arrangementTitle), static_cast<juce::Component*> (&arrangementFlowHint), static_cast<juce::Component*> (&arrangementList), static_cast<juce::Component*> (&arrangementHint), static_cast<juce::Component*> (&addArrangementButton), static_cast<juce::Component*> (&duplicateArrangementButton), static_cast<juce::Component*> (&deleteArrangementButton), static_cast<juce::Component*> (&moveArrangementUpButton), static_cast<juce::Component*> (&moveArrangementDownButton), static_cast<juce::Component*> (&editorHeader), static_cast<juce::Component*> (&editorHint), static_cast<juce::Component*> (&nameLabel), static_cast<juce::Component*> (&barsLabel), static_cast<juce::Component*> (&repeatsLabel), static_cast<juce::Component*> (&transitionLabel), static_cast<juce::Component*> (&beatsLabel), static_cast<juce::Component*> (&keyLabel), static_cast<juce::Component*> (&modeLabel), static_cast<juce::Component*> (&centerLabel), static_cast<juce::Component*> (&nameEditor), static_cast<juce::Component*> (&barsSlider), static_cast<juce::Component*> (&repeatsSlider), static_cast<juce::Component*> (&beatsPerBarBox), static_cast<juce::Component*> (&transitionIntentBox), static_cast<juce::Component*> (&keyRootBox), static_cast<juce::Component*> (&modeBox), static_cast<juce::Component*> (&harmonicCenterBox), static_cast<juce::Component*> (&progressionHeader), static_cast<juce::Component*> (&progressionHint), static_cast<juce::Component*> (&progressionPaletteHint), static_cast<juce::Component*> (&diatonicPaletteStrip), static_cast<juce::Component*> (&chordRootLabel), static_cast<juce::Component*> (&chordTypeLabel), static_cast<juce::Component*> (&progressionStrip), static_cast<juce::Component*> (&addChordCellButton), static_cast<juce::Component*> (&progressionPresetButton), static_cast<juce::Component*> (&cadenceButton), static_cast<juce::Component*> (&removeChordCellButton), static_cast<juce::Component*> (&chordRootBox), static_cast<juce::Component*> (&chordTypeBox), static_cast<juce::Component*> (&summaryHeader), static_cast<juce::Component*> (&summaryTempo), static_cast<juce::Component*> (&summaryKey), static_cast<juce::Component*> (&summaryMode), static_cast<juce::Component*> (&summaryBars), static_cast<juce::Component*> (&summaryDuration) }) content.addAndMakeVisible (*c);
+    for (auto* l : { &sectionListTitle, &arrangementTitle, &editorHeader, &progressionHeader, &summaryHeader }) { styleTitle (*l); l->setColour (juce::Label::textColourId, accent); } for (auto* l : { &sectionListHint, &arrangementFlowHint, &arrangementHint, &editorHint, &progressionHint, &progressionPaletteHint, &nameLabel, &barsLabel, &repeatsLabel, &transitionLabel, &beatsLabel, &keyLabel, &modeLabel, &centerLabel, &chordRootLabel, &chordTypeLabel }) styleHint (*l); for (auto* l : { &summaryTempo, &summaryKey, &summaryMode, &summaryBars, &summaryDuration }) styleSummary (*l);
+    ZoneAControlStyle::styleTextEditor (nameEditor); ZoneAControlStyle::styleTextEditor (inlineSectionNameEditor); inlineSectionNameEditor.setVisible (false); arrangementHint.setInterceptsMouseClicks (false, false); for (auto* c : { &beatsPerBarBox, &transitionIntentBox, &keyRootBox, &modeBox, &harmonicCenterBox, &chordRootBox, &chordTypeBox }) styleCombo (*c, accent);
+    for (auto* b : { &addSectionButton, &duplicateSectionButton, &moveSectionUpButton, &moveSectionDownButton, &addArrangementButton, &duplicateArrangementButton, &moveArrangementUpButton, &moveArrangementDownButton, &addChordCellButton, &progressionPresetButton, &cadenceButton, &removeChordCellButton, &seedRailsButton }) ZoneAControlStyle::styleTextButton (*b, accent);
+    ZoneAControlStyle::initBarSlider (barsSlider, "BARS"); barsSlider.setRange (1, 32, 1); ZoneAControlStyle::tintBarSlider (barsSlider, accent); ZoneAControlStyle::initBarSlider (repeatsSlider, "REPEATS"); repeatsSlider.setRange (1, 8, 1); ZoneAControlStyle::tintBarSlider (repeatsSlider, accent);
+    moveSectionUpButton.setVisible (false);
+    moveSectionDownButton.setVisible (false);
+    moveArrangementUpButton.setVisible (false);
+    moveArrangementDownButton.setVisible (false);
+    sectionList.setColour (juce::ListBox::backgroundColourId, Theme::Colour::surface2); sectionList.setRowHeight (22); arrangementList.setColour (juce::ListBox::backgroundColourId, Theme::Colour::surface2); arrangementList.setRowHeight (22);
     for (auto r : kRoots) { keyRootBox.addItem (r, keyRootBox.getNumItems() + 1); chordRootBox.addItem (r, chordRootBox.getNumItems() + 1); } for (auto m : kModes) modeBox.addItem (m, modeBox.getNumItems() + 1); for (auto d : kDegrees) harmonicCenterBox.addItem (d, harmonicCenterBox.getNumItems() + 1); for (auto t : kTypes) chordTypeBox.addItem (t, chordTypeBox.getNumItems() + 1); for (auto i : kTransitions) transitionIntentBox.addItem (i, transitionIntentBox.getNumItems() + 1); for (auto beats : { 3, 4, 5, 6, 7 }) beatsPerBarBox.addItem (juce::String (beats) + "/4", beats);
+    ZoneAControlStyle::styleToggleButton (structureFollowToggle, accent);
+    structureFollowToggle.setButtonText ("Follow");
     structureFollowToggle.setToggleState (processorRef.isStructureFollowForTracksEnabled(), juce::dontSendNotification); structureFollowToggle.onClick = [this] { const bool enabled = structureFollowToggle.getToggleState(); processorRef.setStructureFollowForTracks (enabled); if (onStructureFollowModeChanged) onStructureFollowModeChanged (enabled); };
     seedRailsButton.onClick = [this] { if (onRailsSeeded) { juce::Array<int> slots; slots.add (0); onRailsSeeded (slots); } };
-    addSectionButton.onClick = [this] { addSection(); }; duplicateSectionButton.onClick = [this] { duplicateSelectedSection(); }; deleteSectionButton.onClick = [this] { deleteSelectedSection(); }; moveSectionUpButton.onClick = [this] { moveSelectedSection (-1); }; moveSectionDownButton.onClick = [this] { moveSelectedSection (1); };
-    addArrangementButton.onClick = [this] { addArrangementBlock(); }; duplicateArrangementButton.onClick = [this] { duplicateSelectedArrangementBlock(); }; deleteArrangementButton.onClick = [this] { deleteSelectedArrangementBlock(); }; moveArrangementUpButton.onClick = [this] { moveSelectedArrangementBlock (-1); }; moveArrangementDownButton.onClick = [this] { moveSelectedArrangementBlock (1); };
-    addChordCellButton.onClick = [this] { addChordCell(); }; removeChordCellButton.onClick = [this] { removeSelectedChordCell(); };
-    nameEditor.onReturnKey = [this] { if (auto* s = getSelectedSection()) { s->name = nameEditor.getText().trim(); commitStructureChange (false); refreshLists(); } }; nameEditor.onFocusLost = nameEditor.onReturnKey;
-    barsSlider.onValueChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { s->bars = juce::roundToInt (barsSlider.getValue()); commitStructureChange (false); refreshLists(); progressionStrip.repaint(); } }; repeatsSlider.onValueChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { s->repeats = juce::roundToInt (repeatsSlider.getValue()); commitStructureChange (false); refreshLists(); } };
-    beatsPerBarBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { s->beatsPerBar = juce::jmax (1, beatsPerBarBox.getSelectedId()); commitStructureChange (false); refreshLists(); } }; transitionIntentBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { s->transitionIntent = transitionIntentBox.getText(); commitStructureChange (false); progressionStrip.repaint(); } };
-    keyRootBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { s->keyRoot = keyRootBox.getText(); commitStructureChange (false); progressionStrip.repaint(); } }; modeBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { s->mode = modeBox.getText(); commitStructureChange (false); progressionStrip.repaint(); } }; harmonicCenterBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { s->harmonicCenter = harmonicCenterBox.getText(); commitStructureChange (false); } };
-    chordRootBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* c = getSelectedChordCell()) { c->root = chordRootBox.getText(); commitStructureChange (false); progressionStrip.repaint(); } }; chordTypeBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* c = getSelectedChordCell()) { c->type = chordTypeBox.getText(); commitStructureChange (false); progressionStrip.repaint(); } };
-    setIntentKeyMode (processorRef.getAppState().song.keyRoot, processorRef.getAppState().song.keyScale); refreshLists(); refreshEditor(); refreshSummary();
+    seedRailsButton.setVisible (false);
+    sectionListHint.setText ("Reusable loops and identities", juce::dontSendNotification);
+    arrangementFlowHint.setText ("Song order: drop sections here", juce::dontSendNotification);
+    arrangementHint.setText ("Drop a section here to start the song form", juce::dontSendNotification);
+    addSectionButton.setButtonText ("New");
+    addArrangementButton.setButtonText ("Place");
+    progressionPresetButton.onClick = [this] { showProgressionPresetMenu(); };
+    cadenceButton.onClick = [this] { showCadenceMenu(); };
+    addSectionButton.onClick = [this] { addSection(); }; duplicateSectionButton.onClick = [this] { duplicateSelectedSection(); }; moveSectionUpButton.onClick = [this] { moveSelectedSection (-1); }; moveSectionDownButton.onClick = [this] { moveSelectedSection (1); };
+    addArrangementButton.onClick = [this] { addArrangementBlock(); }; duplicateArrangementButton.onClick = [this] { duplicateSelectedArrangementBlock(); }; moveArrangementUpButton.onClick = [this] { moveSelectedArrangementBlock (-1); }; moveArrangementDownButton.onClick = [this] { moveSelectedArrangementBlock (1); };
+    addChordCellButton.onClick = [this] { addChordCell(); };
+    removeChordCellButton.onClick = [this] { removeSelectedChordCell(); };
+    nameEditor.onReturnKey = [this] { if (auto* s = getSelectedSection()) { const auto beforeState = processorRef.getSongManager().getStructureState(); s->name = nameEditor.getText().trim(); commitStructureChange (beforeState, "Rename Section", false); refreshLists(); } }; nameEditor.onFocusLost = nameEditor.onReturnKey;
+    inlineSectionNameEditor.onReturnKey = [this] { finishInlineSectionRename (true); };
+    inlineSectionNameEditor.onEscapeKey = [this] { finishInlineSectionRename (false); };
+    inlineSectionNameEditor.onFocusLost = [this] { finishInlineSectionRename (true); };
+    barsSlider.onValueChange = [this] {};
+    repeatsSlider.onValueChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { const auto beforeState = processorRef.getSongManager().getStructureState(); s->repeats = juce::roundToInt (repeatsSlider.getValue()); updateSectionDerivedLength (*s); commitStructureChange (beforeState, "Change Section Repeats", false); refreshEditor(); refreshLists(); } };
+    beatsPerBarBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { const auto beforeState = processorRef.getSongManager().getStructureState(); s->beatsPerBar = juce::jmax (1, beatsPerBarBox.getSelectedId()); updateSectionDerivedLength (*s); commitStructureChange (beforeState, "Change Section Meter", false); refreshEditor(); refreshLists(); } }; transitionIntentBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { const auto beforeState = processorRef.getSongManager().getStructureState(); s->transitionIntent = transitionIntentBox.getText(); commitStructureChange (beforeState, "Change Transition Intent", false); progressionStrip.repaint(); } };
+    keyRootBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { const auto beforeState = processorRef.getSongManager().getStructureState(); s->keyRoot = keyRootBox.getText(); commitStructureChange (beforeState, "Change Section Key", false); refreshEditor(); } }; modeBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { const auto beforeState = processorRef.getSongManager().getStructureState(); s->mode = modeBox.getText(); commitStructureChange (beforeState, "Change Section Mode", false); refreshEditor(); } }; harmonicCenterBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* s = getSelectedSection()) { const auto beforeState = processorRef.getSongManager().getStructureState(); s->harmonicCenter = harmonicCenterBox.getText(); commitStructureChange (beforeState, "Change Harmonic Center", false); refreshEditor(); } };
+    chordRootBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* c = getSelectedChordCell()) { const auto beforeState = processorRef.getSongManager().getStructureState(); c->root = chordRootBox.getText(); commitStructureChange (beforeState, "Change Chord Root", false); progressionStrip.repaint(); } }; chordTypeBox.onChange = [this] { if (! suppressControlCallbacks) if (auto* c = getSelectedChordCell()) { const auto beforeState = processorRef.getSongManager().getStructureState(); c->type = chordTypeBox.getText(); commitStructureChange (beforeState, "Change Chord Quality", false); progressionStrip.repaint(); } };
+    setIntentKeyMode (processorRef.getSongManager().getKeyRoot(), processorRef.getSongManager().getKeyScale()); refreshLists(); refreshEditor(); refreshSummary();
 }
 
 void StructurePanel::ContentComponent::paint (juce::Graphics& g) { owner.paintContent (g); }
 void StructurePanel::paint (juce::Graphics& g) { g.fillAll (Theme::Zone::bgA); }
+void StructurePanel::refreshFromModel() { refreshLists(); refreshEditor(); refreshSummary(); repaint(); }
+
+StructurePanel::StructureListBox::StructureListBox (StructurePanel& ownerIn,
+                                                    ListKind kindIn,
+                                                    const juce::String& name,
+                                                    juce::ListBoxModel* modelIn)
+    : juce::ListBox (name, modelIn),
+      owner (ownerIn),
+      kind (kindIn)
+{
+}
+
+void StructurePanel::StructureListBox::mouseDown (const juce::MouseEvent& event)
+{
+    owner.finishInlineSectionRename (true);
+    juce::ListBox::mouseDown (event);
+    int row = getSelectedRow();
+    if (row < 0)
+        row = getRowContainingPosition (event.getPosition().x, event.getPosition().y);
+    const int totalRows = getListBoxModel() != nullptr ? getListBoxModel()->getNumRows() : 0;
+    dragStartRow = event.mods.isLeftButtonDown() && row >= 0 && row < totalRows ? row : -1;
+    dragStarted = false;
+}
+
+void StructurePanel::StructureListBox::mouseDrag (const juce::MouseEvent& event)
+{
+    if (dragStartRow < 0 || dragStarted)
+    {
+        juce::ListBox::mouseDrag (event);
+        return;
+    }
+
+    if (event.getDistanceFromDragStart() < 4)
+    {
+        juce::ListBox::mouseDrag (event);
+        return;
+    }
+
+    const auto description = kind == ListKind::sections
+                                ? owner.dragDescriptionForSectionIndex (dragStartRow)
+                                : owner.dragDescriptionForArrangementIndex (dragStartRow);
+    if (description.isEmpty())
+    {
+        juce::ListBox::mouseDrag (event);
+        return;
+    }
+
+    dragStarted = true;
+    owner.startDragging (description, this);
+    return;
+}
+
+void StructurePanel::StructureListBox::mouseUp (const juce::MouseEvent& event)
+{
+    juce::ListBox::mouseUp (event);
+    dragStartRow = -1;
+    dragStarted = false;
+}
+
+void StructurePanel::StructureListBox::paintOverChildren (juce::Graphics& g)
+{
+    juce::ListBox::paintOverChildren (g);
+
+    if (dropHover)
+    {
+        const auto accent = ZoneAStyle::accentForTabId ("structure");
+        g.setColour (accent.withAlpha (dropAcceptsExternalSource ? 0.12f : 0.07f));
+        g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), 5.0f);
+    }
+
+    if (dropRow >= 0)
+    {
+        const int rowY = juce::jlimit (0, getHeight(), dropRow * getRowHeight());
+        const auto accent = ZoneAStyle::accentForTabId ("structure");
+        g.setColour (accent.withAlpha (0.95f));
+        g.fillRect (4.0f, (float) rowY - 1.0f, (float) juce::jmax (0, getWidth() - 8), 2.0f);
+    }
+
+    const int totalRows = getListBoxModel() != nullptr ? getListBoxModel()->getNumRows() : 0;
+    if (dropHover && kind == ListKind::arrangement && dropAcceptsExternalSource && totalRows == 0)
+    {
+        g.setColour (Theme::Colour::inkLight.withAlpha (0.92f));
+        g.setFont (Theme::Font::microMedium());
+        g.drawText ("Release to place section in song order",
+                    getLocalBounds().reduced (8),
+                    juce::Justification::centred,
+                    true);
+    }
+}
+
+bool StructurePanel::StructureListBox::isInterestedInDragSource (const SourceDetails& dragSourceDetails)
+{
+    if (kind == ListKind::arrangement && owner.isDragDescriptionForKind (dragSourceDetails.description, ListKind::sections))
+        return true;
+    return owner.isDragDescriptionForKind (dragSourceDetails.description, kind);
+}
+
+void StructurePanel::StructureListBox::itemDragEnter (const SourceDetails& dragSourceDetails)
+{
+    dropHover = true;
+    dropAcceptsExternalSource = kind == ListKind::arrangement
+                             && owner.isDragDescriptionForKind (dragSourceDetails.description, ListKind::sections);
+    itemDragMove (dragSourceDetails);
+}
+
+void StructurePanel::StructureListBox::itemDragMove (const SourceDetails& dragSourceDetails)
+{
+    dropHover = true;
+    dropAcceptsExternalSource = kind == ListKind::arrangement
+                             && owner.isDragDescriptionForKind (dragSourceDetails.description, ListKind::sections);
+    const int totalRows = getListBoxModel() != nullptr ? getListBoxModel()->getNumRows() : 0;
+    if (totalRows <= 0)
+    {
+        dropRow = 0;
+        repaint();
+        return;
+    }
+
+    const auto mousePos = getMouseXYRelative();
+    const int rawY = mousePos.y;
+    const int fallbackY = static_cast<int> (dragSourceDetails.localPosition.y);
+    const int y = juce::jlimit (0, getHeight(), rawY >= 0 ? rawY : fallbackY);
+    const float rowHeightValue = (float) juce::jmax (1, getRowHeight());
+    dropRow = juce::jlimit (0, totalRows, static_cast<int> (std::floor ((float) y / rowHeightValue)));
+    repaint();
+}
+
+void StructurePanel::StructureListBox::itemDragExit (const SourceDetails&)
+{
+    dropRow = -1;
+    dropHover = false;
+    dropAcceptsExternalSource = false;
+    repaint();
+}
+
+void StructurePanel::StructureListBox::itemDropped (const SourceDetails& dragSourceDetails)
+{
+    const bool sectionToArrangement = kind == ListKind::arrangement
+                                   && owner.isDragDescriptionForKind (dragSourceDetails.description, ListKind::sections);
+    const int fromIndex = owner.dragIndexFromDescription (dragSourceDetails.description,
+                                                          sectionToArrangement ? ListKind::sections : kind);
+    const int totalRows = getListBoxModel() != nullptr ? getListBoxModel()->getNumRows() : 0;
+    const int fallbackDropRow = juce::jlimit (0, totalRows, static_cast<int> (std::floor ((float) juce::jlimit (0, getHeight(), getMouseXYRelative().y)
+                                                                                              / (float) juce::jmax (1, getRowHeight()))));
+    const int targetRow = dropRow >= 0 ? dropRow : fallbackDropRow;
+    dropRow = -1;
+    dropHover = false;
+    dropAcceptsExternalSource = false;
+    repaint();
+
+    if (fromIndex >= 0)
+    {
+        if (sectionToArrangement)
+            owner.addArrangementBlockFromSection (fromIndex, targetRow);
+        else
+            owner.handleListDrop (kind, fromIndex, targetRow);
+    }
+}
+
+void StructurePanel::TrashDropZone::paint (juce::Graphics& g)
+{
+    const auto bounds = getLocalBounds().toFloat().reduced (0.5f);
+    const auto accent = ZoneAStyle::accentForTabId ("structure");
+    const auto fill = dragHover ? ThemeManager::get().theme().controlOnBg
+                                : ThemeManager::get().theme().controlBg;
+    g.setColour (fill);
+    g.fillRoundedRectangle (bounds, 4.0f);
+    g.setColour (accent.withAlpha (dragHover ? 0.9f : 0.4f));
+    g.drawRoundedRectangle (bounds, 4.0f, dragHover ? 1.4f : 1.0f);
+    g.setFont (Theme::Font::microMedium());
+    g.setColour (ThemeManager::get().theme().controlTextOn);
+    g.drawText ("TRASH", getLocalBounds(), juce::Justification::centred, false);
+}
+
+void StructurePanel::TrashDropZone::mouseUp (const juce::MouseEvent& event)
+{
+    juce::ignoreUnused (event);
+    if (kind == ListKind::sections)
+        owner.deleteSelectedSection();
+    else
+        owner.deleteSelectedArrangementBlock();
+}
+
+bool StructurePanel::TrashDropZone::isInterestedInDragSource (const SourceDetails& dragSourceDetails)
+{
+    return owner.isDragDescriptionForKind (dragSourceDetails.description, kind);
+}
+
+void StructurePanel::TrashDropZone::itemDragEnter (const SourceDetails&)
+{
+    dragHover = true;
+    repaint();
+}
+
+void StructurePanel::TrashDropZone::itemDragExit (const SourceDetails&)
+{
+    dragHover = false;
+    repaint();
+}
+
+void StructurePanel::TrashDropZone::itemDropped (const SourceDetails& dragSourceDetails)
+{
+    dragHover = false;
+    repaint();
+
+    const int fromIndex = owner.dragIndexFromDescription (dragSourceDetails.description, kind);
+    if (fromIndex >= 0)
+        owner.handleTrashDrop (kind, fromIndex);
+}
 
 void StructurePanel::resized()
 {
     viewport.setBounds (getLocalBounds());
-    const int contentHeight = 920;
+    const int contentHeight = 860;
     content.setSize (juce::jmax (viewport.getWidth() - 10, 200), contentHeight);
     layoutContent (content.getLocalBounds());
 }
@@ -66,233 +351,942 @@ void StructurePanel::resized()
 void StructurePanel::paintContent (juce::Graphics& g)
 {
     g.fillAll (Theme::Zone::bgA);
-    header (g, { 0, 0, content.getWidth(), 24 }, "Structure");
-    card (g, sectionList.getBounds().expanded (6, 32));
-    card (g, arrangementList.getBounds().expanded (6, 32));
-    card (g, progressionStrip.getBounds().expanded (8, 38));
-    card (g, summaryHeader.getBounds().getUnion (summaryDuration.getBounds()).expanded (8, 26));
+    const auto accent = ZoneAStyle::accentForTabId ("structure");
+    const int headerH = ZoneAStyle::compactHeaderHeight();
+    const int cardPad = ZoneAControlStyle::compactGap() + 2;
+    ZoneAStyle::drawHeader (g, { 0, 0, content.getWidth(), headerH }, "STRUCTURE", accent);
+    ZoneAStyle::drawCard (g, sectionListHint.getBounds().getUnion (sectionList.getBounds()).expanded (cardPad, headerH + 6), accent);
+    ZoneAStyle::drawCard (g, arrangementFlowHint.getBounds().getUnion (arrangementList.getBounds()).expanded (cardPad, headerH + 6), Theme::Colour::accentWarm);
+    ZoneAStyle::drawCard (g, editorHeader.getBounds().getUnion (harmonicCenterBox.getBounds()).expanded (cardPad, headerH), accent);
+    ZoneAStyle::drawCard (g, progressionHeader.getBounds().getUnion (progressionStrip.getBounds()).expanded (cardPad, headerH + 8), Theme::Colour::accentWarm);
+    ZoneAStyle::drawCard (g, summaryHeader.getBounds().getUnion (summaryDuration.getBounds()).expanded (cardPad, headerH), accent);
 }
 
 void StructurePanel::layoutContent (juce::Rectangle<int> bounds)
 {
-    bounds = bounds.reduced (10);
-    auto top = bounds.removeFromTop (28);
-    seedRailsButton.setBounds (top.removeFromRight (96));
-    top.removeFromRight (8);
-    structureFollowToggle.setBounds (top.removeFromRight (190));
+    const int gap = ZoneAControlStyle::compactGap();
+    const int labelH = ZoneAControlStyle::sectionHeaderHeight() - 2;
+    const int rowH = ZoneAControlStyle::controlHeight();
+    const int barH = ZoneAControlStyle::controlBarHeight();
+    const int headerH = ZoneAStyle::compactHeaderHeight();
+    const int groupHeaderH = ZoneAStyle::compactGroupHeaderHeight();
 
-    bounds.removeFromTop (8);
+    sectionList.setRowHeight (ZoneAStyle::compactRowHeight());
+    arrangementList.setRowHeight (ZoneAStyle::compactRowHeight());
 
-    auto sectionCard = bounds.removeFromTop (164);
-    sectionListTitle.setBounds (sectionCard.removeFromTop (16));
-    auto sbtn = sectionCard.removeFromTop (22);
-    addSectionButton.setBounds (sbtn.removeFromLeft (42));
-    sbtn.removeFromLeft (4);
-    duplicateSectionButton.setBounds (sbtn.removeFromLeft (72));
-    sbtn.removeFromLeft (4);
-    deleteSectionButton.setBounds (sbtn.removeFromLeft (54));
-    sbtn.removeFromLeft (4);
-    moveSectionUpButton.setBounds (sbtn.removeFromLeft (34));
-    sbtn.removeFromLeft (4);
-    moveSectionDownButton.setBounds (sbtn.removeFromLeft (44));
-    sectionCard.removeFromTop (6);
+    bounds = bounds.reduced (gap + 4).withTrimmedTop (headerH);
+    auto top = bounds.removeFromTop (rowH);
+    seedRailsButton.setBounds ({});
+    structureFollowToggle.setBounds (top.removeFromRight (88));
+
+    bounds.removeFromTop (gap + 1);
+
+    auto libraryRow = bounds.removeFromTop (160);
+    auto sectionCard = libraryRow.removeFromLeft ((libraryRow.getWidth() - (gap + 6)) / 2);
+    libraryRow.removeFromLeft (gap + 6);
+    auto arrangementCard = libraryRow;
+
+    sectionListTitle.setBounds (sectionCard.removeFromTop (groupHeaderH));
+    sectionListHint.setBounds (sectionCard.removeFromTop (labelH));
+    auto sbtn = sectionCard.removeFromTop (rowH);
+    addSectionButton.setBounds (sbtn.removeFromLeft (38));
+    sbtn.removeFromLeft (gap);
+    duplicateSectionButton.setBounds (sbtn.removeFromLeft (62));
+    sbtn.removeFromLeft (gap);
+    deleteSectionButton.setBounds (sbtn.removeFromLeft (52));
+    moveSectionUpButton.setBounds ({});
+    moveSectionDownButton.setBounds ({});
+    sectionCard.removeFromTop (gap);
     sectionList.setBounds (sectionCard);
-
-    bounds.removeFromTop (10);
-
-    auto arrangementCard = bounds.removeFromTop (138);
-    arrangementTitle.setBounds (arrangementCard.removeFromTop (16));
-    auto abtn = arrangementCard.removeFromTop (22);
-    addArrangementButton.setBounds (abtn.removeFromLeft (42));
-    abtn.removeFromLeft (4);
-    duplicateArrangementButton.setBounds (abtn.removeFromLeft (72));
-    abtn.removeFromLeft (4);
-    deleteArrangementButton.setBounds (abtn.removeFromLeft (54));
-    abtn.removeFromLeft (4);
-    moveArrangementUpButton.setBounds (abtn.removeFromLeft (34));
-    abtn.removeFromLeft (4);
-    moveArrangementDownButton.setBounds (abtn.removeFromLeft (44));
-    arrangementCard.removeFromTop (6);
+    arrangementTitle.setBounds (arrangementCard.removeFromTop (groupHeaderH));
+    arrangementFlowHint.setBounds (arrangementCard.removeFromTop (labelH));
+    auto abtn = arrangementCard.removeFromTop (rowH);
+    addArrangementButton.setBounds (abtn.removeFromLeft (48));
+    abtn.removeFromLeft (gap);
+    duplicateArrangementButton.setBounds (abtn.removeFromLeft (62));
+    abtn.removeFromLeft (gap);
+    deleteArrangementButton.setBounds (abtn.removeFromLeft (52));
+    moveArrangementUpButton.setBounds ({});
+    moveArrangementDownButton.setBounds ({});
+    arrangementCard.removeFromTop (gap);
     arrangementList.setBounds (arrangementCard);
+    arrangementHint.setBounds (arrangementCard.reduced (10, 10));
 
-    bounds.removeFromTop (12);
+    bounds.removeFromTop (gap + 3);
 
-    editorHeader.setBounds (bounds.removeFromTop (16));
-    editorHint.setBounds (bounds.removeFromTop (16));
-    bounds.removeFromTop (8);
+    editorHeader.setBounds (bounds.removeFromTop (groupHeaderH));
+    editorHint.setBounds (bounds.removeFromTop (labelH));
+    nameLabel.setBounds ({});
+    nameEditor.setBounds ({});
+    barsLabel.setBounds ({});
+    barsSlider.setBounds ({});
+    bounds.removeFromTop (gap);
 
-    nameLabel.setBounds (bounds.removeFromTop (14));
-    nameEditor.setBounds (bounds.removeFromTop (24));
-    bounds.removeFromTop (8);
-    barsLabel.setBounds (bounds.removeFromTop (14));
-    barsSlider.setBounds (bounds.removeFromTop (18));
-    bounds.removeFromTop (8);
-    repeatsLabel.setBounds (bounds.removeFromTop (14));
-    repeatsSlider.setBounds (bounds.removeFromTop (18));
-    bounds.removeFromTop (8);
+    auto tonalLabels1 = bounds.removeFromTop (labelH);
+    const int tonalGap = gap + 2;
+    const int tonalW = juce::jmax (72, (tonalLabels1.getWidth() - tonalGap * 2) / 3);
+    modeLabel.setText ("Mode", juce::dontSendNotification);
+    keyLabel.setText ("Key", juce::dontSendNotification);
+    centerLabel.setText ("Root", juce::dontSendNotification);
+    modeLabel.setBounds (tonalLabels1.removeFromLeft (tonalW));
+    tonalLabels1.removeFromLeft (tonalGap);
+    keyLabel.setBounds (tonalLabels1.removeFromLeft (tonalW));
+    tonalLabels1.removeFromLeft (tonalGap);
+    centerLabel.setBounds (tonalLabels1);
+    auto tonalRow1 = bounds.removeFromTop (rowH);
+    modeBox.setBounds (tonalRow1.removeFromLeft (tonalW));
+    tonalRow1.removeFromLeft (tonalGap);
+    keyRootBox.setBounds (tonalRow1.removeFromLeft (tonalW));
+    tonalRow1.removeFromLeft (tonalGap);
+    harmonicCenterBox.setBounds (tonalRow1);
 
-    auto meterLabels = bounds.removeFromTop (14);
-    transitionLabel.setBounds (meterLabels.removeFromLeft (juce::jmax (120, meterLabels.getWidth() / 2)));
-    meterLabels.removeFromLeft (8);
-    beatsLabel.setBounds (meterLabels);
-    auto meterRow = bounds.removeFromTop (24);
-    transitionIntentBox.setBounds (meterRow.removeFromLeft (juce::jmax (120, meterRow.getWidth() / 2)));
-    meterRow.removeFromLeft (8);
-    beatsPerBarBox.setBounds (meterRow);
+    bounds.removeFromTop (gap + 4);
 
-    bounds.removeFromTop (10);
+    progressionHeader.setBounds (bounds.removeFromTop (groupHeaderH));
+    progressionHint.setBounds (bounds.removeFromTop (labelH));
+    progressionPaletteHint.setBounds (bounds.removeFromTop (labelH * 2));
+    bounds.removeFromTop (gap);
+    auto paletteArea = bounds.removeFromTop (152);
+    diatonicPaletteStrip.setBounds (paletteArea);
+    bounds.removeFromTop (gap + 2);
+    auto gridArea = bounds.removeFromTop (210);
+    progressionStrip.setBounds (gridArea);
+    bounds.removeFromTop (gap + 2);
 
-    keyLabel.setBounds (bounds.removeFromTop (14));
-    auto tonalRow1 = bounds.removeFromTop (24);
-    keyRootBox.setBounds (tonalRow1);
-    bounds.removeFromTop (6);
-    modeLabel.setBounds (bounds.removeFromTop (14));
-    auto tonalRow2 = bounds.removeFromTop (24);
-    modeBox.setBounds (tonalRow2);
-    bounds.removeFromTop (6);
-    centerLabel.setBounds (bounds.removeFromTop (14));
-    auto tonalRow3 = bounds.removeFromTop (24);
-    harmonicCenterBox.setBounds (tonalRow3);
+    auto prow = bounds.removeFromTop (rowH);
+    juce::ignoreUnused (prow, barH);
+    addChordCellButton.setBounds ({});
+    removeChordCellButton.setBounds ({});
+    progressionPresetButton.setBounds ({});
+    cadenceButton.setBounds ({});
+    chordRootLabel.setBounds ({});
+    chordTypeLabel.setBounds ({});
+    chordRootBox.setBounds ({});
+    chordTypeBox.setBounds ({});
+    repeatsLabel.setBounds ({});
+    repeatsSlider.setBounds ({});
+    transitionLabel.setBounds ({});
+    transitionIntentBox.setBounds ({});
+    beatsLabel.setBounds ({});
+    beatsPerBarBox.setBounds ({});
 
-    bounds.removeFromTop (12);
-
-    progressionHeader.setBounds (bounds.removeFromTop (16));
-    progressionHint.setBounds (bounds.removeFromTop (16));
-    bounds.removeFromTop (6);
-
-    auto prow = bounds.removeFromTop (24);
-    addChordCellButton.setBounds (prow.removeFromLeft (68));
-    prow.removeFromLeft (6);
-    removeChordCellButton.setBounds (prow.removeFromLeft (68));
-    juce::ignoreUnused (prow);
-
-    bounds.removeFromTop (8);
-    auto chordLabels = bounds.removeFromTop (14);
-    chordRootLabel.setBounds (chordLabels.removeFromLeft (juce::jmax (88, chordLabels.getWidth() / 2 - 3)));
-    chordLabels.removeFromLeft (6);
-    chordTypeLabel.setBounds (chordLabels);
-    auto chordRow = bounds.removeFromTop (24);
-    chordRootBox.setBounds (chordRow.removeFromLeft (juce::jmax (88, chordRow.getWidth() / 2 - 3)));
-    chordRow.removeFromLeft (6);
-    chordTypeBox.setBounds (chordRow);
-
-    bounds.removeFromTop (8);
-    progressionStrip.setBounds (bounds.removeFromTop (118));
-
-    bounds.removeFromTop (12);
-    summaryHeader.setBounds (bounds.removeFromTop (16));
-    summaryTempo.setBounds (bounds.removeFromTop (18));
-    summaryKey.setBounds (bounds.removeFromTop (18));
-    summaryMode.setBounds (bounds.removeFromTop (18));
-    summaryBars.setBounds (bounds.removeFromTop (18));
-    summaryDuration.setBounds (bounds.removeFromTop (18));
+    bounds.removeFromTop (gap + 4);
+    summaryHeader.setBounds (bounds.removeFromTop (groupHeaderH));
+    summaryTempo.setBounds (bounds.removeFromTop (groupHeaderH));
+    summaryKey.setBounds (bounds.removeFromTop (groupHeaderH));
+    summaryMode.setBounds (bounds.removeFromTop (groupHeaderH));
+    summaryBars.setBounds (bounds.removeFromTop (groupHeaderH));
+    summaryDuration.setBounds (bounds.removeFromTop (groupHeaderH));
+    progressionPresetButton.setBounds ({});
+    cadenceButton.setBounds ({});
 }
 
-void StructurePanel::setIntentKeyMode (const juce::String& keyRoot, const juce::String& mode) { auto& s = processorRef.getAppState().structure; s.songKey = keyRoot.trim().isNotEmpty() ? keyRoot.trim() : juce::String ("C"); s.songMode = mode.trim().isNotEmpty() ? mode.trim() : juce::String ("Major"); refreshSummary(); }
-int StructurePanel::SectionListModel::getNumRows() { return static_cast<int> (owner.processorRef.getAppState().structure.sections.size()); }
-void StructurePanel::SectionListModel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) { const auto& sections = owner.processorRef.getAppState().structure.sections; if (row < 0 || row >= static_cast<int> (sections.size())) return; const auto& s = sections[(size_t) row]; g.setColour (selected ? Theme::Colour::surface3 : Theme::Colour::surface2); g.fillRect (0, 0, w, h); if (selected) { g.setColour (Theme::Zone::a); g.fillRect (0, 0, 3, h); } g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.22f)); g.fillRect (0, h - 1, w, 1); g.setColour (Theme::Colour::inkLight); g.setFont (Theme::Font::label()); g.drawText (s.name, 8, 0, w - 100, h, juce::Justification::centredLeft, true); g.setColour (Theme::Colour::inkGhost); g.setFont (Theme::Font::micro()); g.drawText (juce::String (s.bars) + " bars x" + juce::String (s.repeats), w - 88, 0, 80, h, juce::Justification::centredRight, true); }
+void StructurePanel::setIntentKeyMode (const juce::String& keyRoot, const juce::String& mode) { processorRef.getSongManager().setKeyRoot (keyRoot); processorRef.getSongManager().setKeyScale (mode); processorRef.syncAuthoredSongToRuntime(); refreshSummary(); }
+int StructurePanel::SectionListModel::getNumRows() { return static_cast<int> (owner.processorRef.getSongManager().getStructureState().sections.size()); }
+void StructurePanel::SectionListModel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) { const auto& sections = owner.processorRef.getSongManager().getStructureState().sections; if (row < 0 || row >= static_cast<int> (sections.size())) return; const auto& s = sections[(size_t) row]; const auto accent = sectionColourForIndex (row); ZoneAStyle::drawRowBackground (g, { 0, 0, w, h }, false, selected, accent); auto area = juce::Rectangle<int> (0, 0, w, h).reduced (8, 3); auto badge = area.removeFromLeft (24).reduced (0, 3); ZoneAStyle::drawBadge (g, badge, "S" + juce::String (row + 1), accent); area.removeFromLeft (6); auto stats = area.removeFromRight (66); g.setColour (Theme::Colour::inkLight); g.setFont (Theme::Font::label()); g.drawText (s.name, area.removeFromTop (15), juce::Justification::centredLeft, true); g.setColour (Theme::Colour::inkGhost.withAlpha (0.92f)); g.setFont (Theme::Font::micro()); g.drawText (juce::String (juce::jmax (1, s.bars)) + " bars  |  " + juce::String ((int) s.progression.size()) + " cells", area, juce::Justification::centredLeft, true); g.setColour (accent.withAlpha (0.9f)); g.setFont (Theme::Font::micro()); g.drawText ("drag", stats.removeFromTop (10), juce::Justification::centredRight, false); g.setColour (Theme::Colour::inkGhost); g.drawText (s.keyRoot + " " + s.mode, stats, juce::Justification::centredRight, true); }
 void StructurePanel::SectionListModel::selectedRowsChanged (int row) { owner.selectSection (row); }
-int StructurePanel::ArrangementListModel::getNumRows() { return static_cast<int> (buildResolvedStructure (owner.processorRef.getAppState().structure).size()); }
-void StructurePanel::ArrangementListModel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) { const auto resolved = buildResolvedStructure (owner.processorRef.getAppState().structure); if (row < 0 || row >= static_cast<int> (resolved.size()) || resolved[(size_t) row].section == nullptr) return; const auto& r = resolved[(size_t) row]; g.setColour (selected ? sectionColourForIndex (row).withAlpha (0.72f) : Theme::Colour::surface2); g.fillRect (0, 0, w, h); g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.22f)); g.fillRect (0, h - 1, w, 1); g.setColour (selected ? Theme::Colour::inkDark : Theme::Colour::inkLight); g.setFont (Theme::Font::label()); g.drawText (r.section->name, 8, 0, w - 80, h, juce::Justification::centredLeft, true); g.setFont (Theme::Font::micro()); g.drawText (juce::String (r.barsPerRepeat) + "x" + juce::String (r.repeats), w - 58, 0, 50, h, juce::Justification::centredRight, true); }
+int StructurePanel::ArrangementListModel::getNumRows() { return static_cast<int> (buildResolvedStructure (owner.processorRef.getSongManager().getStructureState()).size()); }
+void StructurePanel::ArrangementListModel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) { const auto resolved = buildResolvedStructure (owner.processorRef.getSongManager().getStructureState()); if (row < 0 || row >= static_cast<int> (resolved.size()) || resolved[(size_t) row].section == nullptr) return; const auto& r = resolved[(size_t) row]; const auto accent = sectionColourForIndex (row); ZoneAStyle::drawRowBackground (g, { 0, 0, w, h }, false, selected, accent); auto area = juce::Rectangle<int> (0, 0, w, h).reduced (8, 3); auto orderBox = area.removeFromLeft (30).reduced (0, 3); g.setColour (accent.withAlpha (selected ? 0.92f : 0.72f)); g.fillRoundedRectangle (orderBox.toFloat(), 4.0f); g.setColour (Theme::Helper::inkFor (accent)); g.setFont (Theme::Font::microMedium()); g.drawText (juce::String (row + 1), orderBox, juce::Justification::centred, false); area.removeFromLeft (6); auto rightMeta = area.removeFromRight (86); g.setColour (Theme::Colour::inkLight); g.setFont (Theme::Font::label()); g.drawText (r.section->name, area.removeFromTop (15), juce::Justification::centredLeft, true); g.setColour (Theme::Colour::inkGhost.withAlpha (0.92f)); g.setFont (Theme::Font::micro()); g.drawText ("instance  |  " + juce::String (juce::jmax (1, r.totalBars)) + " bars", area, juce::Justification::centredLeft, true); g.setColour (accent.withAlpha (0.95f)); g.drawText ("from " + r.section->name.substring (0, juce::jmin (4, r.section->name.length())).toUpperCase(), rightMeta.removeFromTop (10), juce::Justification::centredRight, true); g.setColour (Theme::Colour::inkGhost); g.drawText (r.transitionIntent.isNotEmpty() ? r.transitionIntent : "None", rightMeta, juce::Justification::centredRight, true); }
 void StructurePanel::ArrangementListModel::selectedRowsChanged (int row) { owner.selectArrangementBlock (row); }
 
 void StructurePanel::ProgressionStrip::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::Colour::surface2);
+    g.fillAll (Theme::Colour::surface1.darker (0.08f));
     const auto* s = owner.getSelectedSection();
     if (s == nullptr) { g.setColour (Theme::Colour::inkGhost); g.setFont (Theme::Font::micro()); g.drawText ("Select a section to define looping harmonic cells.", getLocalBounds().reduced (8), juce::Justification::centred, true); return; }
-    if (s->progression.empty()) { g.setColour (Theme::Colour::inkGhost); g.setFont (Theme::Font::micro()); g.drawText ("No chord cells yet. Add one to define the section loop.", getLocalBounds().reduced (8), juce::Justification::centred, true); return; }
 
-    auto area = getLocalBounds().reduced (10, 10);
-    auto info = area.removeFromBottom (16);
-    const int bars = juce::jmax (1, s->bars);
-    const int cells = static_cast<int> (s->progression.size());
-    const int gap = 4;
-    const int barWidth = juce::jmax (28, (area.getWidth() - gap * juce::jmax (0, bars - 1)) / bars);
+    const auto grid = owner.progressionGridBounds();
+    g.setColour (Theme::Colour::surface1.withAlpha (0.98f));
+    g.fillRoundedRectangle (grid, 10.0f);
+    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.45f));
+    g.drawRoundedRectangle (grid, 10.0f, 1.0f);
 
-    for (int bar = 0; bar < bars; ++bar)
+    const int loopBeats = limitedProgressionBeats (*s);
+    const int totalSectionBeats = loopBeats * juce::jmax (1, s->repeats);
+    const int beatsPerBar = juce::jmax (1, s->beatsPerBar);
+
+    if (s->progression.empty())
     {
-        auto slot = juce::Rectangle<int> (area.getX() + bar * (barWidth + gap), area.getY(), barWidth, area.getHeight());
-        const int chordIndex = bar % cells;
-        const bool selected = owner.selectedChordIndex == chordIndex;
-        const auto tint = sectionColourForIndex (chordIndex);
-        g.setColour (Theme::Colour::surface1.withAlpha (0.55f));
-        g.fillRoundedRectangle (slot.toFloat(), 6.0f);
-        g.setColour (selected ? tint.brighter (0.1f) : Theme::Colour::surfaceEdge.withAlpha (0.35f));
-        g.drawRoundedRectangle (slot.toFloat(), 6.0f, selected ? 1.8f : 1.0f);
-        auto cell = slot.reduced (4, 4);
-        cell.removeFromBottom (12);
-        g.setColour (selected ? tint : tint.withAlpha (0.55f));
-        g.fillRoundedRectangle (cell.toFloat(), 5.0f);
-        g.setColour (selected ? Theme::Colour::inkDark : Theme::Colour::inkLight);
-        g.setFont (Theme::Font::heading());
-        g.drawText (chordLabel (s->progression[(size_t) chordIndex]), cell.reduced (6, 4), juce::Justification::centredLeft, true);
+        g.setColour (Theme::Colour::inkGhost);
         g.setFont (Theme::Font::micro());
-        g.setColour (selected ? Theme::Colour::inkLight : Theme::Colour::inkGhost);
-        g.drawText ("bar " + juce::String (bar + 1), slot.removeFromBottom (12), juce::Justification::centred, false);
-        if (bar >= cells)
-        {
-            g.setColour (Theme::Colour::inkGhost.withAlpha (0.7f));
-            g.drawText ("loop", slot.withTrimmedTop (4).removeFromRight (28), juce::Justification::topRight, false);
-        }
+        g.drawText ("No chord cells yet. Add one beat, then drag right to sustain it.", grid.toNearestInt().reduced (18), juce::Justification::centred, true);
+        return;
     }
 
-    g.setColour (Theme::Colour::inkGhost);
+    for (int beat = 0; beat < kProgressionGridSteps; ++beat)
+    {
+        auto cell = owner.progressionChipBounds (beat);
+        const int chordIndex = beat < loopBeats ? owner.chordIndexForBeat (beat) : -1;
+        const bool filled = chordIndex >= 0;
+        const bool selected = filled && chordIndex == owner.selectedChordIndex;
+        const bool inLoop = beat < loopBeats;
+        const bool barLine = inLoop && ((beat % beatsPerBar) == 0);
+        const auto tint = filled ? sectionColourForIndex (chordIndex) : Theme::Colour::surface2;
+        const auto chipFill = filled
+                                ? Theme::Colour::surface2.interpolatedWith (tint, selected ? 0.52f : 0.28f)
+                                : (inLoop ? Theme::Colour::surface2.brighter (0.04f)
+                                          : Theme::Colour::surface1.withAlpha (0.28f));
+
+        g.setColour (chipFill);
+        g.fillRoundedRectangle (cell, 5.0f);
+
+        g.setColour (selected ? tint.withAlpha (0.95f)
+                              : (barLine ? Theme::Colour::surfaceEdge.withAlpha (0.85f)
+                                         : Theme::Colour::surfaceEdge.withAlpha (0.42f)));
+        g.drawRoundedRectangle (cell, 4.0f, selected ? 1.8f : (barLine ? 1.25f : 0.8f));
+
+        if (! filled || owner.chordStartBeat (chordIndex) != beat)
+            continue;
+
+        auto text = cell.toNearestInt().reduced (3, 3);
+        g.setColour (selected ? Theme::Colour::inkLight : Theme::Colour::inkLight);
+        g.setFont (Theme::Font::microMedium());
+        g.drawFittedText (chordLabel (s->progression[(size_t) chordIndex]), text.removeFromTop (12), juce::Justification::centred, 1);
+        g.setFont (Theme::Font::micro());
+        g.setColour (selected ? Theme::Colour::inkLight.withAlpha (0.8f) : Theme::Colour::inkGhost);
+        g.drawText (juce::String (juce::jmax (1, s->progression[(size_t) chordIndex].durationBeats)) + "b", text, juce::Justification::centred, false);
+    }
+
+    g.setColour (Theme::Colour::inkLight);
+    g.setFont (Theme::Font::label());
+    g.drawText ("8 x 8 beat grid", grid.toNearestInt().removeFromTop (18).translated (0, -24), juce::Justification::centred, false);
     g.setFont (Theme::Font::micro());
-    g.drawText (juce::String (cells) + " cell" + (cells == 1 ? "" : "s") + " looping across " + juce::String (bars) + " bars", info, juce::Justification::centredLeft, true);
+    g.setColour (Theme::Colour::inkGhost);
+    g.drawText ("Loop ends at beat " + juce::String (loopBeats) + "  |  " + juce::String (s->progression.size()) + " chord cells  |  section " + juce::String (totalSectionBeats) + " beats",
+                grid.toNearestInt().removeFromBottom (20).translated (0, 24),
+                juce::Justification::centred,
+                true);
+}
+
+void StructurePanel::ProgressionStrip::mouseDown (const juce::MouseEvent& e)
+{
+    const auto* s = owner.getSelectedSection();
+    dragCellIndex = -1;
+    resizingDuration = false;
+    dragStartDuration = 0;
+
+    if (s == nullptr || s->progression.empty())
+        return;
+
+    const int beat = owner.progressionBeatAtPoint (e.getPosition());
+    const int chordIndex = owner.chordIndexForBeat (beat);
+    if (e.mods.isPopupMenu())
+    {
+        if (chordIndex >= 0)
+        {
+            owner.selectChordCell (chordIndex);
+            owner.showChordCellMenu (chordIndex, e.getPosition());
+        }
+        return;
+    }
+
+    if (chordIndex < 0)
+        return;
+
+    owner.selectChordCell (chordIndex);
+    dragCellIndex = chordIndex;
+    dragStartDuration = s->progression[(size_t) chordIndex].durationBeats;
+    dragBeforeState = owner.processorRef.getSongManager().getStructureState();
+    resizingDuration = e.mods.isLeftButtonDown();
+}
+
+void StructurePanel::ProgressionStrip::mouseDrag (const juce::MouseEvent& e)
+{
+    auto* s = owner.getSelectedSection();
+    if (! resizingDuration || s == nullptr || dragCellIndex < 0 || dragCellIndex >= static_cast<int> (s->progression.size()))
+        return;
+
+    const int beat = owner.progressionBeatAtPoint (e.getPosition());
+    if (beat < 0)
+        return;
+
+    const int startBeat = owner.chordStartBeat (dragCellIndex);
+    const int newDuration = juce::jlimit (1, kProgressionGridSteps - startBeat, beat - startBeat + 1);
+    auto& chord = s->progression[(size_t) dragCellIndex];
+    if (chord.durationBeats == newDuration)
+        return;
+
+    chord.durationBeats = newDuration;
+    owner.updateSectionDerivedLength (*s);
+    owner.selectChordCell (dragCellIndex);
+    owner.refreshSummary();
+    repaint();
 }
 
 void StructurePanel::ProgressionStrip::mouseUp (const juce::MouseEvent& e)
 {
-    const auto* s = owner.getSelectedSection();
-    if (s == nullptr || s->progression.empty()) return;
-    auto area = getLocalBounds().reduced (10, 10); area.removeFromBottom (16);
-    const int bars = juce::jmax (1, s->bars), cells = static_cast<int> (s->progression.size()), gap = 4;
-    const int barWidth = juce::jmax (28, (area.getWidth() - gap * juce::jmax (0, bars - 1)) / bars);
-    for (int bar = 0; bar < bars; ++bar)
-        if (juce::Rectangle<int> (area.getX() + bar * (barWidth + gap), area.getY(), barWidth, area.getHeight()).contains (e.getPosition()))
-        { owner.selectChordCell (bar % cells); if (e.mods.isRightButtonDown()) owner.showChordCellMenu(); return; }
+    auto* s = owner.getSelectedSection();
+    const int beat = owner.progressionBeatAtPoint (e.getPosition());
+    const int chordIndex = owner.chordIndexForBeat (beat);
+    const bool changedDuration = resizingDuration && s != nullptr && dragCellIndex >= 0
+                              && dragCellIndex < static_cast<int> (s->progression.size())
+                              && s->progression[(size_t) dragCellIndex].durationBeats != dragStartDuration;
+
+    if (chordIndex >= 0)
+        owner.selectChordCell (chordIndex);
+
+    if (changedDuration)
+    {
+        owner.commitStructureChange (dragBeforeState, "Resize Chord Cell", false);
+        owner.refreshEditor();
+    }
+
+    dragCellIndex = -1;
+    resizingDuration = false;
+    dragStartDuration = 0;
 }
 
 void StructurePanel::ProgressionStrip::mouseDoubleClick (const juce::MouseEvent& e)
 {
     const auto* s = owner.getSelectedSection();
-    if (s == nullptr || s->progression.empty()) return;
-    auto area = getLocalBounds().reduced (10, 10); area.removeFromBottom (16);
-    const int bars = juce::jmax (1, s->bars), cells = static_cast<int> (s->progression.size()), gap = 4;
-    const int barWidth = juce::jmax (28, (area.getWidth() - gap * juce::jmax (0, bars - 1)) / bars);
-    for (int bar = 0; bar < bars; ++bar)
-        if (juce::Rectangle<int> (area.getX() + bar * (barWidth + gap), area.getY(), barWidth, area.getHeight()).contains (e.getPosition()))
-        { const int index = bar % cells; owner.selectChordCell (index); owner.showChordEditMenu (index); return; }
+    if (s == nullptr || s->progression.empty())
+        return;
+
+    const int beat = owner.progressionBeatAtPoint (e.getPosition());
+    const int chordIndex = owner.chordIndexForBeat (beat);
+    if (chordIndex >= 0)
+    {
+        owner.selectChordCell (chordIndex);
+        owner.showChordEditMenu (chordIndex, e.getPosition());
+    }
 }
 
-Section* StructurePanel::getSelectedSection() { auto& s = processorRef.getAppState().structure; if (selectionTarget == SelectionTarget::section && selectedSectionIndex >= 0 && selectedSectionIndex < static_cast<int> (s.sections.size())) return &s.sections[(size_t) selectedSectionIndex]; if (selectionTarget == SelectionTarget::arrangementBlock) { const auto resolved = buildResolvedStructure (s); if (selectedArrangementIndex >= 0 && selectedArrangementIndex < static_cast<int> (resolved.size())) return const_cast<Section*> (resolved[(size_t) selectedArrangementIndex].section); } return nullptr; }
+void StructurePanel::DiatonicPaletteStrip::paint (juce::Graphics& g)
+{
+    g.fillAll (Theme::Colour::surface1.darker (0.10f));
+
+    const auto* section = owner.getSelectedSection();
+    if (section == nullptr)
+        return;
+
+    const auto keyRoot = section->keyRoot.isNotEmpty() ? section->keyRoot : juce::String ("C");
+    const auto mode = section->mode.isNotEmpty() ? section->mode : juce::String ("Major");
+    const auto palette = DiatonicHarmony::buildPalette (keyRoot, mode);
+    if (palette.empty())
+        return;
+
+    auto area = getLocalBounds().reduced (8, 6).toFloat();
+    const float radius = juce::jmin (28.0f, juce::jmax (18.0f, juce::jmin (area.getWidth() / 6.2f, area.getHeight() / 4.1f)));
+    const float stepX = radius * 1.52f;
+    const float stepY = radius * 0.88f;
+    const auto center = juce::Point<float> (area.getCentreX(), area.getCentreY());
+    const std::array<juce::Point<float>, 7> centers =
+    {{
+        center,
+        { center.x, center.y - radius * 1.74f },
+        { center.x + stepX, center.y - stepY },
+        { center.x + stepX, center.y + stepY },
+        { center.x, center.y + radius * 1.74f },
+        { center.x - stepX, center.y + stepY },
+        { center.x - stepX, center.y - stepY }
+    }};
+    const auto selectedChord = owner.getSelectedChordCell();
+
+    for (int i = 0; i < 7; ++i)
+    {
+        const auto& chord = palette[(size_t) i];
+        const bool matchesSelected = selectedChord != nullptr
+                                  && selectedChord->root == chord.root
+                                  && selectedChord->type == chord.type;
+        const auto tint = sectionColourForIndex (i);
+        const auto path = hexagonPath (centers[(size_t) i], radius);
+        const auto baseFill = Theme::Colour::surface2.interpolatedWith (tint, matchesSelected ? 0.34f : 0.14f);
+        const auto fill = baseFill.withAlpha (0.96f);
+        const auto edge = matchesSelected ? tint.withAlpha (0.95f)
+                                          : Theme::Colour::surfaceEdge.interpolatedWith (tint, 0.35f).withAlpha (0.9f);
+
+        auto shadow = path;
+        shadow.applyTransform (juce::AffineTransform::translation (0.0f, 2.0f));
+        g.setColour (juce::Colours::black.withAlpha (0.16f));
+        g.fillPath (shadow);
+
+        g.setColour (fill);
+        g.fillPath (path);
+        g.setColour (edge);
+        g.strokePath (path, juce::PathStrokeType (matchesSelected ? 2.2f : 1.35f));
+
+        auto text = path.getBounds().toNearestInt().reduced (4, 6);
+        g.setColour (Theme::Colour::inkLight.withAlpha (0.98f));
+        g.setFont (Theme::Font::microMedium());
+        g.drawFittedText (abbreviatedChordLabel (chord.root, chord.type), text.removeFromTop (16), juce::Justification::centred, 1);
+        g.setFont (Theme::Font::micro());
+        g.setColour (Theme::Colour::inkGhost.withAlpha (0.95f));
+        g.drawText (chord.roman, text.removeFromTop (12), juce::Justification::centred, false);
+        g.setColour (Theme::Colour::inkGhost.withAlpha (0.72f));
+        g.drawFittedText (i == 0 ? "Key" : chord.function, text, juce::Justification::centred, 1);
+    }
+}
+
+void StructurePanel::DiatonicPaletteStrip::mouseUp (const juce::MouseEvent& event)
+{
+    const auto* section = owner.getSelectedSection();
+    if (section == nullptr)
+        return;
+
+    auto area = getLocalBounds().reduced (8, 6).toFloat();
+    const float radius = juce::jmin (28.0f, juce::jmax (18.0f, juce::jmin (area.getWidth() / 6.2f, area.getHeight() / 4.1f)));
+    const float stepX = radius * 1.52f;
+    const float stepY = radius * 0.88f;
+    const auto center = juce::Point<float> (area.getCentreX(), area.getCentreY());
+    const std::array<juce::Point<float>, 7> centers =
+    {{
+        center,
+        { center.x, center.y - radius * 1.74f },
+        { center.x + stepX, center.y - stepY },
+        { center.x + stepX, center.y + stepY },
+        { center.x, center.y + radius * 1.74f },
+        { center.x - stepX, center.y + stepY },
+        { center.x - stepX, center.y - stepY }
+    }};
+    for (int i = 0; i < 7; ++i)
+    {
+        if (hexagonPath (centers[(size_t) i], radius).contains ((float) event.x, (float) event.y))
+        {
+            owner.applyDiatonicPaletteChord (i, event.mods.isPopupMenu());
+            return;
+        }
+    }
+}
+
+Section* StructurePanel::getSelectedSection() { auto& s = processorRef.getSongManager().getStructureStateForEdit(); if (selectionTarget == SelectionTarget::section && selectedSectionIndex >= 0 && selectedSectionIndex < static_cast<int> (s.sections.size())) return &s.sections[(size_t) selectedSectionIndex]; if (selectionTarget == SelectionTarget::arrangementBlock) { const auto resolved = buildResolvedStructure (s); if (selectedArrangementIndex >= 0 && selectedArrangementIndex < static_cast<int> (resolved.size())) return const_cast<Section*> (resolved[(size_t) selectedArrangementIndex].section); } return nullptr; }
 const Section* StructurePanel::getSelectedSection() const { return const_cast<StructurePanel*> (this)->getSelectedSection(); }
-ArrangementBlock* StructurePanel::getSelectedArrangementBlock() { auto resolved = buildResolvedStructure (processorRef.getAppState().structure); if (selectedArrangementIndex < 0 || selectedArrangementIndex >= static_cast<int> (resolved.size())) return nullptr; return const_cast<ArrangementBlock*> (resolved[(size_t) selectedArrangementIndex].block); }
+ArrangementBlock* StructurePanel::getSelectedArrangementBlock() { auto resolved = buildResolvedStructure (processorRef.getSongManager().getStructureState()); if (selectedArrangementIndex < 0 || selectedArrangementIndex >= static_cast<int> (resolved.size())) return nullptr; return const_cast<ArrangementBlock*> (resolved[(size_t) selectedArrangementIndex].block); }
 const ArrangementBlock* StructurePanel::getSelectedArrangementBlock() const { return const_cast<StructurePanel*> (this)->getSelectedArrangementBlock(); }
 Chord* StructurePanel::getSelectedChordCell() { auto* s = getSelectedSection(); if (s == nullptr || selectedChordIndex < 0 || selectedChordIndex >= static_cast<int> (s->progression.size())) return nullptr; return &s->progression[(size_t) selectedChordIndex]; }
 const Chord* StructurePanel::getSelectedChordCell() const { return const_cast<StructurePanel*> (this)->getSelectedChordCell(); }
 
-void StructurePanel::addSection() { auto& st = processorRef.getAppState().structure; Section s; s.id = makeStructureId(); s.name = "Section " + juce::String (st.sections.size() + 1); s.bars = 8; s.beatsPerBar = 4; s.repeats = 1; s.keyRoot = st.songKey; s.mode = st.songMode; s.harmonicCenter = "I"; s.transitionIntent = "None"; s.progression = { buildDegreeChord (s, deg (s.harmonicCenter)) }; st.sections.push_back (s); selectionTarget = SelectionTarget::section; selectedSectionIndex = static_cast<int> (st.sections.size() - 1); selectedArrangementIndex = -1; selectedChordIndex = 0; commitStructureChange (false); refreshLists(); refreshEditor(); }
-void StructurePanel::duplicateSelectedSection() { const auto* src = getSelectedSection(); if (src == nullptr) return; auto copy = *src; copy.id = makeStructureId(); copy.name = src->name + " Copy"; auto& sections = processorRef.getAppState().structure.sections; sections.push_back (copy); selectionTarget = SelectionTarget::section; selectedSectionIndex = static_cast<int> (sections.size() - 1); selectedArrangementIndex = -1; selectedChordIndex = 0; commitStructureChange (false); refreshLists(); refreshEditor(); }
-void StructurePanel::deleteSelectedSection() { auto& st = processorRef.getAppState().structure; if (selectedSectionIndex < 0 || selectedSectionIndex >= static_cast<int> (st.sections.size())) return; const auto removedId = st.sections[(size_t) selectedSectionIndex].id; st.sections.erase (st.sections.begin() + selectedSectionIndex); std::erase_if (st.arrangement, [&] (const ArrangementBlock& b) { return b.sectionId == removedId; }); resequenceArrangement(); clearSelection(); commitStructureChange (false); refreshLists(); refreshEditor(); }
-void StructurePanel::moveSelectedSection (int delta) { auto& sections = processorRef.getAppState().structure.sections; if (selectedSectionIndex < 0 || selectedSectionIndex >= static_cast<int> (sections.size())) return; const int target = juce::jlimit (0, static_cast<int> (sections.size() - 1), selectedSectionIndex + delta); if (target == selectedSectionIndex) return; std::iter_swap (sections.begin() + selectedSectionIndex, sections.begin() + target); selectedSectionIndex = target; commitStructureChange (false); refreshLists(); }
-void StructurePanel::addArrangementBlock() { auto& st = processorRef.getAppState().structure; if (st.sections.empty()) { addSection(); return; } const int source = juce::jlimit (0, static_cast<int> (st.sections.size() - 1), selectedSectionIndex >= 0 ? selectedSectionIndex : 0); ArrangementBlock b; b.id = makeStructureId(); b.sectionId = st.sections[(size_t) source].id; b.orderIndex = static_cast<int> (st.arrangement.size()); st.arrangement.push_back (b); selectionTarget = SelectionTarget::arrangementBlock; selectedArrangementIndex = static_cast<int> (st.arrangement.size() - 1); selectedChordIndex = 0; commitStructureChange (false); refreshLists(); refreshEditor(); }
-void StructurePanel::duplicateSelectedArrangementBlock() { auto& a = processorRef.getAppState().structure.arrangement; if (selectedArrangementIndex < 0 || selectedArrangementIndex >= static_cast<int> (a.size())) return; auto copy = a[(size_t) selectedArrangementIndex]; copy.id = makeStructureId(); a.insert (a.begin() + selectedArrangementIndex + 1, copy); selectedArrangementIndex += 1; resequenceArrangement(); selectionTarget = SelectionTarget::arrangementBlock; commitStructureChange (false); refreshLists(); }
-void StructurePanel::deleteSelectedArrangementBlock() { auto& a = processorRef.getAppState().structure.arrangement; if (selectedArrangementIndex < 0 || selectedArrangementIndex >= static_cast<int> (a.size())) return; a.erase (a.begin() + selectedArrangementIndex); resequenceArrangement(); clearSelection(); commitStructureChange (false); refreshLists(); refreshEditor(); }
-void StructurePanel::moveSelectedArrangementBlock (int delta) { auto& a = processorRef.getAppState().structure.arrangement; if (selectedArrangementIndex < 0 || selectedArrangementIndex >= static_cast<int> (a.size())) return; const int target = juce::jlimit (0, static_cast<int> (a.size() - 1), selectedArrangementIndex + delta); if (target == selectedArrangementIndex) return; std::iter_swap (a.begin() + selectedArrangementIndex, a.begin() + target); selectedArrangementIndex = target; resequenceArrangement(); selectionTarget = SelectionTarget::arrangementBlock; commitStructureChange (false); refreshLists(); }
-void StructurePanel::resequenceArrangement() { auto& a = processorRef.getAppState().structure.arrangement; for (int i = 0; i < static_cast<int> (a.size()); ++i) a[(size_t) i].orderIndex = i; }
-void StructurePanel::addChordCell() { if (auto* s = getSelectedSection()) { s->progression.push_back (buildDegreeChord (*s, deg (s->harmonicCenter))); selectedChordIndex = static_cast<int> (s->progression.size() - 1); commitStructureChange (false); refreshEditor(); progressionStrip.repaint(); } }
-void StructurePanel::removeSelectedChordCell() { if (auto* s = getSelectedSection()) { if (selectedChordIndex < 0 || selectedChordIndex >= static_cast<int> (s->progression.size())) return; s->progression.erase (s->progression.begin() + selectedChordIndex); selectedChordIndex = s->progression.empty() ? -1 : juce::jlimit (0, static_cast<int> (s->progression.size()) - 1, selectedChordIndex); commitStructureChange (false); refreshEditor(); progressionStrip.repaint(); } }
+void StructurePanel::addSection() { const auto beforeState = processorRef.getSongManager().getStructureState(); auto& st = processorRef.getSongManager().getStructureStateForEdit(); Section s; s.id = makeStructureId(); s.name = "Section " + juce::String (st.sections.size() + 1); s.bars = 1; s.beatsPerBar = 4; s.repeats = 1; s.keyRoot = st.songKey; s.mode = st.songMode; s.harmonicCenter = "I"; s.transitionIntent = "None"; s.progression = { DiatonicHarmony::buildChordForCenter (s.keyRoot, s.mode, s.harmonicCenter) }; updateSectionDerivedLength (s); st.sections.push_back (s); selectionTarget = SelectionTarget::section; selectedSectionIndex = static_cast<int> (st.sections.size() - 1); selectedArrangementIndex = -1; selectedChordIndex = 0; commitStructureChange (beforeState, "Add Section", false); refreshLists(); refreshEditor(); }
+void StructurePanel::duplicateSelectedSection() { const auto* src = getSelectedSection(); if (src == nullptr) return; const auto beforeState = processorRef.getSongManager().getStructureState(); auto copy = *src; copy.id = makeStructureId(); copy.name = src->name + " Copy"; auto& sections = processorRef.getSongManager().getStructureStateForEdit().sections; sections.push_back (copy); selectionTarget = SelectionTarget::section; selectedSectionIndex = static_cast<int> (sections.size() - 1); selectedArrangementIndex = -1; selectedChordIndex = 0; commitStructureChange (beforeState, "Duplicate Section", false); refreshLists(); refreshEditor(); }
+void StructurePanel::deleteSelectedSection() { const auto beforeState = processorRef.getSongManager().getStructureState(); auto& st = processorRef.getSongManager().getStructureStateForEdit(); if (selectedSectionIndex < 0 || selectedSectionIndex >= static_cast<int> (st.sections.size())) return; const auto removedId = st.sections[(size_t) selectedSectionIndex].id; st.sections.erase (st.sections.begin() + selectedSectionIndex); std::erase_if (st.arrangement, [&] (const ArrangementBlock& b) { return b.sectionId == removedId; }); resequenceArrangement(); clearSelection(); commitStructureChange (beforeState, "Delete Section", false); refreshLists(); refreshEditor(); }
+void StructurePanel::moveSelectedSection (int delta) { const auto beforeState = processorRef.getSongManager().getStructureState(); auto& sections = processorRef.getSongManager().getStructureStateForEdit().sections; if (selectedSectionIndex < 0 || selectedSectionIndex >= static_cast<int> (sections.size())) return; const int target = juce::jlimit (0, static_cast<int> (sections.size() - 1), selectedSectionIndex + delta); if (target == selectedSectionIndex) return; std::iter_swap (sections.begin() + selectedSectionIndex, sections.begin() + target); selectedSectionIndex = target; commitStructureChange (beforeState, "Reorder Section", false); refreshLists(); }
+void StructurePanel::moveSectionTo (int fromIndex, int toIndex)
+{
+    const auto beforeState = processorRef.getSongManager().getStructureState();
+    auto& sections = processorRef.getSongManager().getStructureStateForEdit().sections;
+    if (fromIndex < 0 || fromIndex >= static_cast<int> (sections.size()))
+        return;
+
+    toIndex = juce::jlimit (0, static_cast<int> (sections.size()), toIndex);
+    if (toIndex > fromIndex)
+        --toIndex;
+
+    if (toIndex == fromIndex)
+        return;
+
+    auto moved = sections[(size_t) fromIndex];
+    sections.erase (sections.begin() + fromIndex);
+    sections.insert (sections.begin() + toIndex, moved);
+    selectionTarget = SelectionTarget::section;
+    selectedSectionIndex = toIndex;
+    selectedArrangementIndex = -1;
+    commitStructureChange (beforeState, "Reorder Section", false);
+    refreshLists();
+    refreshEditor();
+}
+
+void StructurePanel::deleteSectionAt (int index)
+{
+    selectionTarget = SelectionTarget::section;
+    selectedSectionIndex = index;
+    deleteSelectedSection();
+}
+void StructurePanel::addArrangementBlock() { const auto beforeState = processorRef.getSongManager().getStructureState(); auto& st = processorRef.getSongManager().getStructureStateForEdit(); if (st.sections.empty()) { addSection(); return; } const int source = juce::jlimit (0, static_cast<int> (st.sections.size() - 1), selectedSectionIndex >= 0 ? selectedSectionIndex : 0); ArrangementBlock b; b.id = makeStructureId(); b.sectionId = st.sections[(size_t) source].id; b.orderIndex = static_cast<int> (st.arrangement.size()); st.arrangement.push_back (b); selectionTarget = SelectionTarget::arrangementBlock; selectedArrangementIndex = static_cast<int> (st.arrangement.size() - 1); selectedChordIndex = 0; commitStructureChange (beforeState, "Add Arrangement Block", false); refreshLists(); refreshEditor(); }
+void StructurePanel::duplicateSelectedArrangementBlock() { const auto beforeState = processorRef.getSongManager().getStructureState(); auto& a = processorRef.getSongManager().getStructureStateForEdit().arrangement; if (selectedArrangementIndex < 0 || selectedArrangementIndex >= static_cast<int> (a.size())) return; auto copy = a[(size_t) selectedArrangementIndex]; copy.id = makeStructureId(); a.insert (a.begin() + selectedArrangementIndex + 1, copy); selectedArrangementIndex += 1; resequenceArrangement(); selectionTarget = SelectionTarget::arrangementBlock; commitStructureChange (beforeState, "Duplicate Arrangement Block", false); refreshLists(); }
+void StructurePanel::deleteSelectedArrangementBlock() { const auto beforeState = processorRef.getSongManager().getStructureState(); auto& a = processorRef.getSongManager().getStructureStateForEdit().arrangement; if (selectedArrangementIndex < 0 || selectedArrangementIndex >= static_cast<int> (a.size())) return; a.erase (a.begin() + selectedArrangementIndex); resequenceArrangement(); clearSelection(); commitStructureChange (beforeState, "Delete Arrangement Block", false); refreshLists(); refreshEditor(); }
+void StructurePanel::moveSelectedArrangementBlock (int delta) { const auto beforeState = processorRef.getSongManager().getStructureState(); auto& a = processorRef.getSongManager().getStructureStateForEdit().arrangement; if (selectedArrangementIndex < 0 || selectedArrangementIndex >= static_cast<int> (a.size())) return; const int target = juce::jlimit (0, static_cast<int> (a.size() - 1), selectedArrangementIndex + delta); if (target == selectedArrangementIndex) return; std::iter_swap (a.begin() + selectedArrangementIndex, a.begin() + target); selectedArrangementIndex = target; resequenceArrangement(); selectionTarget = SelectionTarget::arrangementBlock; commitStructureChange (beforeState, "Reorder Arrangement Block", false); refreshLists(); }
+void StructurePanel::moveArrangementBlockTo (int fromIndex, int toIndex)
+{
+    const auto beforeState = processorRef.getSongManager().getStructureState();
+    auto& arrangement = processorRef.getSongManager().getStructureStateForEdit().arrangement;
+    if (fromIndex < 0 || fromIndex >= static_cast<int> (arrangement.size()))
+        return;
+
+    toIndex = juce::jlimit (0, static_cast<int> (arrangement.size()), toIndex);
+    if (toIndex > fromIndex)
+        --toIndex;
+
+    if (toIndex == fromIndex)
+        return;
+
+    auto moved = arrangement[(size_t) fromIndex];
+    arrangement.erase (arrangement.begin() + fromIndex);
+    arrangement.insert (arrangement.begin() + toIndex, moved);
+    resequenceArrangement();
+    selectionTarget = SelectionTarget::arrangementBlock;
+    selectedArrangementIndex = toIndex;
+    selectedSectionIndex = -1;
+    commitStructureChange (beforeState, "Reorder Arrangement Block", false);
+    refreshLists();
+    refreshEditor();
+}
+
+void StructurePanel::addArrangementBlockFromSection (int sectionIndex, int targetIndex)
+{
+    const auto beforeState = processorRef.getSongManager().getStructureState();
+    auto& state = processorRef.getSongManager().getStructureStateForEdit();
+    if (sectionIndex < 0 || sectionIndex >= static_cast<int> (state.sections.size()))
+        return;
+
+    ArrangementBlock block;
+    block.id = makeStructureId();
+    block.sectionId = state.sections[(size_t) sectionIndex].id;
+
+    targetIndex = juce::jlimit (0, static_cast<int> (state.arrangement.size()), targetIndex);
+    state.arrangement.insert (state.arrangement.begin() + targetIndex, block);
+    resequenceArrangement();
+    selectionTarget = SelectionTarget::arrangementBlock;
+    selectedArrangementIndex = targetIndex;
+    selectedSectionIndex = -1;
+    commitStructureChange (beforeState, "Add Arrangement Block", false);
+    refreshLists();
+    refreshEditor();
+}
+
+void StructurePanel::deleteArrangementBlockAt (int index)
+{
+    selectionTarget = SelectionTarget::arrangementBlock;
+    selectedArrangementIndex = index;
+    deleteSelectedArrangementBlock();
+}
+void StructurePanel::resequenceArrangement() { auto& a = processorRef.getSongManager().getStructureStateForEdit().arrangement; for (int i = 0; i < static_cast<int> (a.size()); ++i) a[(size_t) i].orderIndex = i; }
+juce::String StructurePanel::dragDescriptionForSectionIndex (int index) const
+{
+    const auto& sections = processorRef.getSongManager().getStructureState().sections;
+    if (index < 0 || index >= static_cast<int> (sections.size()))
+        return {};
+
+    return "section:" + sections[(size_t) index].id + ":" + juce::String (index);
+}
+
+juce::String StructurePanel::dragDescriptionForArrangementIndex (int index) const
+{
+    const auto resolved = buildResolvedStructure (processorRef.getSongManager().getStructureState());
+    if (index < 0 || index >= static_cast<int> (resolved.size()) || resolved[(size_t) index].block == nullptr)
+        return {};
+
+    return "arrangement:" + resolved[(size_t) index].block->id + ":" + juce::String (index);
+}
+
+bool StructurePanel::isDragDescriptionForKind (const juce::var& description, ListKind kind) const
+{
+    const auto text = description.toString();
+    return kind == ListKind::sections ? text.startsWith ("section:") : text.startsWith ("arrangement:");
+}
+
+int StructurePanel::dragIndexFromDescription (const juce::var& description, ListKind kind) const
+{
+    if (! isDragDescriptionForKind (description, kind))
+        return -1;
+
+    const auto text = description.toString();
+    const auto token = text.fromFirstOccurrenceOf (":", false, false);
+    const auto idToken = token.upToFirstOccurrenceOf (":", false, false);
+    const bool hasIndexSuffix = token.containsChar (':');
+    const int fallbackIndex = hasIndexSuffix ? token.fromFirstOccurrenceOf (":", false, false).getIntValue() : -1;
+
+    if (kind == ListKind::sections)
+    {
+        const auto& sections = processorRef.getSongManager().getStructureState().sections;
+        for (int i = 0; i < static_cast<int> (sections.size()); ++i)
+            if (sections[(size_t) i].id == idToken)
+                return i;
+        return juce::isPositiveAndBelow (fallbackIndex, static_cast<int> (sections.size())) ? fallbackIndex : -1;
+    }
+
+    const auto resolved = buildResolvedStructure (processorRef.getSongManager().getStructureState());
+    for (int i = 0; i < static_cast<int> (resolved.size()); ++i)
+        if (resolved[(size_t) i].block != nullptr && resolved[(size_t) i].block->id == idToken)
+            return i;
+
+    return juce::isPositiveAndBelow (fallbackIndex, static_cast<int> (resolved.size())) ? fallbackIndex : -1;
+}
+
+void StructurePanel::handleListDrop (ListKind kind, int fromIndex, int toIndex)
+{
+    if (kind == ListKind::sections)
+        moveSectionTo (fromIndex, toIndex);
+    else
+        moveArrangementBlockTo (fromIndex, toIndex);
+}
+
+void StructurePanel::handleTrashDrop (ListKind kind, int fromIndex)
+{
+    if (kind == ListKind::sections)
+        deleteSectionAt (fromIndex);
+    else
+        deleteArrangementBlockAt (fromIndex);
+}
+void StructurePanel::addChordCell() { const auto beforeState = processorRef.getSongManager().getStructureState(); if (auto* s = getSelectedSection()) { if (computeSectionLoopBeats (*s) >= kProgressionGridSteps) return; auto chord = DiatonicHarmony::buildChordForCenter (s->keyRoot, s->mode, s->harmonicCenter); chord.durationBeats = 1; s->progression.push_back (chord); updateSectionDerivedLength (*s); selectedChordIndex = static_cast<int> (s->progression.size() - 1); commitStructureChange (beforeState, "Add Chord Cell", false); refreshEditor(); progressionStrip.repaint(); } }
+void StructurePanel::removeSelectedChordCell() { const auto beforeState = processorRef.getSongManager().getStructureState(); if (auto* s = getSelectedSection()) { if (selectedChordIndex < 0 || selectedChordIndex >= static_cast<int> (s->progression.size())) return; s->progression.erase (s->progression.begin() + selectedChordIndex); updateSectionDerivedLength (*s); selectedChordIndex = s->progression.empty() ? -1 : juce::jlimit (0, static_cast<int> (s->progression.size()) - 1, selectedChordIndex); commitStructureChange (beforeState, "Remove Chord Cell", false); refreshEditor(); progressionStrip.repaint(); } }
 void StructurePanel::selectChordCell (int index) { selectedChordIndex = index; refreshEditor(); progressionStrip.repaint(); }
-void StructurePanel::showChordCellMenu() { if (getSelectedChordCell() == nullptr) return; juce::PopupMenu m; m.addItem (dupCell, "Duplicate Cell"); m.addItem (clearCell, "Clear Cell"); m.addItem (splitCell, "Split Cell"); m.addSeparator(); m.addItem (diatonicSub, "Diatonic Substitute"); m.addItem (secondaryDom, "Secondary Dominant"); m.addItem (borrowedChord, "Borrowed Chord"); m.addItem (extendChord, "Extend Chord"); m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&progressionStrip), [this] (int result) { if (result != 0) applyTheoryAction (result); }); }
-void StructurePanel::showChordEditMenu (int index) { if (index < 0) return; selectedChordIndex = index; juce::PopupMenu rootMenu, typeMenu, menu; for (int i = 0; i < 12; ++i) rootMenu.addItem (rootBase + i, kRoots[i]); for (int i = 0; i < 7; ++i) typeMenu.addItem (typeBase + i, kTypes[i]); menu.addSubMenu ("Root", rootMenu); menu.addSubMenu ("Quality", typeMenu); menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&progressionStrip), [this] (int result) { if (result != 0) applyTheoryAction (result); }); }
-void StructurePanel::applyTheoryAction (int cmd) { auto* s = getSelectedSection(); auto* c = getSelectedChordCell(); if (s == nullptr || c == nullptr) return; if (cmd >= rootBase && cmd < rootBase + 12) c->root = kRoots[cmd - rootBase]; else if (cmd >= typeBase && cmd < typeBase + 7) c->type = kTypes[cmd - typeBase]; else if (cmd == dupCell || cmd == splitCell) { s->progression.insert (s->progression.begin() + selectedChordIndex + 1, *c); if (cmd == dupCell) selectedChordIndex += 1; } else if (cmd == clearCell) *c = buildDegreeChord (*s, deg (s->harmonicCenter)); else if (cmd == diatonicSub) *c = buildDegreeChord (*s, (deg (s->harmonicCenter) + selectedChordIndex + 1) % 7); else if (cmd == secondaryDom) { const int next = (selectedChordIndex + 1) % juce::jmax (1, static_cast<int> (s->progression.size())); c->root = rootName (pc (s->progression[(size_t) next].root) + 7); c->type = "7"; } else if (cmd == borrowedChord) c->type = c->type.startsWithIgnoreCase ("min") ? "maj" : "min"; else if (cmd == extendChord) { if (c->type == "maj") c->type = "maj7"; else if (c->type == "min") c->type = "min7"; else c->type = "7"; } commitStructureChange (false); refreshEditor(); progressionStrip.repaint(); }
-void StructurePanel::selectSection (int index) { if (suppressListCallbacks) return; if (index < 0) { clearSelection(); return; } selectionTarget = SelectionTarget::section; selectedSectionIndex = index; selectedArrangementIndex = -1; selectedChordIndex = 0; suppressListCallbacks = true; arrangementList.deselectAllRows(); suppressListCallbacks = false; refreshEditor(); progressionStrip.repaint(); }
-void StructurePanel::selectArrangementBlock (int index) { if (index < 0) { clearSelection(); return; } selectionTarget = SelectionTarget::arrangementBlock; selectedArrangementIndex = index; selectedSectionIndex = -1; selectedChordIndex = 0; suppressListCallbacks = true; sectionList.deselectAllRows(); suppressListCallbacks = false; refreshEditor(); progressionStrip.repaint(); }
-void StructurePanel::clearSelection() { selectionTarget = SelectionTarget::none; selectedSectionIndex = -1; selectedArrangementIndex = -1; selectedChordIndex = -1; suppressListCallbacks = true; sectionList.deselectAllRows(); arrangementList.deselectAllRows(); suppressListCallbacks = false; refreshEditor(); progressionStrip.repaint(); }
-juce::Rectangle<int> StructurePanel::chordCellBounds (int index) const { const auto* s = getSelectedSection(); if (s == nullptr || s->progression.empty()) return {}; auto r = progressionStrip.getLocalBounds().reduced (10, 12); const int count = static_cast<int> (s->progression.size()); const int gap = 6; const int w = juce::jmax (72, (r.getWidth() - gap * juce::jmax (0, count - 1)) / juce::jmax (1, count)); return { r.getX() + index * (w + gap), r.getY(), w, r.getHeight() }; }
-void StructurePanel::refreshLists() { suppressListCallbacks = true; sectionList.updateContent(); arrangementList.updateContent(); if (selectionTarget == SelectionTarget::section && selectedSectionIndex >= 0) sectionList.selectRow (selectedSectionIndex, false, false); if (selectionTarget == SelectionTarget::arrangementBlock && selectedArrangementIndex >= 0) arrangementList.selectRow (selectedArrangementIndex, false, false); suppressListCallbacks = false; }
-void StructurePanel::refreshEditor() { const auto* s = getSelectedSection(); const bool has = s != nullptr; editorHint.setText (has ? "Shape length, tonal center, repeating harmonic cells, and transitions like a Zone A module." : "Select a section or arrangement block to sculpt song form.", juce::dontSendNotification); suppressControlCallbacks = true; nameEditor.setEnabled (has); barsSlider.setEnabled (has); repeatsSlider.setEnabled (has); beatsPerBarBox.setEnabled (has); transitionIntentBox.setEnabled (has); keyRootBox.setEnabled (has); modeBox.setEnabled (has); harmonicCenterBox.setEnabled (has); addChordCellButton.setEnabled (has); if (! has) { nameEditor.clear(); barsSlider.setValue (1, juce::dontSendNotification); repeatsSlider.setValue (1, juce::dontSendNotification); beatsPerBarBox.setSelectedId (4, juce::dontSendNotification); transitionIntentBox.setSelectedId (1, juce::dontSendNotification); keyRootBox.setSelectedId (1, juce::dontSendNotification); modeBox.setSelectedId (1, juce::dontSendNotification); harmonicCenterBox.setSelectedId (1, juce::dontSendNotification); chordRootBox.setSelectedId (1, juce::dontSendNotification); chordTypeBox.setSelectedId (1, juce::dontSendNotification); suppressControlCallbacks = false; return; } nameEditor.setText (s->name, juce::dontSendNotification); barsSlider.setValue (s->bars, juce::dontSendNotification); repeatsSlider.setValue (s->repeats, juce::dontSendNotification); beatsPerBarBox.setSelectedId (s->beatsPerBar, juce::dontSendNotification); transitionIntentBox.setText (s->transitionIntent, juce::dontSendNotification); keyRootBox.setText (s->keyRoot.isNotEmpty() ? s->keyRoot : processorRef.getAppState().structure.songKey, juce::dontSendNotification); modeBox.setText (s->mode.isNotEmpty() ? s->mode : processorRef.getAppState().structure.songMode, juce::dontSendNotification); harmonicCenterBox.setText (s->harmonicCenter, juce::dontSendNotification); if (selectedChordIndex < 0 && ! s->progression.empty()) selectedChordIndex = 0; if (selectedChordIndex >= static_cast<int> (s->progression.size())) selectedChordIndex = static_cast<int> (s->progression.size()) - 1; const bool hasChord = getSelectedChordCell() != nullptr; removeChordCellButton.setEnabled (hasChord); chordRootBox.setEnabled (hasChord); chordTypeBox.setEnabled (hasChord); if (const auto* chord = getSelectedChordCell()) { chordRootBox.setText (chord->root, juce::dontSendNotification); chordTypeBox.setText (chord->type, juce::dontSendNotification); } suppressControlCallbacks = false; progressionStrip.repaint(); }
-void StructurePanel::refreshSummary() { auto& s = processorRef.getAppState().structure; s.songTempo = processorRef.getAppState().song.bpm; if (s.songKey.isEmpty()) s.songKey = processorRef.getAppState().song.keyRoot; if (s.songMode.isEmpty()) s.songMode = processorRef.getAppState().song.keyScale; processorRef.getStructureEngine().rebuild(); summaryTempo.setText ("Tempo  " + juce::String (s.songTempo) + " BPM", juce::dontSendNotification); summaryKey.setText ("Key  " + s.songKey, juce::dontSendNotification); summaryMode.setText ("Mode  " + s.songMode, juce::dontSendNotification); summaryBars.setText ("Total Bars  " + juce::String (s.totalBars), juce::dontSendNotification); summaryDuration.setText ("Estimated Duration  " + durationText (s.estimatedDurationSeconds), juce::dontSendNotification); }
-void StructurePanel::commitStructureChange (bool seedRails) { auto& s = processorRef.getAppState().structure; s.songTempo = processorRef.getAppState().song.bpm; s.songKey = processorRef.getAppState().song.keyRoot; s.songMode = processorRef.getAppState().song.keyScale; processorRef.getStructureEngine().rebuild(); refreshSummary(); if (seedRails && onRailsSeeded) { juce::Array<int> slots; slots.add (0); onRailsSeeded (slots); } if (onStructureApplied) onStructureApplied(); }
+void StructurePanel::showChordCellMenu (int index, juce::Point<int> anchorInProgressionStrip)
+{
+    if (index >= 0)
+        selectedChordIndex = index;
+    if (getSelectedChordCell() == nullptr)
+        return;
+
+    juce::PopupMenu rootMenu, typeMenu, menu;
+    for (int i = 0; i < 12; ++i)
+        rootMenu.addItem (rootBase + i, kRoots[i]);
+    for (int i = 0; i < 7; ++i)
+        typeMenu.addItem (typeBase + i, kTypes[i]);
+
+    menu.addSubMenu ("Set Root", rootMenu);
+    menu.addSubMenu ("Set Quality", typeMenu);
+    menu.addSeparator();
+    menu.addItem (dupCell, "Duplicate Cell");
+    menu.addItem (clearCell, "Clear Cell");
+    menu.addItem (splitCell, "Split Cell");
+    menu.addSeparator();
+    menu.addItem (shortenBeat, "Shorten by Beat");
+    menu.addItem (lengthenBeat, "Lengthen by Beat");
+    menu.addSeparator();
+    menu.addItem (diatonicSub, "Diatonic Substitute");
+    menu.addItem (secondaryDom, "Secondary Dominant");
+    menu.addItem (borrowedChord, "Borrowed Chord");
+    menu.addItem (extendChord, "Extend Chord");
+    menu.addSeparator();
+    menu.addItem (flattenRoot, "Flatten Root");
+    menu.addItem (sharpenRoot, "Sharpen Root");
+    menu.addItem (setMaj, "Set Major");
+    menu.addItem (setMin, "Set Minor");
+    menu.addItem (setDim, "Set Diminished");
+    menu.addItem (setSus, "Set Sus4");
+
+    auto options = juce::PopupMenu::Options().withTargetComponent (&progressionStrip);
+    if (anchorInProgressionStrip != juce::Point<int>())
+    {
+        const auto screenAnchor = progressionStrip.localPointToGlobal (anchorInProgressionStrip);
+        options = options.withTargetScreenArea (juce::Rectangle<int> (screenAnchor.x, screenAnchor.y, 1, 1));
+    }
+
+    menu.showMenuAsync (options,
+                        [this] (int result)
+                        {
+                            if (result != 0)
+                                applyTheoryAction (result);
+                        });
+}
+
+void StructurePanel::showChordEditMenu (int index, juce::Point<int> anchorInProgressionStrip)
+{
+    if (index < 0)
+        return;
+    selectedChordIndex = index;
+
+    juce::PopupMenu rootMenu, typeMenu, menu;
+    for (int i = 0; i < 12; ++i)
+        rootMenu.addItem (rootBase + i, kRoots[i]);
+    for (int i = 0; i < 7; ++i)
+        typeMenu.addItem (typeBase + i, kTypes[i]);
+    menu.addSubMenu ("Root", rootMenu);
+    menu.addSubMenu ("Quality", typeMenu);
+
+    auto options = juce::PopupMenu::Options().withTargetComponent (&progressionStrip);
+    if (anchorInProgressionStrip != juce::Point<int>())
+    {
+        const auto screenAnchor = progressionStrip.localPointToGlobal (anchorInProgressionStrip);
+        options = options.withTargetScreenArea (juce::Rectangle<int> (screenAnchor.x, screenAnchor.y, 1, 1));
+    }
+
+    menu.showMenuAsync (options,
+                        [this] (int result)
+                        {
+                            if (result != 0)
+                                applyTheoryAction (result);
+                        });
+}
+void StructurePanel::showProgressionPresetMenu()
+{
+    if (getSelectedSection() == nullptr)
+        return;
+
+    juce::PopupMenu menu;
+    int commandId = 1000;
+    for (const auto& preset : DiatonicHarmony::progressionPresets())
+        menu.addItem (commandId++, preset.name + "  " + preset.summary);
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&progressionPresetButton),
+                        [this] (int result)
+                        {
+                            if (result == 0)
+                                return;
+
+                            auto* section = getSelectedSection();
+                            if (section == nullptr)
+                                return;
+
+                            const auto index = result - 1000;
+                            const auto& presets = DiatonicHarmony::progressionPresets();
+                            if (index < 0 || index >= static_cast<int> (presets.size()))
+                                return;
+
+                            const auto beforeState = processorRef.getSongManager().getStructureState();
+                            section->progression = DiatonicHarmony::buildProgressionFromTemplate (section->keyRoot, section->mode, presets[(size_t) index]);
+                            updateSectionDerivedLength (*section);
+                            selectedChordIndex = section->progression.empty() ? -1 : 0;
+                            commitStructureChange (beforeState, "Apply Progression Preset", false);
+                            refreshEditor();
+                            progressionStrip.repaint();
+                        });
+}
+
+void StructurePanel::showCadenceMenu()
+{
+    if (getSelectedSection() == nullptr)
+        return;
+
+    juce::PopupMenu menu;
+    int commandId = 1100;
+    for (const auto& cadence : DiatonicHarmony::cadencePresets())
+        menu.addItem (commandId++, cadence.name + "  " + cadence.summary);
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&cadenceButton),
+                        [this] (int result)
+                        {
+                            if (result == 0)
+                                return;
+
+                            auto* section = getSelectedSection();
+                            if (section == nullptr)
+                                return;
+
+                            const auto index = result - 1100;
+                            const auto& cadences = DiatonicHarmony::cadencePresets();
+                            if (index < 0 || index >= static_cast<int> (cadences.size()))
+                                return;
+
+                            const auto beforeState = processorRef.getSongManager().getStructureState();
+                            const auto cadence = DiatonicHarmony::buildProgressionFromTemplate (section->keyRoot, section->mode, cadences[(size_t) index]);
+                            if (section->progression.empty())
+                                section->progression = cadence;
+                            else
+                                section->progression.insert (section->progression.end(), cadence.begin(), cadence.end());
+                            updateSectionDerivedLength (*section);
+                            selectedChordIndex = section->progression.empty() ? -1 : static_cast<int> (section->progression.size() - 1);
+                            commitStructureChange (beforeState, "Append Cadence", false);
+                            refreshEditor();
+                            progressionStrip.repaint();
+                        });
+}
+
+void StructurePanel::applyDiatonicPaletteChord (int degreeIndex, bool append)
+{
+    auto* section = getSelectedSection();
+    if (section == nullptr)
+        return;
+
+    const auto beforeState = processorRef.getSongManager().getStructureState();
+    const auto chord = DiatonicHarmony::buildChordForDegree (section->keyRoot, section->mode, degreeIndex);
+
+    if (append || getSelectedChordCell() == nullptr)
+    {
+        const int insertIndex = selectedChordIndex >= 0 ? selectedChordIndex + 1
+                                                        : static_cast<int> (section->progression.size());
+        section->progression.insert (section->progression.begin() + juce::jlimit (0, static_cast<int> (section->progression.size()), insertIndex),
+                                     chord);
+        selectedChordIndex = juce::jlimit (0, static_cast<int> (section->progression.size() - 1), insertIndex);
+        updateSectionDerivedLength (*section);
+        commitStructureChange (beforeState, append ? "Append Palette Chord" : "Insert Palette Chord", false);
+    }
+    else if (auto* selected = getSelectedChordCell())
+    {
+        *selected = chord;
+        updateSectionDerivedLength (*section);
+        commitStructureChange (beforeState, "Set Palette Chord", false);
+    }
+
+    refreshEditor();
+    progressionStrip.repaint();
+    diatonicPaletteStrip.repaint();
+}
+
+void StructurePanel::applyTheoryAction (int cmd)
+{
+    const auto beforeState = processorRef.getSongManager().getStructureState();
+    auto* s = getSelectedSection();
+    auto* c = getSelectedChordCell();
+    if (s == nullptr || c == nullptr)
+        return;
+
+    if (cmd >= rootBase && cmd < rootBase + 12)
+        c->root = kRoots[cmd - rootBase];
+    else if (cmd >= typeBase && cmd < typeBase + 7)
+        c->type = kTypes[cmd - typeBase];
+    else if (cmd == dupCell || cmd == splitCell)
+    {
+        s->progression.insert (s->progression.begin() + selectedChordIndex + 1, *c);
+        if (cmd == dupCell)
+            selectedChordIndex += 1;
+    }
+    else if (cmd == clearCell)
+        *c = DiatonicHarmony::buildChordForCenter (s->keyRoot, s->mode, s->harmonicCenter);
+    else if (cmd == diatonicSub)
+        *c = DiatonicHarmony::buildChordForDegree (s->keyRoot, s->mode, (DiatonicHarmony::degreeIndexForRoman (s->harmonicCenter) + selectedChordIndex + 1) % 7);
+    else if (cmd == secondaryDom)
+    {
+        const int next = (selectedChordIndex + 1) % juce::jmax (1, static_cast<int> (s->progression.size()));
+        c->root = DiatonicHarmony::rootNameForPitchClass (DiatonicHarmony::pitchClassForRoot (s->progression[(size_t) next].root) + 7);
+        c->type = "7";
+    }
+    else if (cmd == borrowedChord)
+        c->type = c->type.startsWithIgnoreCase ("min") ? "maj" : "min";
+    else if (cmd == extendChord)
+    {
+        if (c->type == "maj") c->type = "maj7";
+        else if (c->type == "min") c->type = "min7";
+        else c->type = "7";
+    }
+    else if (cmd == shortenBeat)
+        c->durationBeats = juce::jmax (1, c->durationBeats - 1);
+    else if (cmd == lengthenBeat)
+        c->durationBeats = juce::jmin (16, c->durationBeats + 1);
+    else if (cmd == flattenRoot)
+        c->root = DiatonicHarmony::rootNameForPitchClass (DiatonicHarmony::pitchClassForRoot (c->root) - 1);
+    else if (cmd == sharpenRoot)
+        c->root = DiatonicHarmony::rootNameForPitchClass (DiatonicHarmony::pitchClassForRoot (c->root) + 1);
+    else if (cmd == setMaj)
+        c->type = "maj";
+    else if (cmd == setMin)
+        c->type = "min";
+    else if (cmd == setDim)
+        c->type = "dim";
+    else if (cmd == setSus)
+        c->type = "sus4";
+
+    updateSectionDerivedLength (*s);
+    commitStructureChange (beforeState, "Edit Progression Cell", false);
+    refreshEditor();
+    progressionStrip.repaint();
+}
+void StructurePanel::selectSection (int index) { if (suppressListCallbacks) return; finishInlineSectionRename (true); if (index < 0) { clearSelection(); return; } selectionTarget = SelectionTarget::section; selectedSectionIndex = index; selectedArrangementIndex = -1; selectedChordIndex = 0; suppressListCallbacks = true; arrangementList.deselectAllRows(); suppressListCallbacks = false; refreshEditor(); progressionStrip.repaint(); }
+void StructurePanel::selectArrangementBlock (int index) { finishInlineSectionRename (true); if (index < 0) { clearSelection(); return; } selectionTarget = SelectionTarget::arrangementBlock; selectedArrangementIndex = index; selectedSectionIndex = -1; selectedChordIndex = 0; suppressListCallbacks = true; sectionList.deselectAllRows(); suppressListCallbacks = false; refreshEditor(); progressionStrip.repaint(); }
+void StructurePanel::clearSelection() { finishInlineSectionRename (true); selectionTarget = SelectionTarget::none; selectedSectionIndex = -1; selectedArrangementIndex = -1; selectedChordIndex = -1; suppressListCallbacks = true; sectionList.deselectAllRows(); arrangementList.deselectAllRows(); suppressListCallbacks = false; refreshEditor(); progressionStrip.repaint(); }
+
+void StructurePanel::beginInlineSectionRename (int index)
+{
+    juce::ignoreUnused (index);
+    // Stabilization pass: disable inline row editor so it cannot intercept section drag gestures.
+    finishInlineSectionRename (true);
+}
+
+void StructurePanel::finishInlineSectionRename (bool commit)
+{
+    if (inlineRenameRow < 0)
+        return;
+
+    const int row = inlineRenameRow;
+    inlineRenameRow = -1;
+
+    if (commit)
+    {
+        auto& sections = processorRef.getSongManager().getStructureStateForEdit().sections;
+        if (row >= 0 && row < static_cast<int> (sections.size()))
+        {
+            const auto updatedName = inlineSectionNameEditor.getText().trim();
+            if (updatedName.isNotEmpty() && updatedName != sections[(size_t) row].name)
+            {
+                const auto beforeState = processorRef.getSongManager().getStructureState();
+                sections[(size_t) row].name = updatedName;
+                commitStructureChange (beforeState, "Rename Section", false);
+                refreshLists();
+                refreshEditor();
+            }
+        }
+    }
+
+    inlineSectionNameEditor.setVisible (false);
+}
+
+void StructurePanel::updateSectionDerivedLength (Section& section)
+{
+    section.bars = computeSectionBarsFromProgression (section);
+}
+
+int StructurePanel::chordStartBeat (int index) const { const auto* s = getSelectedSection(); if (s == nullptr || index < 0 || index >= static_cast<int> (s->progression.size())) return -1; int beat = 0; for (int i = 0; i < index; ++i) beat += juce::jmax (1, s->progression[(size_t) i].durationBeats); return beat; }
+int StructurePanel::chordIndexForBeat (int beat) const { const auto* s = getSelectedSection(); if (s == nullptr || beat < 0) return -1; int runningBeat = 0; for (int i = 0; i < static_cast<int> (s->progression.size()); ++i) { const int duration = juce::jmax (1, s->progression[(size_t) i].durationBeats); if (beat >= runningBeat && beat < runningBeat + duration) return i; runningBeat += duration; if (runningBeat > kProgressionGridSteps) break; } return -1; }
+int StructurePanel::progressionBeatAtPoint (juce::Point<int> position) const { const auto grid = progressionGridBounds(); if (! grid.toNearestInt().contains (position)) return -1; const float cellW = grid.getWidth() / (float) kProgressionGridColumns; const float cellH = grid.getHeight() / (float) kProgressionGridRows; const int column = juce::jlimit (0, kProgressionGridColumns - 1, (int) ((position.x - grid.getX()) / cellW)); const int row = juce::jlimit (0, kProgressionGridRows - 1, (int) ((position.y - grid.getY()) / cellH)); return row * kProgressionGridColumns + column; }
+juce::Rectangle<float> StructurePanel::progressionGridBounds() const { auto area = progressionStrip.getLocalBounds().reduced (18, 18).toFloat(); const float side = juce::jmax (120.0f, juce::jmin (area.getWidth(), area.getHeight())); return juce::Rectangle<float> (area.getCentreX() - side * 0.5f, area.getCentreY() - side * 0.5f, side, side); }
+juce::Rectangle<int> StructurePanel::chordCellBounds (int index) const { return progressionChipBounds (index).toNearestInt(); }
+juce::Rectangle<float> StructurePanel::progressionChipBounds (int index) const { if (index < 0 || index >= kProgressionGridSteps) return {}; const auto grid = progressionGridBounds(); const float cellW = grid.getWidth() / (float) kProgressionGridColumns; const float cellH = grid.getHeight() / (float) kProgressionGridRows; const int row = index / kProgressionGridColumns; const int column = index % kProgressionGridColumns; return { grid.getX() + cellW * (float) column + 1.5f, grid.getY() + cellH * (float) row + 1.5f, cellW - 3.0f, cellH - 3.0f }; }
+void StructurePanel::refreshLists() { suppressListCallbacks = true; sectionList.updateContent(); arrangementList.updateContent(); if (selectionTarget == SelectionTarget::section && selectedSectionIndex >= 0) sectionList.selectRow (selectedSectionIndex, false, false); if (selectionTarget == SelectionTarget::arrangementBlock && selectedArrangementIndex >= 0) arrangementList.selectRow (selectedArrangementIndex, false, false); suppressListCallbacks = false; arrangementHint.setVisible (arrangementListModel.getNumRows() == 0); arrangementHint.toFront (false); arrangementFlowHint.setText (arrangementListModel.getNumRows() == 0 ? "Song order: drop sections here" : "Song order built from section instances", juce::dontSendNotification); }
+void StructurePanel::refreshEditor()
+{
+    const auto* s = getSelectedSection();
+    const bool has = s != nullptr;
+    const bool arrangementSelection = selectionTarget == SelectionTarget::arrangementBlock;
+
+    editorHeader.setText (arrangementSelection ? "Arrangement-Sourced Section" : "Section Authoring",
+                          juce::dontSendNotification);
+    editorHint.setText (has
+                            ? (arrangementSelection
+                                   ? "Editing the reusable section behind this arrangement instance."
+                                   : "Shape the reusable section, then place it into the arrangement.")
+                            : "Select a section or arrangement block to sculpt song form.",
+                        juce::dontSendNotification);
+    progressionHeader.setText ("Progression Loop", juce::dontSendNotification);
+    progressionHint.setText (has
+                                 ? "Each cell is a chord event on the beat grid. The filled loop repeats across the section length."
+                                 : "Build the progression loop here once a section is selected.",
+                             juce::dontSendNotification);
+
+    suppressControlCallbacks = true;
+    nameEditor.setEnabled (false);
+    barsSlider.setEnabled (false);
+    repeatsSlider.setEnabled (false);
+    beatsPerBarBox.setEnabled (false);
+    transitionIntentBox.setEnabled (false);
+    keyRootBox.setEnabled (has);
+    modeBox.setEnabled (has);
+    harmonicCenterBox.setEnabled (has);
+    addChordCellButton.setEnabled (false);
+    progressionPresetButton.setEnabled (false);
+    cadenceButton.setEnabled (false);
+
+    if (! has)
+    {
+        nameEditor.clear();
+        barsSlider.setValue (1, juce::dontSendNotification);
+        repeatsSlider.setValue (1, juce::dontSendNotification);
+        beatsPerBarBox.setSelectedId (4, juce::dontSendNotification);
+        transitionIntentBox.setSelectedId (1, juce::dontSendNotification);
+        keyRootBox.setSelectedId (1, juce::dontSendNotification);
+        modeBox.setSelectedId (1, juce::dontSendNotification);
+        harmonicCenterBox.setSelectedId (1, juce::dontSendNotification);
+        chordRootBox.setSelectedId (1, juce::dontSendNotification);
+        chordTypeBox.setSelectedId (1, juce::dontSendNotification);
+        progressionPaletteHint.setText ("", juce::dontSendNotification);
+        suppressControlCallbacks = false;
+        diatonicPaletteStrip.repaint();
+        return;
+    }
+
+    nameEditor.setText (s->name, juce::dontSendNotification);
+    barsSlider.setValue (s->bars, juce::dontSendNotification);
+    repeatsSlider.setValue (s->repeats, juce::dontSendNotification);
+    beatsPerBarBox.setSelectedId (s->beatsPerBar, juce::dontSendNotification);
+    transitionIntentBox.setText (s->transitionIntent, juce::dontSendNotification);
+    keyRootBox.setText (s->keyRoot.isNotEmpty() ? s->keyRoot : processorRef.getSongManager().getStructureState().songKey,
+                        juce::dontSendNotification);
+    modeBox.setText (s->mode.isNotEmpty() ? s->mode : processorRef.getSongManager().getStructureState().songMode,
+                     juce::dontSendNotification);
+    harmonicCenterBox.setText (s->harmonicCenter, juce::dontSendNotification);
+    progressionPaletteHint.setText ("Tap a chord hex to set the selected cell. Right-click a hex to append a new chord.",
+                                    juce::dontSendNotification);
+
+    if (selectedChordIndex < 0 && ! s->progression.empty())
+        selectedChordIndex = 0;
+    if (selectedChordIndex >= static_cast<int> (s->progression.size()))
+        selectedChordIndex = static_cast<int> (s->progression.size()) - 1;
+
+    removeChordCellButton.setEnabled (false);
+    chordRootBox.setEnabled (false);
+    chordTypeBox.setEnabled (false);
+
+    suppressControlCallbacks = false;
+    progressionStrip.repaint();
+    diatonicPaletteStrip.repaint();
+}
+void StructurePanel::refreshSummary() { const auto& s = processorRef.getSongManager().getStructureState(); summaryTempo.setText ("Tempo  " + juce::String (s.songTempo) + " BPM", juce::dontSendNotification); summaryKey.setText ("Key  " + s.songKey, juce::dontSendNotification); summaryMode.setText ("Mode  " + s.songMode, juce::dontSendNotification); summaryBars.setText ("Total Bars  " + juce::String (s.totalBars), juce::dontSendNotification); summaryDuration.setText ("Estimated Duration  " + durationText (s.estimatedDurationSeconds), juce::dontSendNotification); }
+void StructurePanel::commitStructureChange (const StructureState& beforeState, const juce::String& actionName, bool seedRails) { processorRef.getSongManager().commitAuthoredState(); const auto afterState = processorRef.getSongManager().getStructureState(); processorRef.getUndoManager().beginNewTransaction (actionName); processorRef.getUndoManager().perform (new StructureUndoAction (processorRef, beforeState, afterState)); refreshSummary(); if (seedRails && onRailsSeeded) { juce::Array<int> slots; slots.add (0); onRailsSeeded (slots); } if (onStructureApplied) onStructureApplied(); }

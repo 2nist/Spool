@@ -17,20 +17,13 @@
 
     The cylinder rotation model lives here:
       - m_loopLengthBars, m_beatsPerBar, m_pxPerBeat, m_currentBeat
-      - wrappedX() — ALL element positions go through this
-      - scrollOffsetPx() — bounded via fmod to prevent precision loss
+      - timelineXForBeat() — ALL element positions go through this
+      - signedOffsetPxForBeat() — canonical left-to-right beat mapping around the playhead
 */
 class CylinderBand : public juce::Component,
                      public juce::DragAndDropTarget
 {
 public:
-    // Local tape colour constants — NOT in Theme.h
-    static const juce::Colour tapeBase;
-    static const juce::Colour tapeSeam;
-    static const juce::Colour tapeBeatTick;
-    static const juce::Colour playheadColor;
-    static const juce::Colour housingEdge;
-
     CylinderBand();
     ~CylinderBand() override = default;
 
@@ -43,8 +36,8 @@ public:
 
     float loopLengthBeats() const noexcept;
     float loopLengthPx()    const noexcept;
-    float scrollOffsetPx()  const noexcept; // bounded via fmod
-    float wrappedX (float beatPosition, float centerX) const noexcept;
+    float signedOffsetPxForBeat (float beatPosition) const noexcept;
+    float timelineXForBeat      (float beatPosition, float centerX) const noexcept;
 
     //==========================================================================
     // Lane management

@@ -2,13 +2,51 @@
 
 #include <juce_core/juce_core.h>
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 struct Chord
 {
     juce::String root;
     juce::String type;
+    int durationBeats = 4;
 };
+
+inline juce::String abbreviatedChordQuality (const juce::String& quality)
+{
+    const auto type = quality.trim().toLowerCase();
+    if (type.isEmpty() || type == "maj" || type == "major")
+        return {};
+    if (type == "min" || type == "minor" || type == "m")
+        return "m";
+    if (type == "min7" || type == "minor7" || type == "m7")
+        return "m7";
+    if (type == "maj7" || type == "major7")
+        return "maj7";
+    if (type == "7" || type == "dom7" || type == "dominant7")
+        return "7";
+    if (type == "sus" || type == "sus4")
+        return "sus4";
+    if (type == "dim")
+        return "dim";
+    if (type == "aug")
+        return "aug";
+    return quality.trim();
+}
+
+inline juce::String abbreviatedChordLabel (const juce::String& root, const juce::String& quality)
+{
+    const auto cleanRoot = root.trim();
+    if (cleanRoot.isEmpty())
+        return "Rest";
+
+    return cleanRoot + abbreviatedChordQuality (quality);
+}
+
+inline juce::String abbreviatedChordLabel (const Chord& chord)
+{
+    return abbreviatedChordLabel (chord.root, chord.type);
+}
 
 struct Section
 {
@@ -86,6 +124,47 @@ inline bool structureHasScaffold (const StructureState& state)
     return ! state.sections.empty() && ! state.arrangement.empty();
 }
 
+inline int computeSectionLoopBeats (const Section& section)
+{
+    int total = 0;
+    for (const auto& chord : section.progression)
+        total += juce::jmax (1, chord.durationBeats);
+
+    return juce::jmax (1, total);
+}
+
+inline int chordIndexForLoopBeat (const Section& section, double beatInLoop)
+{
+    if (section.progression.empty())
+        return -1;
+
+    const int loopBeats = computeSectionLoopBeats (section);
+    if (loopBeats <= 0)
+        return 0;
+
+    double wrappedBeat = std::fmod (juce::jmax (0.0, beatInLoop), static_cast<double> (loopBeats));
+    if (wrappedBeat < 0.0)
+        wrappedBeat += static_cast<double> (loopBeats);
+
+    double runningBeat = 0.0;
+    for (int i = 0; i < static_cast<int> (section.progression.size()); ++i)
+    {
+        const double duration = static_cast<double> (juce::jmax (1, section.progression[(size_t) i].durationBeats));
+        if (wrappedBeat < runningBeat + duration || i == static_cast<int> (section.progression.size()) - 1)
+            return i;
+        runningBeat += duration;
+    }
+
+    return static_cast<int> (section.progression.size()) - 1;
+}
+
+inline int computeSectionBarsFromProgression (const Section& section)
+{
+    const auto beatsPerBar = juce::jmax (1, section.beatsPerBar);
+    const auto totalBeats = computeSectionLoopBeats (section) * juce::jmax (1, section.repeats);
+    return juce::jmax (1, (totalBeats + beatsPerBar - 1) / beatsPerBar);
+}
+
 inline std::vector<ResolvedSectionInstance> buildResolvedStructure (const StructureState& state)
 {
     std::vector<const ArrangementBlock*> sortedBlocks;
@@ -120,9 +199,9 @@ inline std::vector<ResolvedSectionInstance> buildResolvedStructure (const Struct
         instance.arrangementIndex = static_cast<int> (i);
         instance.startBar = runningBars;
         instance.startBeat = runningBeats;
-        instance.barsPerRepeat = juce::jmax (1, block->barsOverride > 0 ? block->barsOverride : section->bars);
+        instance.barsPerRepeat = juce::jmax (1, block->barsOverride > 0 ? block->barsOverride : (section->bars > 0 ? section->bars : computeSectionBarsFromProgression (*section)));
         instance.beatsPerBar = juce::jmax (1, section->beatsPerBar);
-        instance.repeats = juce::jmax (1, block->repeatsOverride > 0 ? block->repeatsOverride : section->repeats);
+        instance.repeats = juce::jmax (1, block->repeatsOverride > 0 ? block->repeatsOverride : 1);
         instance.totalBars = instance.barsPerRepeat * instance.repeats;
         instance.totalBeats = instance.totalBars * instance.beatsPerBar;
         instance.transitionIntent = block->transitionIntentOverride.isNotEmpty()

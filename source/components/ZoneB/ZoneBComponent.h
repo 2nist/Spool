@@ -56,6 +56,8 @@ public:
     void setPlayheadStep (int step);
     void setStructureContext (const juce::String& sectionName,
                               const juce::String& positionLabel,
+                              const juce::String& keyRoot,
+                              const juce::String& keyScale,
                               const juce::String& currentChord,
                               const juce::String& nextChord,
                               const juce::String& transitionIntent,
@@ -83,6 +85,7 @@ public:
     ~ZoneBComponent() override;
 
     LooperStrip& getLooperStrip() noexcept { return m_looperStrip; }
+    void setLooperVisible (bool shouldShow);
 
     void paint   (juce::Graphics&) override;
     void resized () override;
@@ -128,6 +131,7 @@ private:
     StepGridSingle   m_stepGridSingle;
     StepGridDrum     m_stepGridDrum;
     LooperStrip      m_looperStrip;
+    bool             m_showLooper { true };
 
     //==========================================================================
     // Split handle — drag to resize rows area vs. bottom section
@@ -165,7 +169,7 @@ private:
     static constexpr int kLooperH     = LooperStrip::kHeight;
     static constexpr int kHandleH     = 6;
     static constexpr int kMinRowsH    = 40;
-    static constexpr int kMinBottomH  = kSeqHdrH + kMinGridH + kLooperH;
+    static constexpr int kMinBottomBaseH = kSeqHdrH + kMinGridH;
     static constexpr int kRowGap      = 0;   // rows are flush
     static constexpr int kOuterPad    = 8;   // horizontal padding left and right of row pairs
     static constexpr int kPairGutter  = 12;  // gap between the two half-modules in a row pair
@@ -173,11 +177,13 @@ private:
     int m_gridH { 0 };  // computed dynamically in resized()
 
     // Derived positions — all depend on m_splitY
+    int looperHeight() const noexcept { return m_showLooper ? kLooperH : 0; }
+    int minBottomHeight() const noexcept { return kMinBottomBaseH + looperHeight(); }
     int rowsAreaTop()  const noexcept { return kStripeH; }
     int rowsAreaH()    const noexcept
     {
         if (m_splitY < 0)
-            return juce::jmax (0, getHeight() - kStripeH - kHandleH - kMinBottomH);
+            return juce::jmax (0, getHeight() - kStripeH - kHandleH - minBottomHeight());
         return juce::jmax (0, m_splitY - kStripeH);
     }
     int bottomStart()  const noexcept { return (m_splitY < 0 ? kStripeH + rowsAreaH() : m_splitY) + kHandleH; }

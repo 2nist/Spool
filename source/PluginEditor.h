@@ -16,13 +16,16 @@
 #include "components/ZoneD/ZoneDComponent.h"
 #include "components/ZoneResizer.h"
 #include "components/AudioHistoryStrip.h"
+#include "components/SettingsPanel.h"
+#include "state/AppPreferences.h"
 
 //==============================================================================
 class PluginEditor : public juce::AudioProcessorEditor,
                      public juce::DragAndDropContainer,
                      public ZoneBComponent::Listener,
                      public TransportListener,
-                     public ThemeManager::Listener
+                     public ThemeManager::Listener,
+                     private AppPreferences::Listener
 {
 public:
     explicit PluginEditor (PluginProcessor&);
@@ -31,6 +34,8 @@ public:
     //==============================================================================
     void paint   (juce::Graphics&) override;
     void resized () override;
+    bool keyPressed (const juce::KeyPress& key) override;
+    void refreshFromAuthoredSong();
 
     // ZoneBComponent::Listener
     void slotSelected   (int slotIndex, const juce::String& moduleType) override;
@@ -45,6 +50,7 @@ public:
     void themeChanged() override;
 
 private:
+    void appPreferencesChanged() override;
     static void repaintAll (juce::Component& root);
     PluginProcessor& processorRef;
     MenuBarComponent   menuBar;
@@ -66,6 +72,7 @@ private:
     // Layout member variables — driven by resizers
     int  m_menuBarHeight = 28;
     int  m_songHeaderH   = 28;
+    int  m_songHeaderCompactH = 22;
     int  m_sysFeedHeight = 32;
     int  m_zoneAWidth    = 220;  // total Zone A width (28px tab strip + 192px content)
     int  m_zoneCWidth    = 200;  // resizable 40–400
@@ -77,7 +84,10 @@ private:
     bool m_contentPanelOpen { false };
 
     // Derived helpers
-    int topOffset()     const { return m_menuBarHeight + m_songHeaderH + m_sysFeedHeight; }
+    int songHeaderHeight() const;
+    int systemFeedHeight() const;
+    int historyTapeHeight() const;
+    int topOffset() const;
     int contentPanelW() const { return m_contentPanelOpen
                                            ? juce::jmax (0, m_zoneAWidth - TabStrip::kWidth)
                                            : 0; }
@@ -106,8 +116,21 @@ private:
     // Owned here until a loop DSP engine is ready to consume it.
     std::optional<CapturedAudioClip> m_looperClip;
 
-    // Open the TPRT panel (from gear button in transport strip)
-    void openTransportSettings();
+    void openSettingsPanel (juce::Rectangle<int> anchorBounds = {});
+    void openThemeDesigner (juce::Rectangle<int> anchorBounds = {});
+    void showMenuPopup (const juce::String& menuId, juce::Rectangle<int> anchorBounds);
+    void showFileMenu (juce::Rectangle<int> anchorBounds);
+    void showEditMenu (juce::Rectangle<int> anchorBounds);
+    void showViewMenu (juce::Rectangle<int> anchorBounds);
+    void showSettingsMenu (juce::Rectangle<int> anchorBounds);
+    void newSong();
+    void openSong();
+    void saveSong();
+    void saveSongAs();
+    void importLyricsText();
+    void importThemeFile();
+    void exportThemeFile();
+    void applyAuthoredSongToUi();
 
     /** Build a CapturedAudioClip from the current grabbed buffer + session metadata. */
     CapturedAudioClip buildGrabClip() const;
@@ -135,6 +158,10 @@ private:
     void applyDrumStateToRuntime (int slotIndex);
     void replaceDrumStateForSlot (int slotIndex, const DrumMachineData& state);
     void updateSequencerStructureContext (double structureBeat);
+
+    juce::Component::SafePointer<juce::CallOutBox> m_settingsCallout;
+    juce::Component::SafePointer<juce::DialogWindow> m_themeDesignerWindow;
+    juce::File m_currentSongFile;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

@@ -1,72 +1,96 @@
 #pragma once
 
+#include <juce_audio_formats/juce_audio_formats.h>
+
 #include "../../Theme.h"
+#include "LooperSession.h"
 
-//==============================================================================
-/**
-    LooperUnit — visual stub for one looper track.
-
-    Layout (inside allocated rect):
-      LEFT CONTROLS (120px):
-        SOURCE label + "MIX" dropdown stub
-        MODE toggle "QUANTIZED" ↔ "FREE"
-        Transport: ● REC  ▶ PLAY  ⊕ DUB  ⊗ CLEAR  (each 18×18px)
-
-      CENTRE (fills remaining):
-        Empty: "HOLD REC TO CAPTURE"
-        Recorded: waveform RMS display + playhead  (TODO: DSP session)
-
-      RIGHT DRAG HANDLE (16px):
-        "···" drag indicator
-        Drag to Zone D: creates audio clip (TODO: drag drop in DSP session)
-
-    Audio is a visual stub — all DSP annotated TODO.
-*/
-class LooperUnit : public juce::Component
+class LooperUnit : public juce::Component,
+                   private juce::Timer
 {
 public:
     LooperUnit();
     ~LooperUnit() override = default;
 
-    /** Populate the SOURCE selector with available group/slot names. */
+    void loadClip (const CapturedAudioClip& clip);
+    void overdubClip (const CapturedAudioClip& clip);
+    bool hasClip() const noexcept { return m_session.hasAudio(); }
+    bool isOverdubEnabled() const noexcept { return m_session.overdubEnabled; }
+    CapturedAudioClip getEditedClip() const { return m_session.makeEditedClip(); }
     void setSourceNames (const juce::StringArray& names);
 
-    void paint   (juce::Graphics&) override;
-    void resized () override;
+    void paint (juce::Graphics&) override;
+    void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
     juce::MouseCursor getMouseCursor() override;
 
-    static constexpr int kCtrlW   = 120;
-    static constexpr int kHandleW = 16;
-    static constexpr int kBtnSz   = 18;
+    static constexpr int kHeight = 84;
+    static constexpr int kToolbarH = 18;
+    static constexpr int kFooterH = 14;
+
+    std::function<void (const CapturedAudioClip& clip)> onEditedClipChanged;
+    std::function<void (bool playing, bool looping)> onPreviewStateChanged;
+    std::function<void (const CapturedAudioClip& clip)> onSendToReel;
+    std::function<void (const CapturedAudioClip& clip)> onSendToTimeline;
+    std::function<void (const CapturedAudioClip& clip)> onDragClipStarted;
+    std::function<void (const juce::String& message)> onStatus;
+    std::function<float()> onQueryPreviewProgress;
+    std::function<bool()> onQueryPreviewPlaying;
 
 private:
+    enum class ButtonId
+    {
+        none = 0,
+        play,
+        loop,
+        dub,
+        normalize,
+        resetTrim,
+        open,
+        save,
+        sendReel,
+        sendTimeline,
+        drag
+    };
+
+    enum class DragTarget
+    {
+        none = 0,
+        trimStart,
+        trimEnd
+    };
+
+    LooperSession m_session;
     juce::StringArray m_sourceNames;
-    int               m_selectedSource { 0 };
-    bool              m_freeMode        { false };  // false = QUANTIZED
+    juce::AudioFormatManager m_formatManager;
+    std::unique_ptr<juce::FileChooser> m_fileChooser;
+    ButtonId m_pressedButton { ButtonId::none };
+    DragTarget m_dragTarget { DragTarget::none };
 
-    // Transport stub booleans
-    bool              m_recording  { false };
-    bool              m_playing    { false };
-    bool              m_dubbing    { false };
+    juce::Rectangle<int> toolbarRect() const noexcept;
+    juce::Rectangle<int> waveformRect() const noexcept;
+    juce::Rectangle<int> footerRect() const noexcept;
+    juce::Rectangle<int> buttonRect (ButtonId id) const noexcept;
+    juce::Rectangle<float> trimHandleRect (bool startHandle) const noexcept;
 
-    // Drag handle hover
-    bool              m_handleHovered { false };
+    ButtonId buttonAt (juce::Point<int>) const noexcept;
+    DragTarget dragTargetAt (juce::Point<int>) const noexcept;
 
-    // Region helpers
-    juce::Rectangle<int> ctrlRect()        const noexcept;
-    juce::Rectangle<int> waveformRect()    const noexcept;
-    juce::Rectangle<int> handleRect()      const noexcept;
-    juce::Rectangle<int> sourceDropRect()  const noexcept;
-    juce::Rectangle<int> modeToggleRect()  const noexcept;
-    juce::Rectangle<int> recBtnRect()      const noexcept;
-    juce::Rectangle<int> playBtnRect()     const noexcept;
-    juce::Rectangle<int> dubBtnRect()      const noexcept;
-    juce::Rectangle<int> clearBtnRect()    const noexcept;
-
-    void paintCtrl     (juce::Graphics& g) const;
-    void paintWaveform (juce::Graphics& g) const;
-    void paintHandle   (juce::Graphics& g) const;
+    void paintToolbar (juce::Graphics&) const;
+    void paintWaveform (juce::Graphics&) const;
+    void paintFooter (juce::Graphics&) const;
+    void drawToolbarButton (juce::Graphics&, juce::Rectangle<int>, const juce::String&, bool active, juce::Colour accent = {}) const;
+    void syncEditedClip();
+    void syncPreviewState();
+    void chooseLoadFile();
+    void chooseSaveFile();
+    bool loadFromFile (const juce::File&);
+    bool saveToFile (const juce::File&);
+    int sampleFromWaveX (int x) const noexcept;
+    void beginDragOut();
+    void timerCallback() override;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LooperUnit)
 };

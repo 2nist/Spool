@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_core/juce_core.h>
+#include <juce_data_structures/juce_data_structures.h>
 #include <array>
 #include "dsp/SpoolAudioGraph.h"
 #include "dsp/MidiRouter.h"
@@ -9,6 +10,7 @@
 #include "dsp/SongManager.h"
 #include "midi/MidiConstraintEngine.h"
 #include "state/AppState.h"
+#include "state/RoutingState.h"
 #include "structure/StructureEngine.h"
 #include "theory/TheoryAdapter.h"
 #include "components/ZoneB/SlotPattern.h"
@@ -61,9 +63,12 @@ public:
     /** Current song beat (double). */
     double getCurrentSongBeat() const noexcept { return m_currentSongBeat; }
     SongManager& getSongManager() noexcept { return m_songMgr; }
+    const SongManager& getSongManager() const noexcept { return m_songMgr; }
+    juce::UndoManager& getUndoManager() noexcept { return m_undoManager; }
     AppState& getAppState() noexcept { return m_appState; }
     StructureEngine& getStructureEngine() noexcept { return m_structureEngine; }
     juce::ReadWriteLock& getStructureLock() noexcept { return m_structureLock; }
+    void syncAuthoredSongToRuntime() noexcept;
     void syncTransportFromAppState() noexcept;
     void setConstraintNotePolicy (MidiConstraintEngine::NotePolicy policy) noexcept;
     MidiConstraintEngine::NotePolicy getConstraintNotePolicy() const noexcept;
@@ -140,6 +145,11 @@ public:
     void grabRegion   (double startSecondsAgo, double lengthSeconds);
     /** Grab the last N complete bars, snapped to bar boundary. */
     void grabLastBars (int numBars);
+    void setLooperPreviewClip (const juce::AudioBuffer<float>& buffer, double sampleRate);
+    void clearLooperPreview();
+    void setLooperPreviewState (bool playing, bool looping);
+    float getLooperPreviewProgress() const noexcept { return m_looperPreviewProgress.load(); }
+    bool isLooperPreviewPlaying() const noexcept { return m_looperPreviewPlaying.load(); }
 
     bool hasGrabbedClip() const noexcept { return m_hasGrabbedClip; }
     const juce::AudioBuffer<float>& getGrabbedClip() const noexcept { return m_grabbedClip; }
@@ -156,6 +166,8 @@ public:
     /** Routing matrix (4 sources × 2 outputs = 8 bits). */
     void setRoutingMatrix (const std::array<uint8_t, 8>& m);
     std::array<uint8_t, 8> getRoutingMatrix() const;
+    void setRoutingState (const RoutingState& state);
+    RoutingState getRoutingState() const;
 
     //--- Step-advance notification (message thread) --------------------------
     /** Fired on the message thread after each sequencer step advance.
@@ -168,6 +180,7 @@ public:
 private:
     //--- DSP -----------------------------------------------------------------
     SongManager         m_songMgr;
+    juce::UndoManager   m_undoManager;
     AppState            m_appState;
     StructureEngine     m_structureEngine;
     MidiConstraintEngine m_midiConstraintEngine;
@@ -175,6 +188,13 @@ private:
     SpoolAudioGraph     m_audioGraph;
     MidiRouter          m_midiRouter;
     CircularAudioBuffer m_circularBuffer;
+    juce::SpinLock m_looperPreviewLock;
+    juce::AudioBuffer<float> m_looperPreviewBuffer;
+    double m_looperPreviewSourceRate { 44100.0 };
+    double m_looperPreviewReadPos { 0.0 };
+    bool m_looperPreviewLoopingFlag { true };
+    std::atomic<bool> m_looperPreviewPlaying { false };
+    std::atomic<float> m_looperPreviewProgress { 0.0f };
 
     // Per-slot MIDI scratch buffers (pre-allocated, cleared each block)
     juce::MidiBuffer m_slotMidi[SpoolAudioGraph::kNumSlots];
@@ -290,6 +310,7 @@ private:
     //--- Legacy routing matrix -----------------------------------------------
     mutable std::mutex      m_routingLock;
     std::array<uint8_t, 8>  m_routingState { 0 };
+    RoutingState            m_routeModel { RoutingState::makeDefault() };
     static constexpr int    kRoutingSources = 4;
     static constexpr int    kRoutingOutputs = 2;
 

@@ -7,6 +7,8 @@
 #include "ClipData.h"
 #include "StructureTimelineLane.h"
 #include "../../structure/StructureState.h"
+#include "../../state/LyricsState.h"
+#include "../../state/AutomationState.h"
 
 //==============================================================================
 /**
@@ -54,6 +56,7 @@ public:
     void setRecording (bool recording);
     void setBpm       (float bpm);
     void setStructureView (const StructureState* state, const StructureEngine* engine);
+    void setAuthoredTimelineData (const LyricsState* lyricsState, const AutomationState* automationState);
     void setStructureBeat (double beat);
     void setStructureFollowState (TransportStrip::StructureFollowState state);
     void seedStructureRails (const StructureState& structure);
@@ -75,7 +78,7 @@ public:
     void resized () override;
 
 private:
-    static constexpr int kStructureLaneH = 24;
+    static constexpr int kStructureLaneH = 40;
 
     //--- Children ------------------------------------------------------------
     StructureTimelineLane m_structureLane;

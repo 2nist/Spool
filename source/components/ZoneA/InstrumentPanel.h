@@ -3,6 +3,7 @@
 #include "../../Theme.h"
 #include "../ZoneB/DrumMachineData.h"
 #include "PresetBar.h"
+#include "ZoneAStyle.h"
 
 class PluginProcessor;
 class PolySynthEditorComponent;
@@ -152,7 +153,6 @@ private:
     //==========================================================================
     // Type badge helpers
 
-    static juce::Colour typeColor (const juce::String& moduleType);
     static juce::String typeShort (const juce::String& moduleType);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InstrumentPanel)

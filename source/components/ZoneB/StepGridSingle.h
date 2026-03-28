@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SlotPattern.h"
+#include <vector>
 
 //==============================================================================
 /**
@@ -18,6 +19,12 @@ public:
     void setPattern   (SlotPattern* pattern, juce::Colour groupColor);
     void clearPattern ();
     void setPlayhead  (int stepIndex);
+    void setMusicalContext (const juce::String& keyRoot,
+                            const juce::String& keyScale,
+                            const juce::String& currentChord,
+                            const juce::String& nextChord,
+                            bool followingStructure,
+                            bool locallyOverriding);
 
     std::function<void()> onModified;
 
@@ -42,6 +49,12 @@ private:
     SlotPattern::Step m_stepClipboard;
     bool         m_hasStepClipboard { false };
     bool         m_detailOpen { false };
+    juce::String m_keyRoot { "C" };
+    juce::String m_keyScale { "Major" };
+    juce::String m_currentChord { "Cmaj" };
+    juce::String m_nextChord { "Gmaj" };
+    bool         m_followingStructure { true };
+    bool         m_locallyOverriding { false };
 
     enum class DragMode
     {
@@ -115,6 +128,19 @@ private:
     int valueForRow (int row) const noexcept;
     int rowForValue (int value) const noexcept;
     juce::String noteValueLabel (int value) const;
+    juce::String noteName (int midiNote) const;
+    juce::String chordTargetLabel (SlotPattern::HarmonicSource source) const;
+    juce::String realizedEventLabel (const SlotPattern::Step& step, const SlotPattern::MicroEvent& event) const;
+    juce::String storedEventLabel (const SlotPattern::Step& step, const SlotPattern::MicroEvent& event) const;
+    juce::String eventTimingLabel (const SlotPattern::MicroEvent& event) const;
+    juce::String stepTimingLabel (const SlotPattern::Step& step) const;
+    int realizedPitchForPreview (const SlotPattern::Step& step, const SlotPattern::MicroEvent& event) const noexcept;
+    int rootToPitchClass (const juce::String& root) const noexcept;
+    juce::String chordRootString (const juce::String& chordLabel) const;
+    juce::String chordTypeString (const juce::String& chordLabel) const;
+    std::vector<int> chordIntervalsForLabel (const juce::String& chordLabel) const;
+    std::vector<int> scalePitchClassesForKey() const;
+    int nearestNoteForPitchClass (int aroundNote, int targetPc) const noexcept;
 
     float normalizedTimeFromDetailX (int x) const noexcept;
     int pitchFromDetailY (int y) const noexcept;

@@ -149,9 +149,14 @@ private:
 
     void applyHex (const juce::String& hex)
     {
-        if (hex.length() < 6) return;
-        const auto padded = "FF" + hex.paddedLeft ('0', 8).substring (0, 6).toUpperCase();
-        const auto col    = juce::Colour::fromString (padded);
+        auto cleaned = hex.retainCharacters ("0123456789abcdefABCDEF").toUpperCase();
+        if (cleaned.length() < 6)
+            return;
+
+        if (cleaned.length() > 6)
+            cleaned = cleaned.substring (cleaned.length() - 6);
+
+        const auto col = juce::Colour::fromString ("FF" + cleaned);
         ThemeManager::get().setColour (m_ptr, col);
         refresh();
     }

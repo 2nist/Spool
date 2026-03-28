@@ -1,13 +1,14 @@
 #pragma once
 
 #include "StructureState.h"
+#include "../dsp/SongManager.h"
 #include <optional>
 #include <vector>
 
 class StructureEngine
 {
 public:
-    explicit StructureEngine (StructureState& state);
+    explicit StructureEngine (SongManager& songManager);
 
     std::optional<ResolvedSectionInstance> getSectionAtBeat (double beat) const;
     Chord getChordAtBeat (double beat) const;
@@ -17,5 +18,5 @@ public:
     void rebuild();
 
 private:
-    StructureState& stateRef;
+    SongManager& songManagerRef;
 };

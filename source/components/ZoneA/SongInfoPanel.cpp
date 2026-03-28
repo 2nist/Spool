@@ -8,6 +8,14 @@ void styleSummaryLabel (juce::Label& label)
     label.setColour (juce::Label::textColourId, Theme::Colour::inkMid);
     label.setJustificationType (juce::Justification::centredLeft);
 }
+
+void styleSectionLabel (juce::Label& label, const juce::String& text)
+{
+    label.setText (text, juce::dontSendNotification);
+    label.setFont (Theme::Font::micro());
+    label.setColour (juce::Label::textColourId, Theme::Colour::inkGhost);
+    label.setJustificationType (juce::Justification::centredLeft);
+}
 }
 
 const juce::StringArray SongInfoPanel::kKeys =
@@ -19,15 +27,18 @@ const juce::StringArray SongInfoPanel::kScales =
 //==============================================================================
 SongInfoPanel::SongInfoPanel()
 {
-    // Title editor
+    ZoneAControlStyle::styleTextEditor (m_titleEditor);
     m_titleEditor.setFont (Theme::Font::heading());
-    m_titleEditor.setColour (juce::TextEditor::backgroundColourId, Theme::Colour::surface2);
-    m_titleEditor.setColour (juce::TextEditor::textColourId, Theme::Colour::inkLight);
-    m_titleEditor.setColour (juce::TextEditor::outlineColourId, Theme::Colour::surfaceEdge);
     m_titleEditor.setText ("Untitled");
     m_titleEditor.onReturnKey = [this] { if (onTitleChanged) onTitleChanged (m_titleEditor.getText()); };
     m_titleEditor.onFocusLost = [this] { if (onTitleChanged) onTitleChanged (m_titleEditor.getText()); };
+    styleSectionLabel (m_titleLabel, "TITLE");
+    addAndMakeVisible (m_titleLabel);
     addAndMakeVisible (m_titleEditor);
+
+    const auto accent = ZoneAStyle::accentForTabId ("song");
+    styleSectionLabel (m_defaultsLabel, "HARMONIC DEFAULTS");
+    addAndMakeVisible (m_defaultsLabel);
 
     // Key combo
     for (const auto& k : kKeys)
@@ -38,9 +49,7 @@ SongInfoPanel::SongInfoPanel()
         if (onKeyChanged)
             onKeyChanged (m_keyCombo.getText());
     };
-    m_keyCombo.setColour (juce::ComboBox::backgroundColourId, Theme::Colour::surface2);
-    m_keyCombo.setColour (juce::ComboBox::textColourId, Theme::Colour::inkMid);
-    m_keyCombo.setColour (juce::ComboBox::outlineColourId, Theme::Colour::surfaceEdge);
+    ZoneAControlStyle::styleComboBox (m_keyCombo, accent);
     addAndMakeVisible (m_keyCombo);
 
     // Scale combo
@@ -52,9 +61,7 @@ SongInfoPanel::SongInfoPanel()
         if (onScaleChanged)
             onScaleChanged (m_scaleCombo.getText());
     };
-    m_scaleCombo.setColour (juce::ComboBox::backgroundColourId, Theme::Colour::surface2);
-    m_scaleCombo.setColour (juce::ComboBox::textColourId, Theme::Colour::inkMid);
-    m_scaleCombo.setColour (juce::ComboBox::outlineColourId, Theme::Colour::surfaceEdge);
+    ZoneAControlStyle::styleComboBox (m_scaleCombo, accent);
     addAndMakeVisible (m_scaleCombo);
 
     // BPM label (drag-to-change)
@@ -72,10 +79,11 @@ SongInfoPanel::SongInfoPanel()
     // Notes editor
     m_notesEditor.setMultiLine (true);
     m_notesEditor.setReturnKeyStartsNewLine (true);
+    ZoneAControlStyle::styleTextEditor (m_notesEditor);
     m_notesEditor.setFont (Theme::Font::micro());
-    m_notesEditor.setColour (juce::TextEditor::backgroundColourId, Theme::Colour::surface2);
     m_notesEditor.setColour (juce::TextEditor::textColourId, Theme::Colour::inkMid);
-    m_notesEditor.setColour (juce::TextEditor::outlineColourId, Theme::Colour::surfaceEdge);
+    styleSectionLabel (m_notesLabel, "NOTES");
+    addAndMakeVisible (m_notesLabel);
     addAndMakeVisible (m_notesEditor);
 
     m_summaryTitle.setFont (Theme::Font::label());
@@ -83,7 +91,7 @@ SongInfoPanel::SongInfoPanel()
     m_summaryTitle.setText ("STRUCTURE SUMMARY", juce::dontSendNotification);
     addAndMakeVisible (m_summaryTitle);
 
-    for (auto* label : { &m_summaryTempo, &m_summaryKey, &m_summaryMode, &m_summaryBars, &m_summaryDuration })
+    for (auto* label : { &m_summaryTempo, &m_summaryKey, &m_summaryMode, &m_summaryBars, &m_summaryDuration, &m_summarySections, &m_summaryBlocks })
     {
         styleSummaryLabel (*label);
         addAndMakeVisible (*label);
@@ -137,78 +145,93 @@ void SongInfoPanel::setStructureSummary (const StructureState& structure)
         return juce::String (totalSeconds / 60) + ":" + juce::String (totalSeconds % 60).paddedLeft ('0', 2);
     }();
 
+    const auto timeSig = (! structure.sections.empty() && structure.sections.front().beatsPerBar > 0)
+        ? juce::String (structure.sections.front().beatsPerBar) + "/4"
+        : juce::String ("4/4");
+    m_timeSigLabel.setText (timeSig, juce::dontSendNotification);
+
     m_summaryTempo.setText ("Tempo  " + juce::String (structure.songTempo) + " BPM", juce::dontSendNotification);
     m_summaryKey.setText ("Key  " + (structure.songKey.isNotEmpty() ? structure.songKey : juce::String ("-")), juce::dontSendNotification);
     m_summaryMode.setText ("Mode  " + (structure.songMode.isNotEmpty() ? structure.songMode : juce::String ("-")), juce::dontSendNotification);
     m_summaryBars.setText ("Total Bars  " + juce::String (structure.totalBars), juce::dontSendNotification);
     m_summaryDuration.setText ("Est. Duration  " + duration, juce::dontSendNotification);
+    m_summarySections.setText ("Sections  " + juce::String ((int) structure.sections.size()), juce::dontSendNotification);
+    m_summaryBlocks.setText ("Arrangement Blocks  " + juce::String ((int) structure.arrangement.size()), juce::dontSendNotification);
 }
 
 juce::Rectangle<int> SongInfoPanel::bpmRect() const noexcept
 {
-    return { kPad, kPad + 5 * (kLabelH + kRowH + kPad), 80, kRowH };
+    const int gap = ZoneAControlStyle::compactGap() + 2;
+    const int rowH = ZoneAControlStyle::controlHeight();
+    const int labelH = ZoneAControlStyle::sectionHeaderHeight() - 2;
+    return { gap, gap + 5 * (labelH + rowH + gap), 72, rowH };
 }
 
 //==============================================================================
 void SongInfoPanel::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::Colour::surface1);
+    g.fillAll (Theme::Zone::bgA);
+    const auto accent = ZoneAStyle::accentForTabId ("song");
+    const int headerH = ZoneAStyle::compactHeaderHeight();
+    const int cardPad = ZoneAControlStyle::compactGap() + 3;
+    ZoneAStyle::drawHeader (g, { 0, 0, getWidth(), headerH }, "SONG", accent);
+    ZoneAStyle::drawCard (g, m_titleEditor.getBounds().expanded (cardPad, headerH), accent);
+    ZoneAStyle::drawCard (g, m_keyCombo.getBounds().getUnion (m_bpmLabel.getBounds()).expanded (cardPad, headerH), accent);
+    ZoneAStyle::drawCard (g, m_notesEditor.getBounds().expanded (cardPad, headerH), accent);
+    ZoneAStyle::drawCard (g, m_summaryTitle.getBounds().getUnion (m_summaryBlocks.getBounds()).expanded (cardPad, headerH), accent);
 
-    int y = kPad;
-    auto drawLabel = [&] (const juce::String& text, int rowY)
-    {
-        g.setFont (Theme::Font::micro());
-        g.setColour (Theme::Colour::inkGhost);
-        g.drawText (text, kPad, rowY, getWidth() - kPad * 2, kLabelH,
-                    juce::Justification::centredLeft, false);
-    };
-
-    drawLabel ("TITLE",    y);    y += kLabelH + kRowH + kPad;
-    drawLabel ("KEY",      y);    y += kLabelH + kRowH + kPad;
-    drawLabel ("SCALE",    y);    y += kLabelH + kRowH + kPad;
-    drawLabel ("TIME SIG", y);    y += kLabelH + kRowH + kPad;
-    drawLabel ("BPM  (drag to change)", y); y += kLabelH + kRowH + kPad;
-    drawLabel ("NOTES", y);
-
-    // BPM drag hint arrow
-    g.setColour (Theme::Zone::d);
+    g.setColour (accent);
     g.drawText ("↕", bpmRect().withTrimmedLeft (84), juce::Justification::centredLeft, false);
-
-    auto summaryBounds = juce::Rectangle<int> (kPad, getHeight() - 114, getWidth() - kPad * 2, 106);
-    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.55f));
-    g.drawRoundedRectangle (summaryBounds.toFloat(), 6.0f, 1.0f);
 }
 
 void SongInfoPanel::resized()
 {
-    int y = kPad + kLabelH;
+    const int gap = ZoneAControlStyle::compactGap() + 2;
+    const int labelH = ZoneAControlStyle::sectionHeaderHeight() - 2;
+    const int rowH = ZoneAControlStyle::controlHeight();
+    const int headerH = ZoneAStyle::compactHeaderHeight();
+    const int summaryRowH = ZoneAStyle::compactGroupHeaderHeight() - 1;
 
-    m_titleEditor.setBounds (kPad, y, getWidth() - kPad * 2, kRowH);
-    y += kRowH + kPad + kLabelH;
+    auto bounds = getLocalBounds().reduced (gap + 2).withTrimmedTop (headerH + 2);
 
-    m_keyCombo.setBounds (kPad, y, getWidth() / 2 - kPad, kRowH);
-    y += kRowH + kPad + kLabelH;
+    auto titleArea = bounds.removeFromTop (labelH + gap + rowH);
+    m_titleLabel.setBounds (titleArea.removeFromTop (labelH));
+    titleArea.removeFromTop (gap);
+    m_titleEditor.setBounds (titleArea.removeFromTop (rowH));
 
-    m_scaleCombo.setBounds (kPad, y, getWidth() - kPad * 2, kRowH);
-    y += kRowH + kPad + kLabelH;
+    bounds.removeFromTop (gap + 1);
 
-    m_timeSigLabel.setBounds (kPad, y, 60, kRowH);
-    y += kRowH + kPad + kLabelH;
+    auto defaults = bounds.removeFromTop (labelH + gap + rowH + gap + rowH);
+    m_defaultsLabel.setBounds (defaults.removeFromTop (labelH));
+    defaults.removeFromTop (gap);
+    auto row1 = defaults.removeFromTop (rowH);
+    m_keyCombo.setBounds (row1.removeFromLeft (juce::jmax (72, row1.getWidth() / 3)));
+    row1.removeFromLeft (gap);
+    m_scaleCombo.setBounds (row1.removeFromLeft (juce::jmax (98, row1.getWidth() / 2)));
+    row1.removeFromLeft (gap);
+    m_timeSigLabel.setBounds (row1);
+    defaults.removeFromTop (gap + 1);
+    auto row2 = defaults.removeFromTop (rowH);
+    m_bpmLabel.setBounds (row2.removeFromLeft (72));
 
-    m_bpmLabel.setBounds (bpmRect());
-    y += kRowH + kPad * 2;
+    bounds.removeFromTop (gap + 1);
 
-    const int summaryH = 106;
-    const int notesH = juce::jmax (60, getHeight() - y - kPad - summaryH - kPad);
-    m_notesEditor.setBounds (kPad, y, getWidth() - kPad * 2, notesH);
+    const int summaryH = labelH + gap + summaryRowH * 7;
+    const int notesH = juce::jmax (68, bounds.getHeight() - summaryH - gap - 1);
+    m_notesLabel.setBounds (bounds.removeFromTop (labelH));
+    bounds.removeFromTop (gap);
+    m_notesEditor.setBounds (bounds.removeFromTop (notesH));
 
-    auto summary = juce::Rectangle<int> (kPad, m_notesEditor.getBottom() + kPad, getWidth() - kPad * 2, summaryH);
-    m_summaryTitle.setBounds (summary.removeFromTop (20).reduced (8, 0));
-    m_summaryTempo.setBounds (summary.removeFromTop (18).reduced (8, 0));
-    m_summaryKey.setBounds (summary.removeFromTop (18).reduced (8, 0));
-    m_summaryMode.setBounds (summary.removeFromTop (18).reduced (8, 0));
-    m_summaryBars.setBounds (summary.removeFromTop (18).reduced (8, 0));
-    m_summaryDuration.setBounds (summary.removeFromTop (18).reduced (8, 0));
+    bounds.removeFromTop (gap + 1);
+    auto summary = bounds.removeFromTop (summaryH);
+    m_summaryTitle.setBounds (summary.removeFromTop (labelH + 2).reduced (gap + 1, 0));
+    m_summaryTempo.setBounds (summary.removeFromTop (summaryRowH).reduced (gap + 1, 0));
+    m_summaryKey.setBounds (summary.removeFromTop (summaryRowH).reduced (gap + 1, 0));
+    m_summaryMode.setBounds (summary.removeFromTop (summaryRowH).reduced (gap + 1, 0));
+    m_summaryBars.setBounds (summary.removeFromTop (summaryRowH).reduced (gap + 1, 0));
+    m_summaryDuration.setBounds (summary.removeFromTop (summaryRowH).reduced (gap + 1, 0));
+    m_summarySections.setBounds (summary.removeFromTop (summaryRowH).reduced (gap + 1, 0));
+    m_summaryBlocks.setBounds (summary.removeFromTop (summaryRowH).reduced (gap + 1, 0));
 }
 
 void SongInfoPanel::mouseDown (const juce::MouseEvent& e)

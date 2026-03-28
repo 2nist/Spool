@@ -1,4 +1,5 @@
 #include "GroupHeader.h"
+#include "../ZoneA/ZoneAControlStyle.h"
 
 //==============================================================================
 
@@ -167,9 +168,9 @@ void GroupHeader::startRename()
     m_nameEditor = std::make_unique<juce::TextEditor>();
     m_nameEditor->setText (m_group.name);
     m_nameEditor->setFont (Theme::Font::label());
-    m_nameEditor->setColour (juce::TextEditor::backgroundColourId, Theme::Colour::surface3);
-    m_nameEditor->setColour (juce::TextEditor::textColourId,        m_group.color);
-    m_nameEditor->setColour (juce::TextEditor::outlineColourId,     m_group.color);
+    ZoneAControlStyle::styleTextEditor (*m_nameEditor);
+    m_nameEditor->setColour (juce::TextEditor::focusedOutlineColourId, m_group.color);
+    m_nameEditor->setColour (juce::TextEditor::textColourId,            m_group.color);
 
     m_nameEditor->onReturnKey = [this] { commitRename(); };
     m_nameEditor->onEscapeKey = [this] { m_nameEditor.reset(); repaint(); };

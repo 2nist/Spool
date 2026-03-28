@@ -18,6 +18,7 @@
 #include "MacroPanel.h"
 #include "TapePanel.h"
 #include "AutoPanel.h"
+#include "../../state/RoutingState.h"
 
 class PluginProcessor;
 
@@ -39,7 +40,8 @@ class PluginProcessor;
       CAPTURE     : tape
       TRACK       : tracks, automate
 
-    The OutputStrip is always visible at the bottom of the content panel.
+    Master output controls now live in the top shell transport/menu bar.
+    Zone A owns only the active panel content area.
 */
 class ZoneAComponent : public juce::Component
 {
@@ -53,13 +55,14 @@ public:
     void setActivePanel (const juce::String& tabId);
     juce::String getActivePanelId() const noexcept { return m_activePanelId; }
 
-    //--- Output strip callbacks -----------------------------------------------
+    //--- Legacy output-strip callbacks ----------------------------------------
+    // Kept temporarily for compatibility while master controls live in the shell.
     void setOnLevelChanged (std::function<void (float)> cb) { m_outputStrip.onLevelChanged = std::move (cb); }
     void setOnPanChanged   (std::function<void (float)> cb) { m_outputStrip.onPanChanged   = std::move (cb); }
 
     //--- Routing panel callbacks ----------------------------------------------
-    void setOnRoutingChanged (std::function<void (const std::array<uint8_t, 8>&)> cb);
-    void setRoutingMatrix    (const std::array<uint8_t, 8>& m);
+    void setOnRoutingChanged (std::function<void (const RoutingState&)> cb);
+    void setRoutingState     (const RoutingState& state);
 
     //--- Patch bay ------------------------------------------------------------
     void setPatchModuleNames (const juce::StringArray& names);
@@ -96,6 +99,8 @@ public:
     SongInfoPanel*          getSongPanel()      noexcept { return m_songPanel.get();      }
     TransportSettingsPanel* getTransportPanel() noexcept { return m_transportPanel.get(); }
     StructurePanel*         getStructurePanel() noexcept { return m_structurePanel.get(); }
+    LyricsPanel*            getLyricsPanel()    noexcept { return m_lyricsPanel.get();    }
+    AutoPanel*              getAutoPanel()      noexcept { return m_autoPanel.get();      }
 
     /** Preferred expanded width (content only, not counting the 28px tab strip). */
     static constexpr int getPreferredWidth() noexcept
@@ -139,7 +144,7 @@ private:
 
     OutputStrip m_outputStrip;
 
-    std::function<void (const std::array<uint8_t, 8>&)> m_onRoutingChanged;
+    std::function<void (const RoutingState&)> m_onRoutingChanged;
 
     //--- Helpers --------------------------------------------------------------
     juce::Component* activePanel() const noexcept;

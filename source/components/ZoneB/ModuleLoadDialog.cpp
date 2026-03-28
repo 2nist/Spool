@@ -1,23 +1,21 @@
 #include "ModuleLoadDialog.h"
+#include "../ZoneA/ZoneAControlStyle.h"
 
 ModuleLoadDialog::ModuleLoadDialog (int slotIndex)
     : m_slotIndex (slotIndex)
 {
-    auto styleBtn = [](juce::TextButton& btn, const juce::Colour& bg, const juce::Colour& text)
+    auto styleBtn = [](juce::TextButton& btn, const juce::Colour& accent)
     {
-        btn.setColour (juce::TextButton::buttonColourId,  bg);
-        btn.setColour (juce::TextButton::textColourOffId, text);
+        ZoneAControlStyle::styleTextButton (btn, accent.withAlpha (0.8f));
     };
 
-    styleBtn (m_synthBtn,   Theme::Signal::audio,     Theme::Colour::inkDark);
-    styleBtn (m_samplerBtn, Theme::Signal::audio,     Theme::Colour::inkDark);
-    styleBtn (m_seqBtn,     Theme::Signal::midi,      Theme::Colour::inkDark);
-    styleBtn (m_vst3Btn,    Theme::Zone::menu,        Theme::Colour::inkDark);
-    styleBtn (m_drumBtn,    Theme::Signal::midi,      Theme::Colour::inkDark);
-    styleBtn (m_reelBtn,    Theme::Zone::a,           Theme::Colour::inkDark);
-    // Cancel: outline style
-    m_cancelBtn.setColour (juce::TextButton::buttonColourId,   juce::Colours::transparentBlack);
-    m_cancelBtn.setColour (juce::TextButton::textColourOffId,  Theme::Colour::inkGhost);
+    styleBtn (m_synthBtn,   Theme::Signal::audio);
+    styleBtn (m_samplerBtn, Theme::Signal::audio);
+    styleBtn (m_seqBtn,     Theme::Signal::midi);
+    styleBtn (m_vst3Btn,    Theme::Zone::menu);
+    styleBtn (m_drumBtn,    Theme::Signal::midi);
+    styleBtn (m_reelBtn,    Theme::Zone::a);
+    ZoneAControlStyle::styleTextButton (m_cancelBtn, Theme::Colour::surfaceEdge.withAlpha (0.6f));
 
     addAndMakeVisible (m_synthBtn);
     addAndMakeVisible (m_samplerBtn);

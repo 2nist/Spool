@@ -391,6 +391,27 @@ namespace Alpha
 
 namespace Helper
 {
+    /*
+        Styling contract for shared helpers:
+        - keep chrome compact and token-driven
+        - selected and playing are never the same visual state
+        - scaffold/guide content must read more ghosted than authored content
+        - focused state gets an outline/ring, not extra layout padding
+        - use accent sparingly for hierarchy, state, and zone identity
+    */
+
+    enum class VisualState
+    {
+        idle,
+        hover,
+        selected,
+        focused,
+        playing,
+        armed,
+        disabled,
+        scaffold
+    };
+
     // Returns the accent colour for a given zone identifier
     inline juce::Colour zoneAccent (const juce::String& zone)
     {
@@ -421,6 +442,58 @@ namespace Helper
         return Colour::inkLight;
     }
 
+    inline float alphaForState (VisualState state) noexcept
+    {
+        switch (state)
+        {
+            case VisualState::disabled: return Alpha::disabled;
+            case VisualState::scaffold: return 0.56f;
+            case VisualState::hover:    return 0.92f;
+            default:                    return 1.0f;
+        }
+    }
+
+    inline juce::Colour emphasisForState (juce::Colour accent, VisualState state)
+    {
+        switch (state)
+        {
+            case VisualState::selected: return accent;
+            case VisualState::focused:  return Colour::accent;
+            case VisualState::playing:  return Colour::accentWarm;
+            case VisualState::armed:    return Colour::warning;
+            case VisualState::disabled: return Colour::inkGhost;
+            case VisualState::scaffold: return Colour::inkGhost;
+            default:                    return accent;
+        }
+    }
+
+    inline juce::Colour fillForState (juce::Colour base, juce::Colour accent, VisualState state)
+    {
+        switch (state)
+        {
+            case VisualState::hover:    return elevate (base);
+            case VisualState::selected: return elevate (base).interpolatedWith (accent, 0.14f);
+            case VisualState::focused:  return elevate (base).interpolatedWith (Colour::accent, 0.10f);
+            case VisualState::playing:  return elevate (base).interpolatedWith (Colour::accentWarm, 0.14f);
+            case VisualState::armed:    return elevate (base).interpolatedWith (Colour::warning, 0.16f);
+            case VisualState::disabled: return base.withMultipliedAlpha (Alpha::disabled);
+            case VisualState::scaffold: return base.interpolatedWith (Colour::surface1, 0.35f);
+            case VisualState::idle:
+            default:                    return base;
+        }
+    }
+
+    inline juce::Colour textForState (VisualState state, juce::Colour active = Colour::inkLight)
+    {
+        switch (state)
+        {
+            case VisualState::disabled: return Colour::inkGhost.withAlpha (Alpha::disabled + 0.15f);
+            case VisualState::scaffold: return Colour::inkGhost.withAlpha (0.7f);
+            case VisualState::hover:    return active.withAlpha (0.96f);
+            default:                    return active;
+        }
+    }
+
     // Draws the zone accent stripe at the top of a component bounds
     inline void drawZoneStripe (juce::Graphics& g,
                                  juce::Rectangle<int> bounds,
@@ -445,6 +518,54 @@ namespace Helper
         g.drawRoundedRectangle (bounds.toFloat(), radius, strokeWidth);
     }
 
+    inline void drawSelectionOutline (juce::Graphics& g,
+                                      juce::Rectangle<float> bounds,
+                                      juce::Colour accent,
+                                      float radius = Radius::sm,
+                                      float strokeWidth = Stroke::accent)
+    {
+        g.setColour (accent);
+        g.drawRoundedRectangle (bounds.reduced (0.5f), radius, strokeWidth);
+    }
+
+    inline void drawFocusRing (juce::Graphics& g,
+                               juce::Rectangle<float> bounds,
+                               juce::Colour accent = Colour::accent,
+                               float radius = Radius::sm)
+    {
+        g.setColour (accent.withAlpha (0.9f));
+        g.drawRoundedRectangle (bounds.reduced (0.5f), radius, Stroke::accent);
+    }
+
+    inline void drawStateDot (juce::Graphics& g,
+                              juce::Rectangle<float> bounds,
+                              VisualState state,
+                              juce::Colour accent = Colour::accent)
+    {
+        const auto colour = emphasisForState (accent, state).withAlpha (alphaForState (state));
+        g.setColour (colour);
+        g.fillEllipse (bounds);
+    }
+
+    inline void drawInfoChip (juce::Graphics& g,
+                              juce::Rectangle<float> bounds,
+                              const juce::String& text,
+                              juce::Colour accent,
+                              VisualState state = VisualState::idle)
+    {
+        const auto fill = fillForState (Colour::surface3, accent, state);
+        const auto border = emphasisForState (accent, state).withAlpha (0.45f);
+        const auto ink = textForState (state, emphasisForState (accent, state));
+
+        g.setColour (fill);
+        g.fillRoundedRectangle (bounds, Radius::xs);
+        g.setColour (border);
+        g.drawRoundedRectangle (bounds, Radius::xs, Stroke::subtle);
+        g.setColour (ink);
+        g.setFont (Font::micro());
+        g.drawText (text, bounds.toNearestInt(), juce::Justification::centred, false);
+    }
+
     // Draws a step pad with correct state colours
     inline void drawStepPad (juce::Graphics& g,
                               juce::Rectangle<int> bounds,
@@ -452,12 +573,15 @@ namespace Helper
                               bool accent   = false,
                               bool selected = false)
     {
+        const auto state = selected ? VisualState::selected
+                                    : active ? VisualState::playing
+                                             : VisualState::idle;
         juce::Colour fill = active
             ? (accent ? Colour::accent.brighter (0.1f) : Colour::accent)
-            : Colour::surface3;
+            : fillForState (Colour::surface3, Colour::accent, state);
 
         juce::Colour border = selected
-            ? Colour::accent
+            ? emphasisForState (Colour::accent, VisualState::selected)
             : Colour::surfaceEdge;
 
         g.setColour (fill);

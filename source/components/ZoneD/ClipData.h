@@ -10,7 +10,7 @@
 */
 
 //==============================================================================
-enum class ClipType { audio, midi, output };
+enum class ClipType { audio, midi, output, scaffold };
 
 //==============================================================================
 struct Clip

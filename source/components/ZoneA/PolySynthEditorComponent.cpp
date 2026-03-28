@@ -1,4 +1,5 @@
 #include "PolySynthEditorComponent.h"
+#include "ZoneAControlStyle.h"
 
 #include <algorithm>
 #include <cmath>
@@ -8,106 +9,13 @@ namespace
 {
 const auto kSaffron = juce::Colour (0xFFF2B544);
 const auto kOscSection = juce::Colour (0xFFF2B544);
+const auto kCharacterSection = juce::Colour (0xFFE7A85E);
 const auto kFilterSection = juce::Colour (0xFF91C978);
+const auto kFilterEnvSection = juce::Colour (0xFF8FC5A2);
 const auto kAmpSection = juce::Colour (0xFFF4C36A);
 const auto kLfoSection = juce::Colour (0xFFE58BB7);
 const auto kOutputSection = juce::Colour (0xFFF2B544);
 constexpr int kZoneABarHeight = 14;
-
-class ZoneABarSliderLookAndFeel : public juce::LookAndFeel_V4
-{
-public:
-    void drawLinearSlider (juce::Graphics& g,
-                           int x, int y, int width, int height,
-                           float sliderPos,
-                           float /*minSliderPos*/,
-                           float /*maxSliderPos*/,
-                           const juce::Slider::SliderStyle style,
-                           juce::Slider& slider) override
-    {
-        if (style != juce::Slider::LinearBar && style != juce::Slider::LinearBarVertical)
-        {
-            juce::LookAndFeel_V4::drawLinearSlider (g, x, y, width, height, sliderPos, 0.0f, 0.0f, style, slider);
-            return;
-        }
-
-        auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height).reduced (0.5f);
-        const auto fill = slider.findColour (juce::Slider::trackColourId);
-        const auto bg = slider.findColour (juce::Slider::backgroundColourId);
-        const bool isVertical = style == juce::Slider::LinearBarVertical;
-        const float proportion = (float) slider.valueToProportionOfLength (slider.getValue());
-
-        g.setColour (bg);
-        g.fillRoundedRectangle (bounds, 4.0f);
-
-        if (isVertical)
-        {
-            const float fillH = bounds.getHeight() * juce::jlimit (0.0f, 1.0f, proportion);
-            auto fillBounds = bounds.withY (bounds.getBottom() - fillH).withHeight (fillH);
-            if (fillBounds.getHeight() > 0.0f)
-            {
-                g.setColour (fill);
-                g.fillRoundedRectangle (fillBounds, 4.0f);
-            }
-        }
-        else
-        {
-            const float posX = juce::jlimit (bounds.getX(), bounds.getRight(), sliderPos);
-            auto fillBounds = bounds.withWidth (juce::jmax (0.0f, posX - bounds.getX()));
-            if (fillBounds.getWidth() > 0.0f)
-            {
-                g.setColour (fill);
-                g.fillRoundedRectangle (fillBounds, 4.0f);
-            }
-        }
-
-        g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.85f));
-        g.drawRoundedRectangle (bounds, 4.0f, 1.0f);
-
-        const auto label = slider.getName();
-        if (label.isNotEmpty())
-        {
-            const bool overFill = proportion >= (isVertical ? 0.58f : 0.62f);
-            const auto labelBg = overFill ? fill : bg;
-            const auto textColour = Theme::Helper::inkFor (labelBg).withAlpha (0.98f);
-            const auto shadowColour = textColour.getPerceivedBrightness() > 0.5f
-                                        ? Theme::Colour::inkDark.withAlpha (0.28f)
-                                        : Theme::Colour::inkLight.withAlpha (0.18f);
-
-            g.setFont (Theme::Font::microMedium());
-
-            if (isVertical)
-            {
-                juce::Graphics::ScopedSaveState state (g);
-                const auto centre = bounds.getCentre();
-                g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, centre.x, centre.y));
-
-                auto textBounds = bounds.toNearestInt().reduced (0, 5);
-                textBounds.translate (1, 1);
-                g.setColour (shadowColour);
-                g.drawText (label, textBounds, juce::Justification::centred, false);
-
-                textBounds.translate (-1, -1);
-                g.setColour (textColour);
-                g.drawText (label, textBounds, juce::Justification::centred, false);
-            }
-            else
-            {
-                auto textBounds = bounds.toNearestInt().reduced (8, 0);
-                g.setColour (shadowColour);
-                g.drawText (label, textBounds.translated (1, 1), juce::Justification::centredLeft, false);
-                g.setColour (textColour);
-                g.drawText (label, textBounds, juce::Justification::centredLeft, false);
-            }
-        }
-    }
-};
-
-ZoneABarSliderLookAndFeel& zoneABarLookAndFeel()
-{
-    static ZoneABarSliderLookAndFeel lookAndFeel;
-    return lookAndFeel;
-}
 
 float normalizeTime (float seconds)
 {
@@ -133,6 +41,14 @@ const char* waveformShortLabel (int index)
     }
 
     return "SAW";
+}
+
+template <size_t N>
+void setWaveSelection (std::array<juce::TextButton, N>& buttons, int selected)
+{
+    const int clamped = juce::jlimit (0, (int) N - 1, selected);
+    for (int i = 0; i < (int) N; ++i)
+        buttons[(size_t) i].setToggleState (i == clamped, juce::dontSendNotification);
 }
 }
 
@@ -324,27 +240,49 @@ void PolySynthEditorComponent::setupControls()
         addAndMakeVisible (*cb);
     }
 
-    auto initShapeButton = [this] (juce::TextButton& button, const char* paramId)
-    {
-        button.onClick = [this, &button, param = juce::String (paramId)]
-        {
-            const int current = m_proc != nullptr ? (int) m_proc->getParam (param) : 0;
-            const int next = (current + 1) % 5;
-            button.setButtonText (juce::String (waveformShortLabel (next)) + " v");
-            if (m_proc)
-                m_proc->setParam (param, (float) next);
-        };
-        addAndMakeVisible (button);
-    };
-
-    initShapeButton (m_osc1ShapeBtn, "osc1.shape");
-    initShapeButton (m_osc2ShapeBtn, "osc2.shape");
     m_osc1Octave.onChange = [this] { if (m_proc) m_proc->setParam ("osc1.octave", (float) (m_osc1Octave.getSelectedItemIndex() - 2)); };
     m_osc2Octave.onChange = [this] { if (m_proc) m_proc->setParam ("osc2.octave", (float) (m_osc2Octave.getSelectedItemIndex() - 2)); };
+
+    auto initWaveButtons = [this] (std::array<juce::TextButton, 5>& buttons, const juce::String& paramId, int radioGroupId)
+    {
+        for (int i = 0; i < 5; ++i)
+        {
+            auto& button = buttons[(size_t) i];
+            button.setButtonText (waveformShortLabel (i));
+            button.setClickingTogglesState (true);
+            button.setRadioGroupId (radioGroupId);
+            button.onClick = [this, param = paramId, index = i, &buttons]
+            {
+                if (m_proc)
+                    m_proc->setParam (param, (float) index);
+                setWaveSelection (buttons, index);
+            };
+            addAndMakeVisible (button);
+        }
+    };
+
+    initWaveButtons (m_osc1WaveButtons, "osc1.shape", 301);
+    initWaveButtons (m_osc2WaveButtons, "osc2.shape", 302);
+    setWaveSelection (m_osc1WaveButtons, 0);
+    setWaveSelection (m_osc2WaveButtons, 0);
 
     initToggle (m_osc1On);
     initToggle (m_osc2On);
     initToggle (m_lfoOn);
+
+    auto styleOscToggle = [] (juce::TextButton& button)
+    {
+        button.setColour (juce::TextButton::buttonColourId, Theme::Colour::surface3.withAlpha (0.96f));
+        button.setColour (juce::TextButton::buttonOnColourId, kOscSection.withAlpha (0.92f));
+        button.setColour (juce::TextButton::textColourOffId, Theme::Colour::inkGhost.withAlpha (0.96f));
+        button.setColour (juce::TextButton::textColourOnId, Theme::Helper::inkFor (kOscSection).withAlpha (0.98f));
+    };
+
+    styleOscToggle (m_osc1On);
+    styleOscToggle (m_osc2On);
+    for (auto* row : { &m_osc1WaveButtons, &m_osc2WaveButtons })
+        for (int i = 0; i < 5; ++i)
+            styleOscToggle ((*row)[(size_t) i]);
 
     m_osc1On.onClick = [this] { if (m_proc) m_proc->setParam ("osc1.on", m_osc1On.getToggleState() ? 1.0f : 0.0f); };
     m_osc2On.onClick = [this] { if (m_proc) m_proc->setParam ("osc2.on", m_osc2On.getToggleState() ? 1.0f : 0.0f); };
@@ -376,31 +314,34 @@ void PolySynthEditorComponent::setupControls()
     initLinear (m_outPan,   -1.0, 1.0, 0.0, 0.0, [this](double v){ if (m_proc) m_proc->setParam ("out.pan", (float) v); });
 
     m_charDrive.setName ("DRV");
-    m_charAsym.setName ("ASY");
-    m_charDrift.setName ("DRF");
+    m_charAsym.setName ("ASYM");
+    m_charDrift.setName ("DRFT");
     m_osc1Detune.setName ("DET");
     m_osc2Detune.setName ("DET");
     m_osc1PulseWidth.setName ("PW");
     m_osc2PulseWidth.setName ("PW");
     m_osc2Level.setName ("MIX");
-    m_filterCutoff.setName ("CUTOFF");
+    m_filterCutoff.setName ("TONE");
     m_filterRes.setName ("RES");
     m_filterEnvAmt.setName ("ENV");
+    m_filtA.setName ("A");
+    m_filtD.setName ("D");
+    m_filtS.setName ("S");
+    m_filtR.setName ("R");
     m_lfoRate.setName ("RATE");
     m_lfoDepth.setName ("DEPTH");
     m_outLevel.setName ("LEVEL");
     m_outPan.setName ("PAN");
 
-    for (auto* slider : { &m_osc1Detune, &m_osc2Detune,
-                          &m_filterCutoff, &m_filterRes, &m_filterEnvAmt,
-                          &m_lfoRate, &m_lfoDepth })
+    for (auto* slider : { &m_osc1Detune, &m_osc2Detune })
         slider->setSliderStyle (juce::Slider::LinearBarVertical);
+
+    for (auto* slider : { &m_filtA, &m_filtD, &m_filtS, &m_filtR })
+        slider->setVisible (false);
 
     auto tintSlider = [] (juce::Slider& slider, juce::Colour colour)
     {
-        slider.setColour (juce::Slider::trackColourId, colour);
-        slider.setColour (juce::Slider::thumbColourId, colour.brighter (0.08f));
-        slider.setColour (juce::Slider::rotarySliderFillColourId, colour);
+        ZoneAControlStyle::tintBarSlider (slider, colour);
     };
 
     for (auto* slider : { &m_filterCutoff, &m_filterRes, &m_filterEnvAmt })
@@ -480,16 +421,10 @@ void PolySynthEditorComponent::initSlider (juce::Slider& s,
                                            double midPt, double defaultVal,
                                            std::function<void(double)> onChange)
 {
-    s.setSliderStyle (juce::Slider::LinearBar);
-    s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    s.setLookAndFeel (&zoneABarLookAndFeel());
+    ZoneAControlStyle::initBarSlider (s, {});
     s.setRange (min, max);
     s.setSkewFactorFromMidPoint (midPt);
     s.setValue (defaultVal, juce::dontSendNotification);
-    s.setColour (juce::Slider::backgroundColourId, Theme::Colour::surface3.withAlpha (0.95f));
-    s.setColour (juce::Slider::trackColourId, kSaffron);
-    s.setColour (juce::Slider::thumbColourId, kSaffron.brighter (0.08f));
-    s.setColour (juce::Slider::rotarySliderFillColourId, kSaffron);
     s.onValueChange = [fn = std::move (onChange), &s] { fn (s.getValue()); };
     addAndMakeVisible (s);
 }
@@ -522,8 +457,8 @@ void PolySynthEditorComponent::readFromProcessor()
 
     m_osc1On.setToggleState (m_proc->getParam ("osc1.on") >= 0.5f, dnSend);
     m_osc2On.setToggleState (m_proc->getParam ("osc2.on") >= 0.5f, dnSend);
-    m_osc1ShapeBtn.setButtonText (juce::String (waveformShortLabel ((int) m_proc->getParam ("osc1.shape"))) + " v");
-    m_osc2ShapeBtn.setButtonText (juce::String (waveformShortLabel ((int) m_proc->getParam ("osc2.shape"))) + " v");
+    setWaveSelection (m_osc1WaveButtons, (int) m_proc->getParam ("osc1.shape"));
+    setWaveSelection (m_osc2WaveButtons, (int) m_proc->getParam ("osc2.shape"));
     m_osc1Octave.setSelectedItemIndex ((int) m_proc->getParam ("osc1.octave") + 2, dnSend);
     m_osc2Octave.setSelectedItemIndex ((int) m_proc->getParam ("osc2.octave") + 2, dnSend);
     m_osc1Detune.setValue (m_proc->getParam ("osc1.detune"), dnSend);
@@ -572,7 +507,7 @@ void PolySynthEditorComponent::paint (juce::Graphics& g)
 {
     g.fillAll (Theme::Zone::bgA);
 
-    static constexpr int kSecH = 16;
+    static constexpr int kSecH = 14;
     for (const auto& sec : m_sections)
     {
         g.setColour (Theme::Colour::surface1);
@@ -606,106 +541,113 @@ void PolySynthEditorComponent::resized()
 
     const int w = getWidth();
     const int pad = 6;
-    const int secH = 16;
-    const int gap = 6;
+    const int secH = 14;
+    const int gap = 4;
     const int barH = kZoneABarHeight;
 
-    auto addLabel = [this] (const juce::String& text, juce::Rectangle<int> bounds)
-    {
-        m_labels.add ({ text, bounds });
-    };
-
     int y = pad;
-    m_sections.add ({ "CHARACTER / VOICE", kOutputSection, y });
-    y += secH;
-
-    const auto topArea = juce::Rectangle<int> (pad, y, w - pad * 2, 34);
-    const int third = (topArea.getWidth() - 8) / 3;
-    m_charDrive.setBounds (topArea.getX(), topArea.getY() + 4, third, barH);
-    m_charAsym.setBounds (topArea.getX() + third + 4, topArea.getY() + 4, third, barH);
-    m_charDrift.setBounds (topArea.getX() + (third + 4) * 2, topArea.getY() + 4, topArea.getWidth() - (third + 4) * 2, barH);
-    addLabel ("CHAR", { topArea.getX(), topArea.getY() + 20, 36, 10 });
-    y = topArea.getBottom() + gap;
-
     m_sections.add ({ "OSCILLATORS", kOscSection, y });
     y += secH;
 
-    const auto oscArea = juce::Rectangle<int> (pad, y, w - pad * 2, 84);
+    const auto oscArea = juce::Rectangle<int> (pad, y, w - pad * 2, 94);
     const int oscGap = 6;
     const int sideW = (oscArea.getWidth() - oscGap) / 2;
-    const auto osc1 = juce::Rectangle<int> (oscArea.getX(), oscArea.getY(), sideW, 66);
-    const auto osc2 = juce::Rectangle<int> (osc1.getRight() + oscGap, oscArea.getY(), sideW, 66);
-    const int detuneW = 18;
-    const int controlW1 = osc1.getWidth() - detuneW - 4;
-    const int controlW2 = osc2.getWidth() - detuneW - 4;
-    const int splitW1 = (controlW1 - 4) / 2;
-    const int splitW2 = (controlW2 - 4) / 2;
-    const int row2Y = osc1.getY() + 18;
-    const int row3Y = osc1.getY() + 36;
-    const int controlH = 14;
-    const int detuneY = row2Y;
-    const int detuneH = 34;
+    const auto osc1 = juce::Rectangle<int> (oscArea.getX(), oscArea.getY(), sideW, 74);
+    const auto osc2 = juce::Rectangle<int> (osc1.getRight() + oscGap, oscArea.getY(), sideW, 74);
 
-    m_osc1On.setBounds (osc1.getX(), osc1.getY(), controlW1, 16);
-    m_osc1Octave.setBounds (osc1.getX(), row2Y, controlW1, controlH);
-    m_osc1ShapeBtn.setBounds (osc1.getX(), row3Y, splitW1, controlH);
-    m_osc1PulseWidth.setBounds (osc1.getX() + splitW1 + 4, row3Y, controlW1 - splitW1 - 4, barH);
-    m_osc1Detune.setBounds (osc1.getRight() - detuneW, detuneY, detuneW, detuneH);
+    auto layoutOsc = [&] (juce::Rectangle<int> bounds,
+                          juce::TextButton& onBtn,
+                          juce::ComboBox& octave,
+                          std::array<juce::TextButton, 5>& waveButtons,
+                          juce::Slider& detune,
+                          juce::Slider& pulseWidth)
+    {
+        const int rowH = 16;
+        const int badgeW = 56;
+        const int octaveW = 48;
+        const int waveH = 14;
+        const int waveGap = 2;
 
-    m_osc2On.setBounds (osc2.getX(), osc2.getY(), controlW2, 16);
-    m_osc2Octave.setBounds (osc2.getX(), row2Y, controlW2, controlH);
-    m_osc2ShapeBtn.setBounds (osc2.getX(), row3Y, splitW2, controlH);
-    m_osc2PulseWidth.setBounds (osc2.getX() + splitW2 + 4, row3Y, controlW2 - splitW2 - 4, barH);
-    m_osc2Detune.setBounds (osc2.getRight() - detuneW, detuneY, detuneW, detuneH);
+        onBtn.setBounds (bounds.getX(), bounds.getY(), badgeW, rowH);
+        octave.setBounds (bounds.getRight() - octaveW, bounds.getY(), octaveW, rowH);
+
+        const auto waveRow = juce::Rectangle<int> (bounds.getX(), bounds.getY() + rowH + 2, bounds.getWidth(), waveH);
+        const int waveW = (waveRow.getWidth() - waveGap * 4) / 5;
+        for (int i = 0; i < 5; ++i)
+            waveButtons[(size_t) i].setBounds (waveRow.getX() + i * (waveW + waveGap), waveRow.getY(), waveW, waveH);
+
+        const int contentY = waveRow.getBottom() + 3;
+        const int detuneW = 18;
+        const int detuneH = 34;
+        detune.setBounds (bounds.getX(), contentY, detuneW, detuneH);
+        pulseWidth.setBounds (bounds.getX() + detuneW + 4, contentY + 10, bounds.getWidth() - detuneW - 4, barH);
+    };
+
+    layoutOsc (osc1, m_osc1On, m_osc1Octave, m_osc1WaveButtons, m_osc1Detune, m_osc1PulseWidth);
+    layoutOsc (osc2, m_osc2On, m_osc2Octave, m_osc2WaveButtons, m_osc2Detune, m_osc2PulseWidth);
 
     m_osc2Level.setBounds (oscArea.getX(), osc1.getBottom() + 4, oscArea.getWidth(), barH);
     y = oscArea.getBottom() + gap;
 
-    m_sections.add ({ "ENVELOPES / FILTER", kAmpSection, y });
+    m_sections.add ({ "CHARACTER", kCharacterSection, y });
     y += secH;
 
-    const auto sculptArea = juce::Rectangle<int> (pad, y, w - pad * 2, 132);
-    const int leftW = (sculptArea.getWidth() - 6) / 2;
-    const auto ampArea = juce::Rectangle<int> (sculptArea.getX(), sculptArea.getY(), leftW, sculptArea.getHeight());
-    auto filterBlock = juce::Rectangle<int> (ampArea.getRight() + 6, sculptArea.getY(), sculptArea.getWidth() - leftW - 6, sculptArea.getHeight());
-    const auto filterControls = filterBlock.removeFromTop (54);
-    const auto filterGraphArea = filterBlock.withTrimmedTop (6);
+    const auto characterArea = juce::Rectangle<int> (pad, y, w - pad * 2, 26);
+    const int charGap = 4;
+    const int charW = (characterArea.getWidth() - charGap * 2) / 3;
+    m_charDrive.setBounds (characterArea.getX(), characterArea.getY(), charW, barH);
+    m_charAsym.setBounds (characterArea.getX() + charW + charGap, characterArea.getY(), charW, barH);
+    m_charDrift.setBounds (characterArea.getX() + (charW + charGap) * 2, characterArea.getY(),
+                           characterArea.getWidth() - (charW + charGap) * 2, barH);
+    y = characterArea.getBottom() + gap;
 
-    m_ampEnvGraph->setBounds (ampArea.getX(), ampArea.getY(), ampArea.getWidth(), ampArea.getHeight() - 12);
-    addLabel ("AMP", { ampArea.getX(), ampArea.getBottom() - 10, 32, 10 });
-
-    const int filterColW = (filterControls.getWidth() - 8) / 3;
-    m_filterCutoff.setBounds (filterControls.getX(), filterControls.getY(), filterColW, filterControls.getHeight());
-    m_filterRes.setBounds (filterControls.getX() + filterColW + 4, filterControls.getY(), filterColW, filterControls.getHeight());
-    m_filterEnvAmt.setBounds (filterControls.getX() + (filterColW + 4) * 2, filterControls.getY(),
-                              filterControls.getWidth() - (filterColW + 4) * 2, filterControls.getHeight());
-    m_filtEnvGraph->setBounds (filterGraphArea.getX(), filterGraphArea.getY(), filterGraphArea.getWidth(), filterGraphArea.getHeight() - 12);
-    addLabel ("FILTER ENV", { filterGraphArea.getX(), filterGraphArea.getBottom() - 10, 56, 10 });
-    y = sculptArea.getBottom() + gap;
-
-    m_sections.add ({ "LFO", kLfoSection, y });
+    m_sections.add ({ "AMP ENVELOPE", kAmpSection, y });
     y += secH;
 
-    const auto lfoArea = juce::Rectangle<int> (pad, y, w - pad * 2, 82);
-    m_lfoOn.setBounds (lfoArea.getX(), lfoArea.getY(), 40, 16);
-    m_lfoTarget.setBounds (lfoArea.getX() + 44, lfoArea.getY(), lfoArea.getWidth() - 44, 16);
-    const int lfoColW = (lfoArea.getWidth() - 4) / 2;
-    m_lfoRate.setBounds (lfoArea.getX(), lfoArea.getY() + 22, lfoColW, lfoArea.getHeight() - 24);
-    m_lfoDepth.setBounds (lfoArea.getX() + lfoColW + 4, lfoArea.getY() + 22, lfoArea.getWidth() - lfoColW - 4, lfoArea.getHeight() - 24);
-    y = lfoArea.getBottom() + gap;
+    const auto ampArea = juce::Rectangle<int> (pad, y, w - pad * 2, 78);
+    m_ampEnvGraph->setBounds (ampArea);
+    y = ampArea.getBottom() + gap;
 
-    m_sections.add ({ "OUTPUT", kOutputSection, y });
+    m_sections.add ({ "FILTER / TONE", kFilterSection, y });
     y += secH;
 
-    const auto outputArea = juce::Rectangle<int> (pad, y, w - pad * 2, 44);
-    const int panW = 54;
-    m_outLevel.setBounds (outputArea.getX(), outputArea.getY() + 4, outputArea.getWidth() - panW - 6, barH);
-    m_outPan.setBounds (outputArea.getRight() - panW, outputArea.getY() + 4, panW, barH);
+    const auto filterArea = juce::Rectangle<int> (pad, y, w - pad * 2, 26);
+    const int filterGap = 4;
+    const int filterW = (filterArea.getWidth() - filterGap * 2) / 3;
+    m_filterCutoff.setBounds (filterArea.getX(), filterArea.getY(), filterW, barH);
+    m_filterRes.setBounds (filterArea.getX() + filterW + filterGap, filterArea.getY(), filterW, barH);
+    m_filterEnvAmt.setBounds (filterArea.getX() + (filterW + filterGap) * 2, filterArea.getY(),
+                              filterArea.getWidth() - (filterW + filterGap) * 2, barH);
+    y = filterArea.getBottom() + gap;
 
-    const int modeButtonW = 42;
-    const int modeY = getHeight() - pad - 18;
+    m_sections.add ({ "FILTER ENVELOPE", kFilterEnvSection, y });
+    y += secH;
+
+    const auto filtEnvArea = juce::Rectangle<int> (pad, y, w - pad * 2, 56);
+    m_filtEnvGraph->setBounds (filtEnvArea);
+    m_filtA.setBounds (0, 0, 0, 0);
+    m_filtD.setBounds (0, 0, 0, 0);
+    m_filtS.setBounds (0, 0, 0, 0);
+    m_filtR.setBounds (0, 0, 0, 0);
+    y = filtEnvArea.getBottom() + gap;
+
+    m_sections.add ({ "MOD / OUTPUT", kLfoSection, y });
+    y += secH;
+
+    const auto outputArea = juce::Rectangle<int> (pad, y, w - pad * 2, 84);
+    const int modeButtonW = 40;
     const int modeTotalW = modeButtonW * 2 + 2;
-    const int modeX = getWidth() - pad - modeTotalW;
-    m_polyBtn.setBounds (modeX, modeY, modeButtonW, 18);
-    m_monoBtn.setBounds (modeX + modeButtonW + 2, modeY, modeButtonW, 18);
+    m_lfoOn.setBounds (outputArea.getX(), outputArea.getY(), 40, 16);
+    m_lfoTarget.setBounds (outputArea.getX() + 44, outputArea.getY(), outputArea.getWidth() - 44 - modeTotalW - 4, 16);
+    const int modeX = outputArea.getRight() - modeTotalW;
+    m_polyBtn.setBounds (modeX, outputArea.getY(), modeButtonW, 16);
+    m_monoBtn.setBounds (modeX + modeButtonW + 2, outputArea.getY(), modeButtonW, 16);
+
+    m_lfoRate.setBounds (outputArea.getX(), outputArea.getY() + 20, outputArea.getWidth(), barH);
+    m_lfoDepth.setBounds (outputArea.getX(), outputArea.getY() + 20 + barH + 4, outputArea.getWidth(), barH);
+
+    const int panW = 54;
+    const int outY = outputArea.getY() + 20 + (barH + 4) * 2;
+    m_outLevel.setBounds (outputArea.getX(), outY, outputArea.getWidth() - panW - 6, barH);
+    m_outPan.setBounds (outputArea.getRight() - panW, outY, panW, barH);
 }

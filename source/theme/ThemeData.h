@@ -34,6 +34,21 @@ struct ThemeData
     juce::Colour accentWarm { 0xFFd4603a };   // hot accent — burnt orange
     juce::Colour accentDim  { 0xFF8a5a1e };   // dimmed accent — inactive
 
+    // ── UI CHROME ────────────────────────────────────────────────────────────
+    juce::Colour headerBg       { 0xFF1c1610 };   // compact panel headers
+    juce::Colour cardBg         { 0xFF26201a };   // grouped card surfaces
+    juce::Colour rowBg          { 0xFF26201a };   // list and strip rows
+    juce::Colour rowHover       { 0xFF322a22 };   // hovered row state
+    juce::Colour rowSelected    { 0xFF3e342a };   // selected row state
+    juce::Colour badgeBg        { 0xFF322a22 };   // badge/chip fill
+    juce::Colour controlBg      { 0xFF26201a };   // compact control fill
+    juce::Colour controlOnBg    { 0xFF3e342a };   // active/toggled control fill
+    juce::Colour controlText    { 0xFFa89880 };   // inactive control text
+    juce::Colour controlTextOn  { 0xFFf8f4ec };   // active control text
+    juce::Colour focusOutline   { 0xFF4a9eff };   // keyboard/focus ring
+    juce::Colour sliderTrack    { 0xFFd4603a };   // slider bar fill
+    juce::Colour sliderThumb    { 0xFFe07b54 };   // slider thumb / hot value
+
     // ── ZONE ACCENTS ─────────────────────────────────────────────────────────
     juce::Colour zoneA    { 0xFF4a9eff };   // Zone A — nav panel — blue
     juce::Colour zoneB    { 0xFFc4822a };   // Zone B — modules — amber
@@ -61,6 +76,17 @@ struct ThemeData
     float sizeMicro     { 10.0f };
     float sizeValue     { 11.0f };
     float sizeTransport { 13.0f };
+
+    // ── COMPACT UI DENSITY ───────────────────────────────────────────────────
+    float zoneAHeaderHeight       { 22.0f };
+    float zoneAGroupHeaderHeight  { 16.0f };
+    float zoneARowHeight          { 20.0f };
+    float zoneABadgeHeight        { 11.0f };
+    float zoneASectionHeaderHeight{ 14.0f };
+    float zoneAControlBarHeight   { 12.0f };
+    float zoneAControlHeight      { 18.0f };
+    float zoneACardRadius         { 6.0f };
+    float zoneACompactGap         { 4.0f };
 
     // ── SPACING (runtime editable subset) ────────────────────────────────────
     float spaceXs  {  4.0f };

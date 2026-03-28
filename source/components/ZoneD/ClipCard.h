@@ -16,10 +16,6 @@
 class ClipCard
 {
 public:
-    // Local tape colour constants (same values as ZoneDComponent)
-    static const juce::Colour tapeClipBg;
-    static const juce::Colour tapeClipBorder;
-
     /**
         Paint the clip at the given tape-local rect.
         Called once per visible portion (may be split for wrap).
@@ -44,6 +40,9 @@ private:
                                float pxPerBeat);
 
     static void paintOutput  (juce::Graphics& g,
+                               const juce::Rectangle<float>& contentR,
+                               const Clip& clip);
+    static void paintScaffold (juce::Graphics& g,
                                const juce::Rectangle<float>& contentR,
                                const Clip& clip);
 };
