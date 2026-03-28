@@ -255,7 +255,7 @@ void FaceplatePanel::applySlotToKnob (int idx)
     {
         knob->setRange (0.f, 1.f);
         knob->setValue (0.5, juce::dontSendNotification);
-        knob->getProperties().set ("tint", theme.surfaceEdge.withAlpha (0.55f).toString());
+        knob->getProperties().set ("tint", Theme::Colour::surfaceEdge.withAlpha (0.55f).toString());
         knob->getProperties().set ("slotAssigned", false);
         knob->setAlpha   (0.4f);
     }
