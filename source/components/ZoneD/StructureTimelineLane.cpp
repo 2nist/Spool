@@ -42,9 +42,11 @@ void StructureTimelineLane::paint (juce::Graphics& g)
     }
 
     const auto resolved = buildResolvedStructure (*m_state);
+    const auto totalBeats = juce::jmax (1, m_state->totalBeats);
+    const auto wrappedBeat = std::fmod (juce::jmax (0.0, m_currentBeat), static_cast<double> (totalBeats));
+    const auto activeSection = (m_engine != nullptr) ? m_engine->getSectionAtBeat (wrappedBeat) : std::nullopt;
+    const auto activeChord = (m_engine != nullptr) ? m_engine->getChordAtBeat (wrappedBeat) : Chord { "C", "maj" };
     const auto totalBars = juce::jmax (1, m_state->totalBars);
-    const auto activeSection = (m_engine != nullptr) ? m_engine->getSectionAtBeat (m_currentBeat) : std::nullopt;
-    const auto activeChord = (m_engine != nullptr) ? m_engine->getChordAtBeat (m_currentBeat) : Chord { "C", "maj" };
 
     auto content = getLocalBounds().reduced (4, 3);
     auto sectionBand = content.removeFromTop (juce::jmax (10, content.getHeight() / 2));

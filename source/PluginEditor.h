@@ -16,6 +16,7 @@
 #include "components/ZoneD/ZoneDComponent.h"
 #include "components/ZoneResizer.h"
 #include "components/AudioHistoryStrip.h"
+#include "theme/SpoolLookAndFeel.h"
 
 //==============================================================================
 class PluginEditor : public juce::AudioProcessorEditor,
@@ -136,5 +137,9 @@ private:
     void replaceDrumStateForSlot (int slotIndex, const DrumMachineData& state);
     void updateSequencerStructureContext (double structureBeat);
 
+    SpoolLookAndFeel m_lookAndFeel;
+    double m_lastObservedProcessorBeat { 0.0 };
+    bool m_hasObservedProcessorBeat { false };
+    juce::int64 m_lastBackstepWarningMs { 0 };
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

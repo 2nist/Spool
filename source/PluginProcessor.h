@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_core/juce_core.h>
 #include <array>
+#include <atomic>
 #include "dsp/SpoolAudioGraph.h"
 #include "dsp/MidiRouter.h"
 #include "dsp/CircularAudioBuffer.h"
@@ -59,7 +60,7 @@ public:
     void  seekTransport (double beat) noexcept;
 
     /** Current song beat (double). */
-    double getCurrentSongBeat() const noexcept { return m_currentSongBeat; }
+    double getCurrentSongBeat() const noexcept { return m_currentSongBeat.load (std::memory_order_relaxed); }
     SongManager& getSongManager() noexcept { return m_songMgr; }
     AppState& getAppState() noexcept { return m_appState; }
     StructureEngine& getStructureEngine() noexcept { return m_structureEngine; }
@@ -146,7 +147,7 @@ public:
     void clearGrabbedClip() noexcept { m_hasGrabbedClip = false; }
 
     //--- Beat position (used by getLastBars) ---
-    double getCurrentBeat()  const noexcept { return m_currentBeat; }
+    double getCurrentBeat()  const noexcept { return m_currentBeat.load (std::memory_order_relaxed); }
     double getBeatsPerBar()  const noexcept { return m_beatsPerBar; }
     void   setBeatsPerBar (double bpb) noexcept { m_beatsPerBar = bpb; }
 
@@ -284,7 +285,7 @@ private:
     bool                     m_hasGrabbedClip { false };
 
     //--- Beat tracking -------------------------------------------------------
-    double m_currentBeat { 0.0 };
+    std::atomic<double> m_currentBeat { 0.0 };
     double m_beatsPerBar { 4.0 };
 
     //--- Legacy routing matrix -----------------------------------------------
@@ -319,7 +320,7 @@ private:
     void releaseFinishedSlotNotes (int slot, int sampleOffset);
     void pushHeldNote (int slot, int note, int lengthTicks);
     
-    double m_currentSongBeat { 0.0 };
+    std::atomic<double> m_currentSongBeat { 0.0 };
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };

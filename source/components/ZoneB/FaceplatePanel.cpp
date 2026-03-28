@@ -246,10 +246,8 @@ void FaceplatePanel::applySlotToKnob (int idx)
         knob->setDoubleClickReturnValue (true, slot.defVal);
 
         const juce::Colour col = ModuleRow::paramColorForLabel (slot.paramId);
-        knob->setColour (juce::Slider::rotarySliderFillColourId,    col.withAlpha (0.7f));
-        knob->setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xFF1a1410));
-        knob->setColour (juce::Slider::thumbColourId,               juce::Colour (0xFFc8a97e));
-        knob->setColour (juce::Slider::backgroundColourId,          juce::Colour (0xFF0e0c09));
+        knob->getProperties().set ("tint", col.withAlpha (0.85f).toString());
+        knob->getProperties().set ("slotAssigned", true);
         knob->setEnabled (true);
         knob->setAlpha   (1.0f);
     }
@@ -257,8 +255,8 @@ void FaceplatePanel::applySlotToKnob (int idx)
     {
         knob->setRange (0.f, 1.f);
         knob->setValue (0.5, juce::dontSendNotification);
-        knob->setColour (juce::Slider::rotarySliderFillColourId,    juce::Colour (0xFF222222));
-        knob->setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xFF1a1410));
+        knob->getProperties().set ("tint", theme.surfaceEdge.withAlpha (0.55f).toString());
+        knob->getProperties().set ("slotAssigned", false);
         knob->setAlpha   (0.4f);
     }
 
@@ -278,6 +276,7 @@ void FaceplatePanel::applySlotToButton (int idx)
                            || slot.behavior == QuickControlSlot::Behavior::EnumStep);
     btn->setClickingTogglesState (isToggle);
     btn->setToggleState (false, juce::dontSendNotification);
+    btn->setLookAndFeel (nullptr);
 
     if (slot.assigned)
     {
@@ -392,7 +391,7 @@ void FaceplatePanel::paint (juce::Graphics& g)
     g.setColour (Theme::Colour::inkGhost);
     g.drawText  (m_sectionLabel,
                  kStripeW + 6, 0, w - kStripeW - 8, kSectionH,
-                 juce::Justification::centredLeft, false);
+                 juce::Justification::centred, false);
 
     // Bar background
     g.setColour (Theme::Colour::surface1);
