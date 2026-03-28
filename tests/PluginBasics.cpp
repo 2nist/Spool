@@ -104,21 +104,41 @@ TEST_CASE ("SongManager beat query mapping", "[song][query]")
 
 TEST_CASE ("StructureEngine section + chord lookup", "[structure][engine]")
 {
-    StructureState state;
+    SongManager manager;
+    auto& state = manager.getStructureStateForEdit();
+    state.sections.clear();
+    state.arrangement.clear();
+
     Section verse;
+    verse.id = "verse";
     verse.name = "Verse";
-    verse.startBar = 0;
-    verse.lengthBars = 4;
+    verse.bars = 4;
+    verse.beatsPerBar = 4;
+    verse.repeats = 1;
     verse.progression = { { "C", "maj" }, { "F", "maj" }, { "G", "maj" }, { "C", "maj" } };
     state.sections.push_back (verse);
 
-    StructureEngine engine (state);
+    ArrangementBlock block;
+    block.id = "arr-verse";
+    block.sectionId = verse.id;
+    block.orderIndex = 0;
+    block.barsOverride = 4;
+    block.repeatsOverride = 1;
+    state.arrangement.push_back (block);
+
+    manager.commitAuthoredState();
+
+    StructureEngine engine (manager);
     engine.rebuild();
 
-    REQUIRE (state.totalBars == 4);
-    REQUIRE (engine.getSectionAtBeat (2.0) != nullptr);
-    CHECK (engine.getSectionAtBeat (2.0)->name == "Verse");
-    CHECK (engine.getSectionAtBeat (20.0) == nullptr);
+    const auto& rebuilt = manager.getStructureState();
+    REQUIRE (rebuilt.totalBars == 4);
+
+    const auto atTwoBeats = engine.getSectionAtBeat (2.0);
+    REQUIRE (atTwoBeats.has_value());
+    REQUIRE (atTwoBeats->section != nullptr);
+    CHECK (atTwoBeats->section->name == "Verse");
+    CHECK_FALSE (engine.getSectionAtBeat (20.0).has_value());
 
     const auto chordA = engine.getChordAtBeat (0.0);
     const auto chordB = engine.getChordAtBeat (4.1);  // bar 2
@@ -128,37 +148,71 @@ TEST_CASE ("StructureEngine section + chord lookup", "[structure][engine]")
 
 TEST_CASE ("StructureEngine transpose", "[structure][transpose]")
 {
-    StructureState state;
+    SongManager manager;
+    auto& state = manager.getStructureStateForEdit();
+    state.sections.clear();
+    state.arrangement.clear();
+
     Section section;
+    section.id = "hook";
     section.name = "Hook";
-    section.startBar = 0;
-    section.lengthBars = 2;
+    section.bars = 2;
+    section.beatsPerBar = 4;
+    section.repeats = 1;
     section.progression = { { "C", "maj" }, { "D#", "min" }, { "A", "maj" } };
     state.sections.push_back (section);
 
-    StructureEngine engine (state);
+    ArrangementBlock block;
+    block.id = "arr-hook";
+    block.sectionId = section.id;
+    block.orderIndex = 0;
+    block.barsOverride = 2;
+    block.repeatsOverride = 1;
+    state.arrangement.push_back (block);
+
+    manager.commitAuthoredState();
+
+    StructureEngine engine (manager);
     engine.transpose (2);
 
-    REQUIRE (state.sections.size() == 1);
-    REQUIRE (state.sections[0].progression.size() == 3);
-    CHECK (state.sections[0].progression[0].root == "D");
-    CHECK (state.sections[0].progression[1].root == "F");
-    CHECK (state.sections[0].progression[2].root == "B");
+    const auto& transposed = manager.getStructureState();
+    REQUIRE (transposed.sections.size() == 1);
+    REQUIRE (transposed.sections[0].progression.size() == 3);
+    CHECK (transposed.sections[0].progression[0].root == "D");
+    CHECK (transposed.sections[0].progression[1].root == "F");
+    CHECK (transposed.sections[0].progression[2].root == "B");
 }
 
 TEST_CASE ("MidiConstraintEngine scale lock in C major", "[midi][constraint]")
 {
-    StructureState state;
+    SongManager manager;
+    auto& state = manager.getStructureStateForEdit();
+    state.sections.clear();
+    state.arrangement.clear();
+
     Section section;
+    section.id = "scale";
     section.name = "Scale";
-    section.startBar = 0;
-    section.lengthBars = 4;
+    section.bars = 4;
+    section.beatsPerBar = 4;
+    section.repeats = 1;
     section.progression = { { "C", "maj" } };
     state.sections.push_back (section);
 
-    StructureEngine structureEngine (state);
+    ArrangementBlock block;
+    block.id = "arr-scale";
+    block.sectionId = section.id;
+    block.orderIndex = 0;
+    block.barsOverride = 4;
+    block.repeatsOverride = 1;
+    state.arrangement.push_back (block);
+
+    manager.commitAuthoredState();
+
+    StructureEngine structureEngine (manager);
+    structureEngine.rebuild();
     MidiConstraintEngine constraint;
-    constraint.setStructure (&state);
+    constraint.setStructure (&manager.getStructureState());
     constraint.setStructureEngine (&structureEngine);
     constraint.setScaleLock (true);
     constraint.setChordLock (false);
@@ -170,17 +224,34 @@ TEST_CASE ("MidiConstraintEngine scale lock in C major", "[midi][constraint]")
 
 TEST_CASE ("MidiConstraintEngine chord lock in A minor", "[midi][constraint]")
 {
-    StructureState state;
+    SongManager manager;
+    auto& state = manager.getStructureStateForEdit();
+    state.sections.clear();
+    state.arrangement.clear();
+
     Section section;
+    section.id = "chord";
     section.name = "Chord";
-    section.startBar = 0;
-    section.lengthBars = 4;
+    section.bars = 4;
+    section.beatsPerBar = 4;
+    section.repeats = 1;
     section.progression = { { "A", "min" } };
     state.sections.push_back (section);
 
-    StructureEngine structureEngine (state);
+    ArrangementBlock block;
+    block.id = "arr-chord";
+    block.sectionId = section.id;
+    block.orderIndex = 0;
+    block.barsOverride = 4;
+    block.repeatsOverride = 1;
+    state.arrangement.push_back (block);
+
+    manager.commitAuthoredState();
+
+    StructureEngine structureEngine (manager);
+    structureEngine.rebuild();
     MidiConstraintEngine constraint;
-    constraint.setStructure (&state);
+    constraint.setStructure (&manager.getStructureState());
     constraint.setStructureEngine (&structureEngine);
     constraint.setScaleLock (false);
     constraint.setChordLock (true);
@@ -192,17 +263,34 @@ TEST_CASE ("MidiConstraintEngine chord lock in A minor", "[midi][constraint]")
 
 TEST_CASE ("MidiConstraintEngine guide mode preserves performance input", "[midi][constraint][guide]")
 {
-    StructureState state;
+    SongManager manager;
+    auto& state = manager.getStructureStateForEdit();
+    state.sections.clear();
+    state.arrangement.clear();
+
     Section section;
+    section.id = "guide";
     section.name = "Guide";
-    section.startBar = 0;
-    section.lengthBars = 4;
+    section.bars = 4;
+    section.beatsPerBar = 4;
+    section.repeats = 1;
     section.progression = { { "C", "maj" } };
     state.sections.push_back (section);
 
-    StructureEngine structureEngine (state);
+    ArrangementBlock block;
+    block.id = "arr-guide";
+    block.sectionId = section.id;
+    block.orderIndex = 0;
+    block.barsOverride = 4;
+    block.repeatsOverride = 1;
+    state.arrangement.push_back (block);
+
+    manager.commitAuthoredState();
+
+    StructureEngine structureEngine (manager);
+    structureEngine.rebuild();
     MidiConstraintEngine constraint;
-    constraint.setStructure (&state);
+    constraint.setStructure (&manager.getStructureState());
     constraint.setStructureEngine (&structureEngine);
     constraint.setScaleLock (true);
     constraint.setChordLock (false);
@@ -219,25 +307,51 @@ TEST_CASE ("MidiConstraintEngine guide mode preserves performance input", "[midi
 
 TEST_CASE ("MidiConstraintEngine adapts with key/chord changes", "[midi][constraint]")
 {
-    StructureState state;
+    SongManager manager;
+    auto& state = manager.getStructureStateForEdit();
+    state.sections.clear();
+    state.arrangement.clear();
 
     Section secA;
+    secA.id = "sec-a";
     secA.name = "A";
-    secA.startBar = 0;
-    secA.lengthBars = 1;
+    secA.bars = 1;
+    secA.beatsPerBar = 4;
+    secA.repeats = 1;
     secA.progression = { { "C", "maj" } };
     state.sections.push_back (secA);
 
     Section secB;
+    secB.id = "sec-b";
     secB.name = "B";
-    secB.startBar = 1;
-    secB.lengthBars = 1;
+    secB.bars = 1;
+    secB.beatsPerBar = 4;
+    secB.repeats = 1;
     secB.progression = { { "D", "maj" } };
     state.sections.push_back (secB);
 
-    StructureEngine structureEngine (state);
+    ArrangementBlock blockA;
+    blockA.id = "arr-a";
+    blockA.sectionId = secA.id;
+    blockA.orderIndex = 0;
+    blockA.barsOverride = 1;
+    blockA.repeatsOverride = 1;
+    state.arrangement.push_back (blockA);
+
+    ArrangementBlock blockB;
+    blockB.id = "arr-b";
+    blockB.sectionId = secB.id;
+    blockB.orderIndex = 1;
+    blockB.barsOverride = 1;
+    blockB.repeatsOverride = 1;
+    state.arrangement.push_back (blockB);
+
+    manager.commitAuthoredState();
+
+    StructureEngine structureEngine (manager);
+    structureEngine.rebuild();
     MidiConstraintEngine constraint;
-    constraint.setStructure (&state);
+    constraint.setStructure (&manager.getStructureState());
     constraint.setStructureEngine (&structureEngine);
     constraint.setScaleLock (true);
     constraint.setChordLock (false);

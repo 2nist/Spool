@@ -50,7 +50,7 @@ void GroupHeader::paint (juce::Graphics& g)
         g.setFont   (Theme::Font::micro());
         g.setColour (m_group.color.brighter (0.15f));
         g.drawText  (m_group.name.toUpperCase(), nameRect(),
-                     juce::Justification::centredLeft, true);
+                     juce::Justification::centred, true);
     }
 
     // Collapse indicator

@@ -251,9 +251,12 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p), zoneA (p)
 {
     juce::ignoreUnused (processorRef);
+    setLookAndFeel (&m_lookAndFeel);
     setWantsKeyboardFocus (true);
 
-    ThemeManager::get().applyTheme (ThemePresets::presetByName (AppPreferences::get().getThemePresetName()));
+    // Load last in-editor state if it exists, otherwise fall back to the named preset.
+    if (!ThemeManager::get().loadFromFile (ThemeManager::get().getCurrentThemeFile()))
+        ThemeManager::get().applyTheme (ThemePresets::presetByName (AppPreferences::get().getThemePresetName()));
 
     addAndMakeVisible (menuBar);
     addAndMakeVisible (songHeader);
@@ -899,10 +902,13 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     // Read flow: initialize controls from AppState.
     processorRef.syncAuthoredSongToRuntime();
     applyAuthoredSongToUi();
+
+    m_inspector = std::make_unique<melatonin::Inspector> (*this, false);
 }
 
 PluginEditor::~PluginEditor()
 {
+    setLookAndFeel (nullptr);
     zoneB.removeListener (this);
     zoneD.removeTransportListener (this);
     ThemeManager::get().removeListener (this);
@@ -943,6 +949,12 @@ bool PluginEditor::keyPressed (const juce::KeyPress& key)
     {
         processorRef.getUndoManager().redo();
         refreshFromAuthoredSong();
+        return true;
+    }
+
+    if (key.getTextCharacter() == 'i' || key.getKeyCode() == 'I')
+    {
+        m_inspector->toggle();
         return true;
     }
 
@@ -1096,6 +1108,8 @@ void PluginEditor::playStateChanged (bool playing)
     zoneD.setPlaying (playing);
     if (auto* tp = zoneA.getTracksPanel())
         tp->setPlaying (playing);
+    if (! playing)
+        m_hasObservedProcessorBeat = false;
     if (playing)
         systemFeed.addMessage ("Transport: playing  "
                                + juce::String (static_cast<int> (processorRef.getBpm()))
@@ -1115,18 +1129,40 @@ void PluginEditor::positionChanged (float beat)
         processorRef.seekTransport (static_cast<double> (beat));
 
     const double processorBeat = processorRef.getCurrentSongBeat();
-    double structureBeat = processorBeat;
+    double wrappedStructureBeat = processorBeat;
     {
         const juce::ScopedReadLock structureRead (processorRef.getStructureLock());
         const double totalBeats = static_cast<double> (juce::jmax (0, processorRef.getSongManager().getStructureState().totalBeats));
         if (totalBeats > 0.0)
-            structureBeat = std::fmod (juce::jmax (0.0, processorBeat), totalBeats);
+            wrappedStructureBeat = std::fmod (juce::jmax (0.0, processorBeat), totalBeats);
+    }
+
+    if (processorRef.isPlaying())
+    {
+        if (m_hasObservedProcessorBeat && (processorBeat + 1.0e-6) < m_lastObservedProcessorBeat)
+        {
+            const auto nowMs = juce::Time::currentTimeMillis();
+            if ((nowMs - m_lastBackstepWarningMs) > 1000)
+            {
+                systemFeed.addMessage ("Playhead warning: beat moved backwards from "
+                                       + juce::String (m_lastObservedProcessorBeat, 3)
+                                       + " to "
+                                       + juce::String (processorBeat, 3));
+                m_lastBackstepWarningMs = nowMs;
+            }
+            DBG ("[SPOOL] playhead backstep while playing: "
+                 << m_lastObservedProcessorBeat << " -> " << processorBeat);
+        }
+
+        m_lastObservedProcessorBeat = processorBeat;
+        m_hasObservedProcessorBeat = true;
     }
 
     if (auto* tp = zoneA.getTracksPanel())
         tp->setPosition (static_cast<float> (processorBeat));
-    zoneD.setStructureBeat (structureBeat);
-    updateSequencerStructureContext (structureBeat);
+    // Feed Zone D absolute beat; sub-components can wrap for loop visuals as needed.
+    zoneD.setStructureBeat (processorBeat);
+    updateSequencerStructureContext (wrappedStructureBeat);
 }
 
 void PluginEditor::updateSequencerStructureContext (double structureBeat)

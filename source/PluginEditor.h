@@ -18,6 +18,8 @@
 #include "components/AudioHistoryStrip.h"
 #include "components/SettingsPanel.h"
 #include "state/AppPreferences.h"
+#include "melatonin_inspector/melatonin_inspector.h"
+#include "theme/SpoolLookAndFeel.h"
 
 //==============================================================================
 class PluginEditor : public juce::AudioProcessorEditor,
@@ -162,6 +164,11 @@ private:
     juce::Component::SafePointer<juce::CallOutBox> m_settingsCallout;
     juce::Component::SafePointer<juce::DialogWindow> m_themeDesignerWindow;
     juce::File m_currentSongFile;
+    SpoolLookAndFeel m_lookAndFeel;
+    std::unique_ptr<melatonin::Inspector> m_inspector;
+    double m_lastObservedProcessorBeat { 0.0 };
+    bool m_hasObservedProcessorBeat { false };
+    juce::int64 m_lastBackstepWarningMs { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

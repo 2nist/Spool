@@ -741,7 +741,9 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     m_circularBuffer.prepare (sampleRate, 120.0);
     m_circularBuffer.setSource (-1);   // master mix by default
-    m_currentBeat = 0.0;
+    m_currentBeat.store (0.0, std::memory_order_relaxed);
+    m_currentSongBeat.store (0.0, std::memory_order_relaxed);
+    m_appState.transport.playheadBeats = 0.0;
     clearLooperPreview();
 
     for (auto& mb : m_slotMidi)
@@ -857,16 +859,18 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         const double samplesPerBeat = m_sampleRate / bps;
         const double beatDelta      = static_cast<double> (numSamples) / samplesPerBeat;
         
-        m_currentBeat += beatDelta;
-        m_currentSongBeat += beatDelta;
-        m_appState.transport.playheadBeats = m_currentSongBeat;
+        const auto currentBeat = m_currentBeat.load (std::memory_order_relaxed) + beatDelta;
+        const auto currentSongBeat = m_currentSongBeat.load (std::memory_order_relaxed) + beatDelta;
+        m_currentBeat.store (currentBeat, std::memory_order_relaxed);
+        m_currentSongBeat.store (currentSongBeat, std::memory_order_relaxed);
+        m_appState.transport.playheadBeats = currentSongBeat;
 
         // Minimal integration point: transport can query structure context.
         std::optional<ResolvedSectionInstance> activeSection;
         Chord activeChord { "C", "maj" };
         {
             const juce::ScopedReadLock structureRead (m_structureLock);
-            const double structureBeat = wrapBeatToStructure (m_currentSongBeat, m_appState.structure);
+            const double structureBeat = wrapBeatToStructure (currentSongBeat, m_appState.structure);
             activeSection = m_structureEngine.getSectionAtBeat (structureBeat);
             activeChord = m_structureEngine.getChordAtBeat (structureBeat);
         }
@@ -973,7 +977,7 @@ void PluginProcessor::advanceSequencerTick (int sampleOffset)
         structureActive = structureHasScaffold (m_appState.structure);
         if (structureActive)
         {
-            structureBeat = wrapBeatToStructure (m_currentSongBeat, m_appState.structure);
+            structureBeat = wrapBeatToStructure (m_currentSongBeat.load (std::memory_order_relaxed), m_appState.structure);
             currentChord = m_structureEngine.getChordAtBeat (structureBeat);
             nextChord = nextChordForBeat (m_appState.structure, structureBeat);
             structureChordPcs = m_structureEngine.resolveChordAtBeat (structureBeat);
@@ -983,7 +987,8 @@ void PluginProcessor::advanceSequencerTick (int sampleOffset)
     for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
         releaseFinishedSlotNotes (slot, sampleOffset);
 
-    const double activeBeat = structureActive ? structureBeat : m_currentSongBeat;
+    const double currentSongBeat = m_currentSongBeat.load (std::memory_order_relaxed);
+    const double activeBeat = structureActive ? structureBeat : currentSongBeat;
     const int activeTick = juce::jmax (0, static_cast<int> (std::floor (activeBeat * (double) kSequencerTicksPerBeat + 1.0e-6)));
     const int step16 = activeTick / kSequencerTicksPerStep;
 
@@ -1053,7 +1058,7 @@ void PluginProcessor::advanceSequencerTick (int sampleOffset)
                                      structureChordPcs);
     }
 
-    auto state = m_songMgr.query (m_currentSongBeat);
+    auto state = m_songMgr.query (currentSongBeat);
     if (state.sectionId < 0)
     {
         if ((activeTick % kSequencerTicksPerStep) == 0)
@@ -1195,8 +1200,8 @@ void PluginProcessor::seekTransport (double beat) noexcept
 {
     const double clamped = juce::jmax (0.0, beat);
     m_samplePos = 0.0;
-    m_currentSongBeat = clamped;
-    m_currentBeat = clamped;
+    m_currentSongBeat.store (clamped, std::memory_order_relaxed);
+    m_currentBeat.store (clamped, std::memory_order_relaxed);
     m_appState.transport.playheadBeats = clamped;
     m_currentStep.store (static_cast<int> (std::floor (clamped * 4.0)) % 64);
     for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
@@ -1321,10 +1326,11 @@ void PluginProcessor::grabRegion (double startSecondsAgo, double lengthSeconds)
 
 void PluginProcessor::grabLastBars (int numBars)
 {
+    const auto currentBeat = m_currentBeat.load (std::memory_order_relaxed);
     m_grabbedClip    = m_circularBuffer.getLastBars (numBars,
                                                      static_cast<double> (m_bpm.load()),
                                                      m_beatsPerBar,
-                                                     m_currentBeat);
+                                                     currentBeat);
     m_hasGrabbedClip = true;
     triggerAsyncUpdate();
 }
