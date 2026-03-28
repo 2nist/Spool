@@ -1,182 +1,168 @@
 #include "VerticalFader.h"
 
-//==============================================================================
-// Constructor / Destructor
-//==============================================================================
+void VerticalFader::SlotSlider::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isRightButtonDown())
+    {
+        owner.showContextMenu();
+        return;
+    }
+
+    juce::Slider::mouseDown (e);
+}
 
 VerticalFader::VerticalFader()
 {
-    ThemeManager::get().addListener (this);
-
-    m_slider.setSliderStyle (juce::Slider::LinearVertical);
+    m_slider.setSliderStyle (juce::Slider::LinearBarVertical);
     m_slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    m_slider.setRange (0.0, 1.0, 0.001);
-    m_slider.setValue (m_value, juce::dontSendNotification);
-    m_slider.setDoubleClickReturnValue (true, m_defaultValue);
-    m_slider.setPopupDisplayEnabled (true, true, this);
-    m_slider.getProperties().set ("tint", m_paramColor.toString());
-
-    m_slider.textFromValueFunction = [this] (double value)
-    {
-        return formatValue ((float) value);
-    };
-
-    m_slider.valueFromTextFunction = [] (const juce::String& text)
-    {
-        return text.getDoubleValue();
-    };
-
+    m_slider.setRange (0.0, 1.0, 0.0);
+    m_slider.setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
     m_slider.onValueChange = [this]
     {
-        m_value = (float) m_slider.getValue();
+        if (m_internalSetValue)
+            return;
+
+        m_value = static_cast<float> (m_slider.getValue());
+        updateTooltip();
         notifyValueChanged();
+        repaint();
     };
 
     addAndMakeVisible (m_slider);
-    m_slider.addMouseListener (this, false);
+    setDefaultValue (m_defaultValue);
+    setDisplayName (m_displayName);
+    setParamColor (m_paramColor);
+    setValue (m_value, false);
 }
 
-VerticalFader::~VerticalFader()
+VerticalFader::~VerticalFader() = default;
+
+void VerticalFader::setDisplayName (const juce::String& name)
 {
-    stopTimer();
-    ThemeManager::get().removeListener (this);
+    m_displayName = name;
+    m_slider.setName (m_displayName);
+    updateTooltip();
+    repaint();
 }
 
-//==============================================================================
-// Value
-//==============================================================================
+void VerticalFader::setParamColor (juce::Colour c)
+{
+    m_paramColor = c;
+    m_slider.getProperties().set ("tint", c.toString());
+    m_slider.repaint();
+}
+
+void VerticalFader::setDefaultValue (float normalizedDefault)
+{
+    m_defaultValue = juce::jlimit (0.0f, 1.0f, normalizedDefault);
+    m_slider.setDoubleClickReturnValue (true, m_defaultValue);
+}
 
 void VerticalFader::setValue (float normalized, bool notify)
 {
     m_value = juce::jlimit (0.0f, 1.0f, normalized);
-    m_slider.setValue (m_value, notify ? juce::sendNotificationSync : juce::dontSendNotification);
-    repaint();
+    {
+        const juce::ScopedValueSetter<bool> setting (m_internalSetValue, true);
+        m_slider.setValue (m_value, juce::dontSendNotification);
+    }
+
+    updateTooltip();
+    if (notify)
+        notifyValueChanged();
 }
 
 void VerticalFader::setValueFromProcessor (float normalized)
 {
-    m_value = juce::jlimit (0.0f, 1.0f, normalized);
-    m_slider.setValue (m_value, juce::dontSendNotification);
-    repaint();
+    setValue (normalized, false);
 }
-
-void VerticalFader::notifyValueChanged()
-{
-    if (onValueChanged)
-        onValueChanged (m_value);
-}
-
-//==============================================================================
-// Status
-//==============================================================================
 
 void VerticalFader::setStatus (Status s)
 {
     m_status = s;
-
-    if (m_status == Status::midiLearn)
-    {
-        m_blinkCounter = 0;
-        m_blinkOn = true;
-        startTimerHz (10);
-    }
-    else if (isTimerRunning())
-    {
-        stopTimer();
-    }
-
+    m_slider.setAlpha (m_status == Status::bypassed ? Theme::Alpha::disabled : 1.0f);
     repaint();
 }
 
-//==============================================================================
-// Sizing
-//==============================================================================
-
 int VerticalFader::getPreferredWidth() const
 {
-    return 18;
+    return 24;
 }
 
-//==============================================================================
-// Layout / Paint
-//==============================================================================
+void VerticalFader::paint (juce::Graphics& g)
+{
+    if (m_status == Status::none)
+        return;
+
+    juce::Colour dot = Theme::Colour::inkGhost;
+    switch (m_status)
+    {
+        case Status::macroMapped:  dot = juce::Colour (0xFF4aee8a); break;
+        case Status::midiLearn:    dot = juce::Colour (0xFFee4a4a); break;
+        case Status::midiAssigned: dot = juce::Colour (0xFF4a9eff); break;
+        case Status::modulated:    dot = juce::Colour (0xFFeec44a); break;
+        case Status::automated:    dot = juce::Colour (0xFFee7c4a); break;
+        case Status::follower:     dot = juce::Colour (0xFF6a5a8a); break;
+        case Status::bypassed:     dot = juce::Colour (0xFF3a2e1e); break;
+        case Status::none: break;
+    }
+
+    const auto r = getLocalBounds().removeFromBottom (8).removeFromRight (8).toFloat();
+    g.setColour (dot);
+    g.fillEllipse (r);
+}
 
 void VerticalFader::resized()
 {
     m_slider.setBounds (getLocalBounds());
 }
 
-void VerticalFader::paint (juce::Graphics& g)
+void VerticalFader::notifyValueChanged ()
 {
-    juce::ignoreUnused (g);
+    if (onValueChanged)
+        onValueChanged (m_value);
 }
-
-//==============================================================================
-// Mouse
-//==============================================================================
-
-void VerticalFader::mouseDown (const juce::MouseEvent& e)
-{
-    if (e.mods.isRightButtonDown())
-        showContextMenu();
-}
-
-void VerticalFader::mouseDrag (const juce::MouseEvent& e)
-{
-    juce::ignoreUnused (e);
-}
-
-void VerticalFader::mouseUp (const juce::MouseEvent& e)
-{
-    juce::ignoreUnused (e);
-}
-
-void VerticalFader::mouseEnter (const juce::MouseEvent& e)
-{
-    juce::ignoreUnused (e);
-}
-
-void VerticalFader::mouseExit (const juce::MouseEvent& e)
-{
-    juce::ignoreUnused (e);
-}
-
-void VerticalFader::mouseDoubleClick (const juce::MouseEvent& e)
-{
-    juce::ignoreUnused (e);
-    setValue (m_defaultValue, true);
-}
-
-void VerticalFader::mouseWheelMove (const juce::MouseEvent& e,
-                                    const juce::MouseWheelDetails& d)
-{
-    juce::ignoreUnused (e, d);
-}
-
-//==============================================================================
-// Timer
-//==============================================================================
-
-void VerticalFader::timerCallback()
-{
-    ++m_blinkCounter;
-    if (m_blinkCounter >= 6)
-        m_blinkCounter = 0;
-
-    m_blinkOn = (m_blinkCounter < 5);
-    repaint();
-}
-
-//==============================================================================
-// Context menu
-//==============================================================================
 
 void VerticalFader::showContextMenu()
 {
     juce::PopupMenu menu;
+
     menu.addSectionHeader ("VALUE");
     menu.addItem (1, "Enter value...");
     menu.addItem (2, "Reset to default");
+
+    menu.addSeparator();
+    menu.addSectionHeader ("MACRO");
+    {
+        juce::PopupMenu macroSub;
+        for (int k = 1; k <= 8; ++k)
+            macroSub.addItem (100 + k, "K" + juce::String (k));
+        menu.addSubMenu ("Assign to macro knob", macroSub);
+        if (m_status == Status::macroMapped)
+            menu.addItem (10, "Clear macro assignment");
+    }
+
+    menu.addSeparator();
+    menu.addSectionHeader ("MIDI");
+    menu.addItem (20, "MIDI learn");
+    if (m_status == Status::midiAssigned)
+        menu.addItem (21, "Clear MIDI assignment");
+
+    menu.addSeparator();
+    menu.addSectionHeader ("MODULATION");
+    {
+        juce::PopupMenu modSub;
+        modSub.addItem (200, "LFO 1");
+        modSub.addItem (201, "LFO 2");
+        modSub.addItem (202, "Filter Envelope");
+        modSub.addItem (203, "Amp Envelope");
+        menu.addSubMenu ("Modulate with...", modSub);
+        if (m_status == Status::modulated)
+            menu.addItem (30, "Clear modulation");
+    }
+
+    menu.addSeparator();
+    menu.addItem (40, m_status == Status::bypassed ? "Un-bypass parameter"
+                                                    : "Bypass parameter");
 
     if (onBuildExtraMenuItems)
     {
@@ -184,50 +170,94 @@ void VerticalFader::showContextMenu()
         onBuildExtraMenuItems (menu);
     }
 
+    auto safeThis = juce::Component::SafePointer<VerticalFader> (this);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-        [this] (int result)
-        {
-            if (result == 1)
+                        [safeThis] (int result)
+                        {
+                            if (safeThis == nullptr)
+                                return;
+                            safeThis->handleMenuResult (result);
+                        });
+}
+
+void VerticalFader::handleMenuResult (int result)
+{
+    switch (result)
+    {
+        case 1:  showValueEditor();                             break;
+        case 2:  setValue (m_defaultValue, true);               break;
+        case 10: setStatus (Status::none);                      break;
+        case 20: setStatus (Status::midiLearn);                 break;
+        case 21: setStatus (Status::none);                      break;
+        case 30: setStatus (Status::none);                      break;
+        case 40:
+            setStatus (m_status == Status::bypassed ? Status::none : Status::bypassed);
+            break;
+        default:
+            if (result >= 101 && result <= 108)
             {
-                showValueEditor();
+                setStatus (Status::macroMapped);
+                setStatusLabel ("K" + juce::String (result - 100));
             }
-            else if (result == 2)
+            else if (result >= 200 && result <= 203)
             {
-                setValue (m_defaultValue, true);
+                const char* names[] = { "LFO 1", "LFO 2", "Filter Envelope", "Amp Envelope" };
+                setStatus (Status::modulated);
+                setStatusLabel (names[result - 200]);
             }
             else if (result >= kExtraMenuBase && onExtraMenuItemSelected)
             {
                 onExtraMenuItemSelected (result);
             }
-        });
+            break;
+    }
 }
 
-void VerticalFader::showValueEditor()
+void VerticalFader::showValueEditor ()
 {
     m_textEditor = std::make_unique<juce::TextEditor>();
-    m_textEditor->setText (formatValue (m_value), false);
+    m_textEditor->setFont (Theme::Font::micro());
+    m_textEditor->setColour (juce::TextEditor::backgroundColourId, Theme::Colour::surface1);
+    m_textEditor->setColour (juce::TextEditor::textColourId, Theme::Colour::inkLight);
+    m_textEditor->setColour (juce::TextEditor::outlineColourId, m_paramColor);
+    m_textEditor->setText (juce::String (m_value, 3), false);
     m_textEditor->setSelectAllWhenFocused (true);
-    m_textEditor->setBounds (0, 0, juce::jmax (44, getWidth()), 16);
+
+    auto editorBounds = getLocalBounds().removeFromTop (14).reduced (1, 0);
+    editorBounds = editorBounds.withWidth (juce::jmax (24, editorBounds.getWidth()));
+    m_textEditor->setBounds (editorBounds);
 
     addAndMakeVisible (*m_textEditor);
     m_textEditor->grabKeyboardFocus();
 
     m_textEditor->onReturnKey = [this]
     {
-        const float v = m_textEditor->getText().getFloatValue();
-        setValue (juce::jlimit (0.0f, 1.0f, v), true);
+        const float entered = m_textEditor->getText().getFloatValue();
+        setValue (juce::jlimit (0.0f, 1.0f, entered), true);
         m_textEditor.reset();
+        repaint();
     };
 
     m_textEditor->onEscapeKey = [this]
     {
         m_textEditor.reset();
+        repaint();
     };
 
     m_textEditor->onFocusLost = [this]
     {
         m_textEditor.reset();
+        repaint();
     };
+}
+
+void VerticalFader::updateTooltip ()
+{
+    auto tip = m_displayName;
+    if (tip.isNotEmpty())
+        tip << ": ";
+    tip << formatValue (m_value);
+    m_slider.setTooltip (tip);
 }
 
 juce::String VerticalFader::formatValue (float norm) const

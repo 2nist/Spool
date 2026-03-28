@@ -744,7 +744,6 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     m_currentBeat.store (0.0, std::memory_order_relaxed);
     m_currentSongBeat.store (0.0, std::memory_order_relaxed);
     m_appState.transport.playheadBeats = 0.0;
-    clearLooperPreview();
 
     for (auto& mb : m_slotMidi)
         mb.clear();
