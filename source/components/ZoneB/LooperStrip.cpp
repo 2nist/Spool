@@ -125,11 +125,11 @@ void LooperStrip::drawPillBtn (juce::Graphics& g,
                                                            : activeCol.withAlpha (0.25f))
                               : (juce::Colour) Theme::Colour::surface1;
     g.setColour (fill);
-    g.fillRoundedRectangle (r.toFloat(), 2.0f);
+    g.fillRoundedRectangle (r.toFloat(), Theme::Radius::xs);
     g.setColour (active ? (activeCol.isTransparent() ? (juce::Colour) Theme::Colour::surfaceEdge
                                                      : activeCol)
                         : (juce::Colour) Theme::Colour::surfaceEdge);
-    g.drawRoundedRectangle (r.toFloat(), 2.0f, 0.5f);
+    g.drawRoundedRectangle (r.toFloat(), Theme::Radius::xs, Theme::Stroke::subtle);
 
     g.setFont (Theme::Font::micro());
     g.setColour (active ? (juce::Colour) Theme::Colour::inkLight
@@ -147,9 +147,9 @@ void LooperStrip::paintRow1 (juce::Graphics& g) const
         const juce::String src = (m_selectedSource < m_sourceNames.size()) ? m_sourceNames[m_selectedSource] : "MIX";
         const juce::Rectangle<int> br (x, r.getCentreY() - 7, kSourceWidth, 14);
         g.setColour (Theme::Colour::surface3);
-        g.fillRoundedRectangle (br.toFloat(), 2.0f);
+        g.fillRoundedRectangle (br.toFloat(), Theme::Radius::xs);
         g.setColour (Theme::Colour::surfaceEdge);
-        g.drawRoundedRectangle (br.toFloat(), 2.0f, 0.5f);
+        g.drawRoundedRectangle (br.toFloat(), Theme::Radius::xs, Theme::Stroke::subtle);
         g.setFont (Theme::Font::micro());
         g.setColour (Theme::Colour::inkMid);
         g.drawText ("SRC " + src + " v",

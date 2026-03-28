@@ -261,11 +261,11 @@ void StepGridDrum::paintVoiceRow (juce::Graphics& g, int vi) const
                 fill = fill.brighter (0.08f);
 
             g.setColour (fill);
-            g.fillRoundedRectangle (cr.toFloat(), 2.0f);
+            g.fillRoundedRectangle (cr.toFloat(), Theme::Radius::xs);
             g.setColour (selectedStep ? Theme::Colour::inkLight
                                       : hoveredStep ? juce::Colour (voice.colorArgb).brighter (0.4f)
                                                     : Theme::Colour::surfaceEdge.withAlpha (0.45f));
-            g.drawRoundedRectangle (cr.toFloat(), 2.0f, selectedStep ? 1.7f : 0.8f);
+            g.drawRoundedRectangle (cr.toFloat(), Theme::Radius::xs, selectedStep ? 1.7f : Theme::Stroke::subtle);
 
             if (active)
             {

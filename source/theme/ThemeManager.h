@@ -18,7 +18,7 @@
     Rule: components NEVER cache theme values between paint calls — always read
     fresh from ThemeManager::get().theme() in paint() and resized().
 */
-class ThemeManager
+class ThemeManager : private juce::Timer
 {
 public:
     //==========================================================================
@@ -93,6 +93,12 @@ public:
                            .getChildFile ("SPOOL/themes");
     }
 
+    /** Path to the auto-saved current state file. */
+    juce::File getCurrentThemeFile() const
+    {
+        return getUserThemeDir().getChildFile ("current-theme.spool-theme");
+    }
+
 private:
     ThemeManager() = default;
 
@@ -102,5 +108,13 @@ private:
     void broadcast()
     {
         m_listeners.call (&Listener::themeChanged);
+        startTimer (500);   // debounce — saves 500 ms after the last change
+    }
+
+    // juce::Timer
+    void timerCallback() override
+    {
+        stopTimer();
+        saveToFile (getCurrentThemeFile());
     }
 };

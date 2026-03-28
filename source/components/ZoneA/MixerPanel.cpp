@@ -188,7 +188,7 @@ void MixerPanel::paintStrip (juce::Graphics& g, int ri, const SlotInfo& slot) co
     const bool dimmedBySolo = anySolo && !slot.soloed;
     g.setColour (slot.soloed ? ZoneAStyle::accentForTabId ("mixer")
                              : Theme::Colour::surface3);
-    g.fillRoundedRectangle (soloR.toFloat(), 2.0f);
+    g.fillRoundedRectangle (soloR.toFloat(), Theme::Radius::xs);
     g.setFont   (Theme::Font::micro());
     g.setColour (slot.soloed ? juce::Colour (0xFF111111)
                              : (dimmedBySolo ? Theme::Colour::inkGhost.withAlpha (0.3f)
@@ -198,7 +198,7 @@ void MixerPanel::paintStrip (juce::Graphics& g, int ri, const SlotInfo& slot) co
     // Mute button [M]
     const auto muteR = muteRect (ri);
     g.setColour (slot.muted ? Theme::Colour::error : Theme::Colour::surface3);
-    g.fillRoundedRectangle (muteR.toFloat(), 2.0f);
+    g.fillRoundedRectangle (muteR.toFloat(), Theme::Radius::xs);
     g.setFont   (Theme::Font::micro());
     g.setColour (slot.muted ? juce::Colour (0xFFeeeeee) : Theme::Colour::inkGhost);
     g.drawText  ("M", muteR, juce::Justification::centred, false);
@@ -206,7 +206,7 @@ void MixerPanel::paintStrip (juce::Graphics& g, int ri, const SlotInfo& slot) co
     // Fader bar — background
     const auto faderR = faderBarRect (ri);
     g.setColour (Theme::Colour::surface0);
-    g.fillRoundedRectangle (faderR.toFloat(), 2.0f);
+    g.fillRoundedRectangle (faderR.toFloat(), Theme::Radius::xs);
 
     // Fader fill
     const float effectiveLevel = (slot.muted || dimmedBySolo) ? 0.0f : slot.level;
@@ -215,7 +215,7 @@ void MixerPanel::paintStrip (juce::Graphics& g, int ri, const SlotInfo& slot) co
         const int fillW = juce::roundToInt (faderR.getWidth()
                           * juce::jlimit (0.0f, 1.0f, slot.level));
         g.setColour (slot.groupColor.withAlpha (alpha * 0.75f));
-        g.fillRoundedRectangle (faderR.withWidth (fillW).toFloat(), 2.0f);
+        g.fillRoundedRectangle (faderR.withWidth (fillW).toFloat(), Theme::Radius::xs);
     }
 
     // Unity-gain tick mark at 100%
@@ -290,14 +290,14 @@ void MixerPanel::paintMaster (juce::Graphics& g) const
     // Master gain fader
     const auto faderR = masterFaderRect();
     g.setColour (Theme::Colour::surface0);
-    g.fillRoundedRectangle (faderR.toFloat(), 2.0f);
+    g.fillRoundedRectangle (faderR.toFloat(), Theme::Radius::xs);
 
     const float masterGain = juce::jlimit (0.0f, 1.0f, m_proc.getMasterGain());
     if (masterGain > 0.0f)
     {
         const int fillW = juce::roundToInt (faderR.getWidth() * masterGain);
         g.setColour (Theme::Colour::accent.withAlpha (0.75f));
-        g.fillRoundedRectangle (faderR.withWidth (fillW).toFloat(), 2.0f);
+        g.fillRoundedRectangle (faderR.withWidth (fillW).toFloat(), Theme::Radius::xs);
     }
 
     // Unity tick
@@ -310,7 +310,7 @@ void MixerPanel::paintMaster (juce::Graphics& g) const
     const float pan  = juce::jlimit (-1.0f, 1.0f, m_proc.getMasterPan());
 
     g.setColour (Theme::Colour::surface0);
-    g.fillRoundedRectangle (panR.toFloat(), 2.0f);
+    g.fillRoundedRectangle (panR.toFloat(), Theme::Radius::xs);
 
     if (std::abs (pan) > 0.01f)
     {

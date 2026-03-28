@@ -197,7 +197,7 @@ void StructurePanel::StructureListBox::paintOverChildren (juce::Graphics& g)
     {
         const auto accent = ZoneAStyle::accentForTabId ("structure");
         g.setColour (accent.withAlpha (dropAcceptsExternalSource ? 0.12f : 0.07f));
-        g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), 5.0f);
+        g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1.0f), Theme::Radius::sm);
     }
 
     if (dropRow >= 0)
@@ -296,9 +296,9 @@ void StructurePanel::TrashDropZone::paint (juce::Graphics& g)
     const auto fill = dragHover ? ThemeManager::get().theme().controlOnBg
                                 : ThemeManager::get().theme().controlBg;
     g.setColour (fill);
-    g.fillRoundedRectangle (bounds, 4.0f);
+    g.fillRoundedRectangle (bounds, Theme::Radius::sm);
     g.setColour (accent.withAlpha (dragHover ? 0.9f : 0.4f));
-    g.drawRoundedRectangle (bounds, 4.0f, dragHover ? 1.4f : 1.0f);
+    g.drawRoundedRectangle (bounds, Theme::Radius::sm, dragHover ? 1.4f : Theme::Stroke::normal);
     g.setFont (Theme::Font::microMedium());
     g.setColour (ThemeManager::get().theme().controlTextOn);
     g.drawText ("TRASH", getLocalBounds(), juce::Justification::centred, false);
@@ -486,7 +486,7 @@ int StructurePanel::SectionListModel::getNumRows() { return static_cast<int> (ow
 void StructurePanel::SectionListModel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) { const auto& sections = owner.processorRef.getSongManager().getStructureState().sections; if (row < 0 || row >= static_cast<int> (sections.size())) return; const auto& s = sections[(size_t) row]; const auto accent = sectionColourForIndex (row); ZoneAStyle::drawRowBackground (g, { 0, 0, w, h }, false, selected, accent); auto area = juce::Rectangle<int> (0, 0, w, h).reduced (8, 3); auto badge = area.removeFromLeft (24).reduced (0, 3); ZoneAStyle::drawBadge (g, badge, "S" + juce::String (row + 1), accent); area.removeFromLeft (6); auto stats = area.removeFromRight (66); g.setColour (Theme::Colour::inkLight); g.setFont (Theme::Font::label()); g.drawText (s.name, area.removeFromTop (15), juce::Justification::centredLeft, true); g.setColour (Theme::Colour::inkGhost.withAlpha (0.92f)); g.setFont (Theme::Font::micro()); g.drawText (juce::String (juce::jmax (1, s.bars)) + " bars  |  " + juce::String ((int) s.progression.size()) + " cells", area, juce::Justification::centredLeft, true); g.setColour (accent.withAlpha (0.9f)); g.setFont (Theme::Font::micro()); g.drawText ("drag", stats.removeFromTop (10), juce::Justification::centredRight, false); g.setColour (Theme::Colour::inkGhost); g.drawText (s.keyRoot + " " + s.mode, stats, juce::Justification::centredRight, true); }
 void StructurePanel::SectionListModel::selectedRowsChanged (int row) { owner.selectSection (row); }
 int StructurePanel::ArrangementListModel::getNumRows() { return static_cast<int> (buildResolvedStructure (owner.processorRef.getSongManager().getStructureState()).size()); }
-void StructurePanel::ArrangementListModel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) { const auto resolved = buildResolvedStructure (owner.processorRef.getSongManager().getStructureState()); if (row < 0 || row >= static_cast<int> (resolved.size()) || resolved[(size_t) row].section == nullptr) return; const auto& r = resolved[(size_t) row]; const auto accent = sectionColourForIndex (row); ZoneAStyle::drawRowBackground (g, { 0, 0, w, h }, false, selected, accent); auto area = juce::Rectangle<int> (0, 0, w, h).reduced (8, 3); auto orderBox = area.removeFromLeft (30).reduced (0, 3); g.setColour (accent.withAlpha (selected ? 0.92f : 0.72f)); g.fillRoundedRectangle (orderBox.toFloat(), 4.0f); g.setColour (Theme::Helper::inkFor (accent)); g.setFont (Theme::Font::microMedium()); g.drawText (juce::String (row + 1), orderBox, juce::Justification::centred, false); area.removeFromLeft (6); auto rightMeta = area.removeFromRight (86); g.setColour (Theme::Colour::inkLight); g.setFont (Theme::Font::label()); g.drawText (r.section->name, area.removeFromTop (15), juce::Justification::centredLeft, true); g.setColour (Theme::Colour::inkGhost.withAlpha (0.92f)); g.setFont (Theme::Font::micro()); g.drawText ("instance  |  " + juce::String (juce::jmax (1, r.totalBars)) + " bars", area, juce::Justification::centredLeft, true); g.setColour (accent.withAlpha (0.95f)); g.drawText ("from " + r.section->name.substring (0, juce::jmin (4, r.section->name.length())).toUpperCase(), rightMeta.removeFromTop (10), juce::Justification::centredRight, true); g.setColour (Theme::Colour::inkGhost); g.drawText (r.transitionIntent.isNotEmpty() ? r.transitionIntent : "None", rightMeta, juce::Justification::centredRight, true); }
+void StructurePanel::ArrangementListModel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) { const auto resolved = buildResolvedStructure (owner.processorRef.getSongManager().getStructureState()); if (row < 0 || row >= static_cast<int> (resolved.size()) || resolved[(size_t) row].section == nullptr) return; const auto& r = resolved[(size_t) row]; const auto accent = sectionColourForIndex (row); ZoneAStyle::drawRowBackground (g, { 0, 0, w, h }, false, selected, accent); auto area = juce::Rectangle<int> (0, 0, w, h).reduced (8, 3); auto orderBox = area.removeFromLeft (30).reduced (0, 3); g.setColour (accent.withAlpha (selected ? 0.92f : 0.72f)); g.fillRoundedRectangle (orderBox.toFloat(), Theme::Radius::sm); g.setColour (Theme::Helper::inkFor (accent)); g.setFont (Theme::Font::microMedium()); g.drawText (juce::String (row + 1), orderBox, juce::Justification::centred, false); area.removeFromLeft (6); auto rightMeta = area.removeFromRight (86); g.setColour (Theme::Colour::inkLight); g.setFont (Theme::Font::label()); g.drawText (r.section->name, area.removeFromTop (15), juce::Justification::centredLeft, true); g.setColour (Theme::Colour::inkGhost.withAlpha (0.92f)); g.setFont (Theme::Font::micro()); g.drawText ("instance  |  " + juce::String (juce::jmax (1, r.totalBars)) + " bars", area, juce::Justification::centredLeft, true); g.setColour (accent.withAlpha (0.95f)); g.drawText ("from " + r.section->name.substring (0, juce::jmin (4, r.section->name.length())).toUpperCase(), rightMeta.removeFromTop (10), juce::Justification::centredRight, true); g.setColour (Theme::Colour::inkGhost); g.drawText (r.transitionIntent.isNotEmpty() ? r.transitionIntent : "None", rightMeta, juce::Justification::centredRight, true); }
 void StructurePanel::ArrangementListModel::selectedRowsChanged (int row) { owner.selectArrangementBlock (row); }
 
 void StructurePanel::ProgressionStrip::paint (juce::Graphics& g)
@@ -497,9 +497,9 @@ void StructurePanel::ProgressionStrip::paint (juce::Graphics& g)
 
     const auto grid = owner.progressionGridBounds();
     g.setColour (Theme::Colour::surface1.withAlpha (0.98f));
-    g.fillRoundedRectangle (grid, 10.0f);
+    g.fillRoundedRectangle (grid, Theme::Radius::lg);
     g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.45f));
-    g.drawRoundedRectangle (grid, 10.0f, 1.0f);
+    g.drawRoundedRectangle (grid, Theme::Radius::lg, Theme::Stroke::normal);
 
     const int loopBeats = limitedProgressionBeats (*s);
     const int totalSectionBeats = loopBeats * juce::jmax (1, s->repeats);
@@ -528,12 +528,12 @@ void StructurePanel::ProgressionStrip::paint (juce::Graphics& g)
                                           : Theme::Colour::surface1.withAlpha (0.28f));
 
         g.setColour (chipFill);
-        g.fillRoundedRectangle (cell, 5.0f);
+        g.fillRoundedRectangle (cell, Theme::Radius::sm);
 
         g.setColour (selected ? tint.withAlpha (0.95f)
                               : (barLine ? Theme::Colour::surfaceEdge.withAlpha (0.85f)
                                          : Theme::Colour::surfaceEdge.withAlpha (0.42f)));
-        g.drawRoundedRectangle (cell, 4.0f, selected ? 1.8f : (barLine ? 1.25f : 0.8f));
+        g.drawRoundedRectangle (cell, Theme::Radius::sm, selected ? 1.8f : (barLine ? 1.25f : Theme::Stroke::subtle));
 
         if (! filled || owner.chordStartBeat (chordIndex) != beat)
             continue;

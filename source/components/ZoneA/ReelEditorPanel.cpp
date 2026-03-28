@@ -115,9 +115,9 @@ void ReelEditorPanel::paintLoadStrip (juce::Graphics& g) const
     // [LOAD FILE] button
     const juce::Rectangle<int> loadBtn (r.getX() + 4, r.getY() + 6, 80, 20);
     g.setColour (Theme::Colour::surface2);
-    g.fillRoundedRectangle (loadBtn.toFloat(), 3.0f);
+    g.fillRoundedRectangle (loadBtn.toFloat(), Theme::Radius::chip);
     g.setColour (Theme::Colour::surfaceEdge);
-    g.drawRoundedRectangle (loadBtn.toFloat(), 3.0f, 0.5f);
+    g.drawRoundedRectangle (loadBtn.toFloat(), Theme::Radius::chip, Theme::Stroke::subtle);
     g.setFont (Theme::Font::micro());
     g.setColour (Theme::Colour::inkLight);
     g.drawText ("LOAD FILE", loadBtn, juce::Justification::centred, false);
@@ -138,9 +138,9 @@ void ReelEditorPanel::paintLoadStrip (juce::Graphics& g) const
     // [CLEAR] button
     const juce::Rectangle<int> clearBtn (r.getRight() - 52, r.getY() + 6, 48, 20);
     g.setColour (Theme::Colour::surface1);
-    g.fillRoundedRectangle (clearBtn.toFloat(), 3.0f);
+    g.fillRoundedRectangle (clearBtn.toFloat(), Theme::Radius::chip);
     g.setColour (Theme::Colour::surfaceEdge);
-    g.drawRoundedRectangle (clearBtn.toFloat(), 3.0f, 0.5f);
+    g.drawRoundedRectangle (clearBtn.toFloat(), Theme::Radius::chip, Theme::Stroke::subtle);
     g.setFont (Theme::Font::micro());
     g.setColour (m_proc && m_proc->isLoaded() ? (juce::Colour) Theme::Colour::inkMid
                                               : (juce::Colour) Theme::Colour::inkGhost);
@@ -167,7 +167,7 @@ void ReelEditorPanel::paintModeStrip (juce::Graphics& g) const
 
         g.setColour (active ? (juce::Colour) Theme::Zone::a.withAlpha (0.85f)
                             : (juce::Colour) Theme::Colour::surface3);
-        g.fillRoundedRectangle (pill.toFloat(), 4.0f);
+        g.fillRoundedRectangle (pill.toFloat(), Theme::Radius::sm);
         g.setColour (active ? (juce::Colour) Theme::Colour::inkDark
                             : (juce::Colour) Theme::Colour::inkGhost);
         g.setFont (Theme::Font::micro());
@@ -273,7 +273,7 @@ void ReelEditorPanel::paintWaveform (juce::Graphics& g) const
             g.setColour (Theme::Zone::a.withAlpha (0.65f));
             g.fillPath (p);
             g.setColour (Theme::Zone::a.withAlpha (0.85f));
-            g.strokePath (p, juce::PathStrokeType (1.0f));
+            g.strokePath (p, juce::PathStrokeType (Theme::Stroke::normal));
         }
 
         const ReelParams& params = m_proc->getParams();

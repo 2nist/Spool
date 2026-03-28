@@ -598,23 +598,23 @@ void StepGridSingle::paintStepLane (juce::Graphics& g) const
         const bool hovered = (i == m_hoverStep);
         const bool localOverride = ! step->followStructure;
         g.setColour (fill);
-        g.fillRoundedRectangle (rect, 4.0f);
+        g.fillRoundedRectangle (rect, Theme::Radius::sm);
 
         if (selected)
         {
             g.setColour (m_groupColor.withAlpha (0.18f));
-            g.fillRoundedRectangle (rect.expanded (2.5f, 2.5f), 5.5f);
+            g.fillRoundedRectangle (rect.expanded (2.5f, 2.5f), Theme::Radius::sm);
         }
 
         g.setColour (selected ? Theme::Colour::inkLight
                               : hovered ? m_groupColor.brighter (0.35f)
                                         : Theme::Colour::surfaceEdge);
-        g.drawRoundedRectangle (rect, 4.0f, selected ? 2.0f : 1.0f);
+        g.drawRoundedRectangle (rect, Theme::Radius::sm, selected ? Theme::Stroke::thick : Theme::Stroke::normal);
 
         if (localOverride)
         {
             g.setColour (Theme::Colour::warning.withAlpha (0.9f));
-            g.drawRoundedRectangle (rect.reduced (2.0f, 2.0f), 3.0f, 1.0f);
+            g.drawRoundedRectangle (rect.reduced (2.0f, 2.0f), Theme::Radius::chip, Theme::Stroke::normal);
         }
 
         const bool playheadInsideStep = m_playhead >= 0
@@ -661,7 +661,7 @@ void StepGridSingle::paintStepLane (juce::Graphics& g) const
             const auto handle = stepResizeHandleRect (i);
             g.setColour ((selected || m_hoverStepResizeHandle) ? Theme::Colour::inkLight
                                                                : Theme::Colour::inkMid.withAlpha (0.9f));
-            g.fillRoundedRectangle (handle, 2.0f);
+            g.fillRoundedRectangle (handle, Theme::Radius::xs);
             g.setColour (Theme::Colour::inkDark.withAlpha (0.75f));
             const auto handleInt = handle.toNearestInt();
             for (int x = handleInt.getX() + 1; x < handleInt.getRight() - 1; x += 2)
@@ -745,11 +745,11 @@ void StepGridSingle::paintDetail (juce::Graphics& g) const
         g.setColour (selected ? m_groupColor.brighter (0.35f)
                               : hovered ? m_groupColor.brighter (0.18f)
                                         : m_groupColor);
-        g.fillRoundedRectangle (rect, 3.0f);
+        g.fillRoundedRectangle (rect, Theme::Radius::chip);
         g.setColour (selected ? Theme::Colour::inkLight
                               : hovered ? Theme::Colour::inkMid
                                         : Theme::Colour::surfaceEdge);
-        g.drawRoundedRectangle (rect, 3.0f, selected ? 2.0f : 1.0f);
+        g.drawRoundedRectangle (rect, Theme::Radius::chip, selected ? Theme::Stroke::thick : Theme::Stroke::normal);
         g.setColour (Theme::Colour::inkDark);
         g.setFont (Theme::Font::micro());
         const auto& event = step->microEvents[(size_t) i];
@@ -762,7 +762,7 @@ void StepGridSingle::paintDetail (juce::Graphics& g) const
         if (selected)
         {
             g.setColour (Theme::Colour::error.withAlpha (0.95f));
-            g.drawRoundedRectangle (rect.expanded (1.5f, 1.5f), 4.0f, 1.3f);
+            g.drawRoundedRectangle (rect.expanded (1.5f, 1.5f), Theme::Radius::sm, 1.3f);
         }
     }
 
@@ -806,9 +806,9 @@ void StepGridSingle::paintCompactBar (juce::Graphics& g) const
     const auto drawBtn = [&] (juce::Rectangle<int> r, const juce::String& label)
     {
         g.setColour (Theme::Colour::surface2);
-        g.fillRoundedRectangle (r.toFloat(), 3.0f);
+        g.fillRoundedRectangle (r.toFloat(), Theme::Radius::chip);
         g.setColour (Theme::Colour::surfaceEdge);
-        g.drawRoundedRectangle (r.toFloat(), 3.0f, 1.0f);
+        g.drawRoundedRectangle (r.toFloat(), Theme::Radius::chip, Theme::Stroke::normal);
         g.setColour (Theme::Colour::inkLight);
         g.setFont (Theme::Font::micro());
         g.drawText (label, r, juce::Justification::centred, false);
@@ -847,9 +847,9 @@ void StepGridSingle::paintDetailToolbar (juce::Graphics& g) const
     const auto drawBtn = [&] (juce::Rectangle<int> r, const juce::String& label)
     {
         g.setColour (Theme::Colour::surface2);
-        g.fillRoundedRectangle (r.toFloat(), 3.0f);
+        g.fillRoundedRectangle (r.toFloat(), Theme::Radius::chip);
         g.setColour (Theme::Colour::surfaceEdge);
-        g.drawRoundedRectangle (r.toFloat(), 3.0f, 1.0f);
+        g.drawRoundedRectangle (r.toFloat(), Theme::Radius::chip, Theme::Stroke::normal);
         g.setColour (Theme::Colour::inkLight);
         g.setFont (Theme::Font::micro());
         g.drawText (label, r, juce::Justification::centred, false);

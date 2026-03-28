@@ -123,6 +123,35 @@ juce::ValueTree ThemeManager::toValueTree() const
     vt.setProperty ("playheadColor",  colourToString (t.playheadColor),  nullptr);
     vt.setProperty ("housingEdge",    colourToString (t.housingEdge),    nullptr);
 
+    // Radius
+    vt.setProperty ("radiusXs",   t.radiusXs,   nullptr);
+    vt.setProperty ("radiusChip", t.radiusChip, nullptr);
+    vt.setProperty ("radiusSm",   t.radiusSm,   nullptr);
+    vt.setProperty ("radiusMd",   t.radiusMd,   nullptr);
+    vt.setProperty ("radiusLg",   t.radiusLg,   nullptr);
+
+    // Stroke
+    vt.setProperty ("strokeSubtle", t.strokeSubtle, nullptr);
+    vt.setProperty ("strokeNormal", t.strokeNormal, nullptr);
+    vt.setProperty ("strokeAccent", t.strokeAccent, nullptr);
+    vt.setProperty ("strokeThick",  t.strokeThick,  nullptr);
+
+    // Controls
+    vt.setProperty ("btnCornerRadius",      t.btnCornerRadius,      nullptr);
+    vt.setProperty ("btnBorderStrength",    t.btnBorderStrength,    nullptr);
+    vt.setProperty ("btnFillStrength",      t.btnFillStrength,      nullptr);
+    vt.setProperty ("btnOnFillStrength",    t.btnOnFillStrength,    nullptr);
+    vt.setProperty ("sliderTrackThickness", t.sliderTrackThickness, nullptr);
+    vt.setProperty ("sliderCornerRadius",   t.sliderCornerRadius,   nullptr);
+    vt.setProperty ("sliderThumbSize",      t.sliderThumbSize,      nullptr);
+    vt.setProperty ("knobRingThickness",    t.knobRingThickness,    nullptr);
+    vt.setProperty ("knobCapSize",          t.knobCapSize,          nullptr);
+    vt.setProperty ("knobDotSize",          t.knobDotSize,          nullptr);
+    vt.setProperty ("switchWidth",          t.switchWidth,          nullptr);
+    vt.setProperty ("switchHeight",         t.switchHeight,         nullptr);
+    vt.setProperty ("switchCornerRadius",   t.switchCornerRadius,   nullptr);
+    vt.setProperty ("switchThumbInset",     t.switchThumbInset,     nullptr);
+
     // Metadata
     vt.setProperty ("presetName", t.presetName, nullptr);
 
@@ -241,6 +270,32 @@ void ThemeManager::fromValueTree (const juce::ValueTree& vt)
     readColour ("playheadColor",  t.playheadColor);
     readColour ("housingEdge",    t.housingEdge);
 
+    readFloat ("radiusXs",   t.radiusXs);
+    readFloat ("radiusChip", t.radiusChip);
+    readFloat ("radiusSm",   t.radiusSm);
+    readFloat ("radiusMd",   t.radiusMd);
+    readFloat ("radiusLg",   t.radiusLg);
+
+    readFloat ("strokeSubtle", t.strokeSubtle);
+    readFloat ("strokeNormal", t.strokeNormal);
+    readFloat ("strokeAccent", t.strokeAccent);
+    readFloat ("strokeThick",  t.strokeThick);
+
+    readFloat ("btnCornerRadius",      t.btnCornerRadius);
+    readFloat ("btnBorderStrength",    t.btnBorderStrength);
+    readFloat ("btnFillStrength",      t.btnFillStrength);
+    readFloat ("btnOnFillStrength",    t.btnOnFillStrength);
+    readFloat ("sliderTrackThickness", t.sliderTrackThickness);
+    readFloat ("sliderCornerRadius",   t.sliderCornerRadius);
+    readFloat ("sliderThumbSize",      t.sliderThumbSize);
+    readFloat ("knobRingThickness",    t.knobRingThickness);
+    readFloat ("knobCapSize",          t.knobCapSize);
+    readFloat ("knobDotSize",          t.knobDotSize);
+    readFloat ("switchWidth",          t.switchWidth);
+    readFloat ("switchHeight",         t.switchHeight);
+    readFloat ("switchCornerRadius",   t.switchCornerRadius);
+    readFloat ("switchThumbInset",     t.switchThumbInset);
+
     readString ("presetName", t.presetName);
 
     broadcast();
@@ -342,6 +397,25 @@ ThemeData ThemeManager::themeFromValueTree (const juce::ValueTree& vt)
     readColour ("tapeClipBorder", t.tapeClipBorder); readColour ("tapeSeam",    t.tapeSeam);
     readColour ("tapeBeatTick",   t.tapeBeatTick); readColour ("playheadColor",  t.playheadColor);
     readColour ("housingEdge",    t.housingEdge);
+    readFloat  ("radiusXs",   t.radiusXs);   readFloat ("radiusChip", t.radiusChip);
+    readFloat  ("radiusSm",   t.radiusSm);   readFloat ("radiusMd",   t.radiusMd);
+    readFloat  ("radiusLg",   t.radiusLg);
+    readFloat  ("strokeSubtle", t.strokeSubtle); readFloat ("strokeNormal", t.strokeNormal);
+    readFloat  ("strokeAccent", t.strokeAccent); readFloat ("strokeThick",  t.strokeThick);
+    readFloat  ("btnCornerRadius",      t.btnCornerRadius);
+    readFloat  ("btnBorderStrength",    t.btnBorderStrength);
+    readFloat  ("btnFillStrength",      t.btnFillStrength);
+    readFloat  ("btnOnFillStrength",    t.btnOnFillStrength);
+    readFloat  ("sliderTrackThickness", t.sliderTrackThickness);
+    readFloat  ("sliderCornerRadius",   t.sliderCornerRadius);
+    readFloat  ("sliderThumbSize",      t.sliderThumbSize);
+    readFloat  ("knobRingThickness",    t.knobRingThickness);
+    readFloat  ("knobCapSize",          t.knobCapSize);
+    readFloat  ("knobDotSize",          t.knobDotSize);
+    readFloat  ("switchWidth",          t.switchWidth);
+    readFloat  ("switchHeight",         t.switchHeight);
+    readFloat  ("switchCornerRadius",   t.switchCornerRadius);
+    readFloat  ("switchThumbInset",     t.switchThumbInset);
     readString ("presetName", t.presetName);
 
     return t;

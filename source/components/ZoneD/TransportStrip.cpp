@@ -183,9 +183,9 @@ void TransportStrip::paint (juce::Graphics& g)
     }
 
     g.setColour (followFill);
-    g.fillRoundedRectangle (m_snapLabelRect, 3.0f);
+    g.fillRoundedRectangle (m_snapLabelRect, Theme::Radius::chip);
     g.setColour (juce::Colour (kBtnBorder));
-    g.drawRoundedRectangle (m_snapLabelRect, 3.0f, 1.0f);
+    g.drawRoundedRectangle (m_snapLabelRect, Theme::Radius::chip, Theme::Stroke::normal);
     g.setColour (followTextCol);
     g.setFont (Theme::Font::label());
     g.drawText (followText, m_snapLabelRect, juce::Justification::centred, false);
@@ -193,9 +193,9 @@ void TransportStrip::paint (juce::Graphics& g)
     // MIX toggle
     const bool mixActive = m_mixOpen;
     g.setColour (mixActive ? juce::Colour (kPlayActive) : juce::Colour (kBtnSurface));
-    g.fillRoundedRectangle (m_mixBtnRect, 3.0f);
+    g.fillRoundedRectangle (m_mixBtnRect, Theme::Radius::chip);
     g.setColour (juce::Colour (kBtnBorder));
-    g.drawRoundedRectangle (m_mixBtnRect, 3.0f, 1.0f);
+    g.drawRoundedRectangle (m_mixBtnRect, Theme::Radius::chip, Theme::Stroke::normal);
     g.setColour (mixActive ? juce::Colours::white.withAlpha (0.9f)
                            : juce::Colour (kTextColour));
     g.setFont (Theme::Font::label());
@@ -210,9 +210,9 @@ void TransportStrip::paintTransportBtn (juce::Graphics& g,
 {
     g.setColour (active ? juce::Colour (activeColour)
                         : juce::Colour (kBtnSurface));
-    g.fillRoundedRectangle (r, 3.0f);
+    g.fillRoundedRectangle (r, Theme::Radius::chip);
     g.setColour (juce::Colour (kBtnBorder));
-    g.drawRoundedRectangle (r, 3.0f, 1.0f);
+    g.drawRoundedRectangle (r, Theme::Radius::chip, Theme::Stroke::normal);
     g.setColour (active ? juce::Colours::white.withAlpha (0.9f)
                         : juce::Colour (kTextColour));
     g.setFont (Theme::Font::transport());

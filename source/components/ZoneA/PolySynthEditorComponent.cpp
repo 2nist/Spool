@@ -76,9 +76,9 @@ public:
     {
         auto r = getLocalBounds().toFloat().reduced (1.0f);
         g.setColour (Theme::Colour::surface2);
-        g.fillRoundedRectangle (r, 8.0f);
+        g.fillRoundedRectangle (r, Theme::Radius::md);
         g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.8f));
-        g.drawRoundedRectangle (r, 8.0f, 1.0f);
+        g.drawRoundedRectangle (r, Theme::Radius::md, Theme::Stroke::normal);
 
         const auto plot = r.reduced (10.0f, 10.0f);
         for (int row = 1; row < 4; ++row)

@@ -47,22 +47,36 @@ public:
         }
 
         auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height).reduced (0.5f);
-        const auto fill = slider.findColour (juce::Slider::trackColourId);
-        const auto bg = slider.findColour (juce::Slider::backgroundColourId);
+        const auto& theme = ThemeManager::get().theme();
         const bool isVertical = style == juce::Slider::LinearBarVertical;
         const float proportion = (float) slider.valueToProportionOfLength (slider.getValue());
+        const float sliderR = theme.sliderCornerRadius;
+
+        // Read bg always from ThemeManager so colour changes are live.
+        // For fill: use a per-slider tint property if set, otherwise theme default.
+        const auto bg = theme.controlBg.withAlpha (0.95f);
+        const auto tintProp = slider.getProperties()["tint"];
+        const auto fill = tintProp.isVoid() ? theme.sliderTrack
+                                             : juce::Colour::fromString (tintProp.toString());
+
+        // sliderTrackThickness: shrink the drawn bar within the allocated bounds.
+        const float trackH = juce::jmin (theme.sliderTrackThickness, bounds.getHeight());
+        const float trackW = juce::jmin (theme.sliderTrackThickness, bounds.getWidth());
+        const auto drawBounds = isVertical
+                                    ? bounds.withSizeKeepingCentre (trackW, bounds.getHeight())
+                                    : bounds.withSizeKeepingCentre (bounds.getWidth(), trackH);
 
         g.setColour (bg);
-        g.fillRoundedRectangle (bounds, 4.0f);
+        g.fillRoundedRectangle (drawBounds, sliderR);
 
         if (isVertical)
         {
-            const float fillH = bounds.getHeight() * juce::jlimit (0.0f, 1.0f, proportion);
-            auto fillBounds = bounds.withY (bounds.getBottom() - fillH).withHeight (fillH);
+            const float fillH = drawBounds.getHeight() * juce::jlimit (0.0f, 1.0f, proportion);
+            auto fillBounds = drawBounds.withY (drawBounds.getBottom() - fillH).withHeight (fillH);
             if (fillBounds.getHeight() > 0.0f)
             {
                 g.setColour (fill);
-                g.fillRoundedRectangle (fillBounds, 4.0f);
+                g.fillRoundedRectangle (fillBounds, sliderR);
             }
         }
         else
@@ -76,23 +90,23 @@ public:
                     if (markerPos <= 0.0f || markerPos >= 1.0f)
                         continue;
 
-                    const float xPos = bounds.getX() + markerPos * bounds.getWidth();
+                    const float xPos = drawBounds.getX() + markerPos * drawBounds.getWidth();
                     g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.55f));
-                    g.fillRect (xPos, bounds.getY() + 2.0f, 1.0f, bounds.getHeight() - 4.0f);
+                    g.fillRect (xPos, drawBounds.getY() + 2.0f, 1.0f, drawBounds.getHeight() - 4.0f);
                 }
             }
 
-            const float posX = juce::jlimit (bounds.getX(), bounds.getRight(), sliderPos);
-            auto fillBounds = bounds.withWidth (juce::jmax (0.0f, posX - bounds.getX()));
+            const float posX = juce::jlimit (drawBounds.getX(), drawBounds.getRight(), sliderPos);
+            auto fillBounds = drawBounds.withWidth (juce::jmax (0.0f, posX - drawBounds.getX()));
             if (fillBounds.getWidth() > 0.0f)
             {
                 g.setColour (fill);
-                g.fillRoundedRectangle (fillBounds, 4.0f);
+                g.fillRoundedRectangle (fillBounds, sliderR);
             }
         }
 
-        g.setColour (ThemeManager::get().theme().surfaceEdge.withAlpha (0.85f));
-        g.drawRoundedRectangle (bounds, 4.0f, 1.0f);
+        g.setColour (theme.surfaceEdge.withAlpha (0.85f));
+        g.drawRoundedRectangle (drawBounds, sliderR, Theme::Stroke::normal);
 
         const auto label = slider.getName();
         if (label.isEmpty())
@@ -154,40 +168,122 @@ public:
         else if (isHighlighted)
             fill = fill.interpolatedWith (theme.rowHover, 0.4f);
 
-        g.setColour (fill);
-        g.fillRoundedRectangle (bounds, 4.0f);
+        const float fillAlpha = button.getToggleState() ? theme.btnOnFillStrength : theme.btnFillStrength;
+        g.setColour (fill.withMultipliedAlpha (fillAlpha));
+        g.fillRoundedRectangle (bounds, theme.btnCornerRadius);
 
-        g.setColour (accent.withAlpha (button.getToggleState() ? 0.7f : 0.35f));
-        g.drawRoundedRectangle (bounds, 4.0f, 1.0f);
+        const float borderAlpha = button.getToggleState() ? theme.btnBorderStrength
+                                                           : theme.btnBorderStrength * 0.5f;
+        g.setColour (accent.withAlpha (borderAlpha));
+        g.drawRoundedRectangle (bounds, theme.btnCornerRadius, Theme::Stroke::normal);
+    }
+
+    void drawButtonText (juce::Graphics& g,
+                         juce::TextButton& button,
+                         bool /*isHighlighted*/,
+                         bool /*isDown*/) override
+    {
+        const auto& theme = ThemeManager::get().theme();
+        g.setFont (getTextButtonFont (button, button.getHeight()));
+        g.setColour (button.getToggleState() ? theme.controlTextOn : theme.controlText);
+        g.drawFittedText (button.getButtonText(),
+                          button.getLocalBounds().reduced (4, 2),
+                          juce::Justification::centred, 1, 1.0f);
     }
 };
 
 class CompactComboLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    juce::Font getComboBoxFont (juce::ComboBox&) override
+    juce::Font getComboBoxFont (juce::ComboBox&) override { return Theme::Font::micro(); }
+
+    void drawComboBox (juce::Graphics& g,
+                       int width, int height,
+                       bool /*isButtonDown*/,
+                       int /*buttonX*/, int /*buttonY*/,
+                       int /*buttonW*/, int /*buttonH*/,
+                       juce::ComboBox& box) override
     {
-        return Theme::Font::micro();
+        const auto& theme = ThemeManager::get().theme();
+        const auto bounds = juce::Rectangle<float> (0.f, 0.f, (float) width, (float) height).reduced (0.5f);
+
+        g.setColour (theme.controlBg);
+        g.fillRoundedRectangle (bounds, Theme::Radius::sm);
+
+        g.setColour (theme.surfaceEdge.withAlpha (0.55f));
+        g.drawRoundedRectangle (bounds, Theme::Radius::sm, Theme::Stroke::subtle);
+
+        // Arrow
+        const float arrowX = (float) width - 14.f;
+        const float arrowY = (float) height * 0.5f;
+        juce::Path arrow;
+        arrow.addTriangle (arrowX, arrowY - 2.f, arrowX + 6.f, arrowY - 2.f, arrowX + 3.f, arrowY + 2.f);
+        g.setColour (box.findColour (juce::ComboBox::arrowColourId).withAlpha (0.8f));
+        g.fillPath (arrow);
     }
+
+    void drawLabel (juce::Graphics& g, juce::Label& label) override
+    {
+        const auto& theme = ThemeManager::get().theme();
+        g.fillAll (juce::Colours::transparentBlack);
+        g.setColour (theme.controlTextOn);
+        g.setFont (Theme::Font::micro());
+        g.drawFittedText (label.getText(),
+                          label.getLocalBounds().reduced (4, 0),
+                          label.getJustificationType(), 1, 1.0f);
+    }
+
+    // Popup menu — rows and background
+    void drawPopupMenuBackground (juce::Graphics& g, int width, int height) override
+    {
+        const auto& theme = ThemeManager::get().theme();
+        g.setColour (theme.surface2);
+        g.fillRoundedRectangle (0.f, 0.f, (float) width, (float) height, Theme::Radius::sm);
+        g.setColour (theme.surfaceEdge.withAlpha (0.6f));
+        g.drawRoundedRectangle (0.5f, 0.5f, (float) width - 1.f, (float) height - 1.f,
+                                Theme::Radius::sm, Theme::Stroke::subtle);
+    }
+
+    void drawPopupMenuItem (juce::Graphics& g,
+                            const juce::Rectangle<int>& area,
+                            bool /*isSeparator*/,
+                            bool isActive,
+                            bool isHighlighted,
+                            bool isTicked,
+                            bool /*hasSubMenu*/,
+                            const juce::String& text,
+                            const juce::String& /*shortcutKeyText*/,
+                            const juce::Drawable* /*icon*/,
+                            const juce::Colour* /*textColour*/) override
+    {
+        const auto& theme = ThemeManager::get().theme();
+        auto r = area.toFloat().reduced (2.f, 1.f);
+
+        if (isHighlighted && isActive)
+        {
+            g.setColour (theme.rowHover);
+            g.fillRoundedRectangle (r, Theme::Radius::xs);
+        }
+
+        g.setFont (Theme::Font::micro());
+        g.setColour (isActive ? (isTicked ? theme.controlTextOn : theme.controlText)
+                              : theme.inkGhost);
+        g.drawFittedText (text, area.reduced (8, 0), juce::Justification::centredLeft, 1);
+
+        if (isTicked)
+        {
+            const float dotD = 4.f;
+            g.setColour (theme.controlTextOn);
+            g.fillEllipse ((float) area.getRight() - 12.f,
+                           (float) area.getCentreY() - dotD * 0.5f,
+                           dotD, dotD);
+        }
+    }
+
+    juce::Font getPopupMenuFont() override { return Theme::Font::micro(); }
+
+    int getPopupMenuBorderSize() override { return 4; }
 };
-
-inline BarSliderLookAndFeel& barLookAndFeel()
-{
-    static BarSliderLookAndFeel lf;
-    return lf;
-}
-
-inline CompactButtonLookAndFeel& buttonLookAndFeel()
-{
-    static CompactButtonLookAndFeel lf;
-    return lf;
-}
-
-inline CompactComboLookAndFeel& comboLookAndFeel()
-{
-    static CompactComboLookAndFeel lf;
-    return lf;
-}
 
 inline void initBarSlider (juce::Slider& slider, const juce::String& label)
 {
@@ -199,35 +295,26 @@ inline void initBarSlider (juce::Slider& slider, const juce::String& label)
     slider.setVelocityBasedMode (false);
     slider.setMouseDragSensitivity (900);
     slider.setChangeNotificationOnlyOnRelease (true);
-    slider.setLookAndFeel (&barLookAndFeel());
-    slider.setColour (juce::Slider::backgroundColourId, ThemeManager::get().theme().controlBg.withAlpha (0.95f));
-    slider.setColour (juce::Slider::trackColourId, ThemeManager::get().theme().sliderTrack);
-    slider.setColour (juce::Slider::thumbColourId, ThemeManager::get().theme().sliderThumb);
-    slider.setColour (juce::Slider::rotarySliderFillColourId, ThemeManager::get().theme().sliderTrack);
+    // No setLookAndFeel needed — inherits SpoolLookAndFeel from PluginEditor root
 }
 
 inline void tintBarSlider (juce::Slider& slider, juce::Colour colour)
 {
-    slider.setColour (juce::Slider::trackColourId, colour);
-    slider.setColour (juce::Slider::thumbColourId, colour.brighter (0.08f));
-    slider.setColour (juce::Slider::rotarySliderFillColourId, colour);
+    // Store tint as a component property so drawLinearSlider can read it live.
+    slider.getProperties().set ("tint", colour.toString());
 }
 
 inline void styleTextButton (juce::TextButton& button, juce::Colour accent = Theme::Colour::surfaceEdge.withAlpha (0.7f))
 {
-    button.setLookAndFeel (&buttonLookAndFeel());
-    button.setColour (juce::TextButton::buttonColourId, ThemeManager::get().theme().controlBg);
+    // Only the per-instance accent colour is needed — bg, text, border all read
+    // from ThemeManager live via the inherited SpoolLookAndFeel.
     button.setColour (juce::TextButton::buttonOnColourId, accent);
-    button.setColour (juce::TextButton::textColourOffId, ThemeManager::get().theme().controlText);
-    button.setColour (juce::TextButton::textColourOnId, ThemeManager::get().theme().controlTextOn);
 }
 
 inline void styleComboBox (juce::ComboBox& combo, juce::Colour accent = Theme::Zone::a)
 {
-    combo.setLookAndFeel (&comboLookAndFeel());
-    combo.setColour (juce::ComboBox::backgroundColourId, ThemeManager::get().theme().controlBg);
-    combo.setColour (juce::ComboBox::textColourId, ThemeManager::get().theme().controlTextOn);
-    combo.setColour (juce::ComboBox::outlineColourId, ThemeManager::get().theme().surfaceEdge.withAlpha (0.55f));
+    // Only the per-instance arrow accent is needed — bg/text/outline read
+    // from ThemeManager live via the inherited SpoolLookAndFeel.
     combo.setColour (juce::ComboBox::arrowColourId, accent.withAlpha (0.9f));
 }
 

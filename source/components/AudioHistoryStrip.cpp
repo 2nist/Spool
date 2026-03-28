@@ -334,7 +334,7 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
         for (int i = 0; i < n; ++i)
             topPath.lineTo (waveStartX + ((float)i / n) * waveW, cx - m_waveformData[i] * maxH);
         g.setColour (ink.withAlpha (0.75f));
-        g.strokePath (topPath, juce::PathStrokeType (1.0f));
+        g.strokePath (topPath, juce::PathStrokeType (Theme::Stroke::normal));
 
         // Bottom mirror — lighter supporting line
         juce::Path botPath;
@@ -342,7 +342,7 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
         for (int i = 0; i < n; ++i)
             botPath.lineTo (waveStartX + ((float)i / n) * waveW, cx + m_waveformData[i] * maxH);
         g.setColour (ink.withAlpha (0.40f));
-        g.strokePath (botPath, juce::PathStrokeType (0.75f));
+        g.strokePath (botPath, juce::PathStrokeType (Theme::Stroke::subtle));
 
         // Freshness overlay — denser ink density at the "now" edge
         const int freshW = juce::jmin (60, wr.getWidth() / 5);
@@ -373,7 +373,7 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
         const float lblX = (x1 + x2) * 0.5f - 20.0f;
         const auto  lblR = juce::Rectangle<int> ((int)lblX, wr.getY() + 2, 40, 12);
         g.setColour (juce::Colour (0xCCF5F1EC));
-        g.fillRoundedRectangle (lblR.toFloat().expanded (4.0f, 0.0f), 3.0f);
+        g.fillRoundedRectangle (lblR.toFloat().expanded (4.0f, 0.0f), Theme::Radius::chip);
         g.setFont   (Theme::Font::micro());
         g.setColour (juce::Colour (0xFF1A0F06));
         g.drawText  (lbl, lblR, juce::Justification::centred, false);
@@ -415,7 +415,7 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
             g.setColour (m_sourceColor.withAlpha (0.45f));
             g.fillPath  (clipFill);
             g.setColour (m_sourceColor.withAlpha (0.80f));
-            g.strokePath (clipFill, juce::PathStrokeType (0.8f));
+            g.strokePath (clipFill, juce::PathStrokeType (Theme::Stroke::subtle));
 
             g.restoreState();
         }
@@ -525,9 +525,9 @@ void AudioHistoryStrip::paintGrabControls (juce::Graphics& g) const
 
         g.setColour (b.active ? (juce::Colour) Theme::Colour::surface2
                               : (juce::Colour) Theme::Colour::surface1);
-        g.fillRoundedRectangle (br.toFloat(), 2.0f);
+        g.fillRoundedRectangle (br.toFloat(), Theme::Radius::xs);
         g.setColour (Theme::Colour::surfaceEdge);
-        g.drawRoundedRectangle (br.toFloat(), 2.0f, 0.5f);
+        g.drawRoundedRectangle (br.toFloat(), Theme::Radius::xs, Theme::Stroke::subtle);
 
         g.setFont   (Theme::Font::micro());
         g.setColour (b.active ? (juce::Colour) Theme::Colour::inkLight
@@ -691,9 +691,9 @@ void AudioHistoryStrip::mouseDrag (const juce::MouseEvent& e)
 
                 // White clip tile
                 gfx.setColour (juce::Colour (0xEEF5F1EC));
-                gfx.fillRoundedRectangle (ib, 3.0f);
+                gfx.fillRoundedRectangle (ib, Theme::Radius::chip);
                 gfx.setColour (Theme::Zone::c);
-                gfx.drawRoundedRectangle (ib.reduced (0.5f), 3.0f, 1.5f);
+                gfx.drawRoundedRectangle (ib.reduced (0.5f), Theme::Radius::chip, Theme::Stroke::accent);
 
                 // Mini waveform of grabbed region
                 const int n = m_waveformData.size();
@@ -726,7 +726,7 @@ void AudioHistoryStrip::mouseDrag (const juce::MouseEvent& e)
                     gfx.setColour (m_sourceColor.withAlpha (0.50f));
                     gfx.fillPath  (wp);
                     gfx.setColour (juce::Colour (0xFF1A0F06).withAlpha (0.70f));
-                    gfx.strokePath (wp, juce::PathStrokeType (0.75f));
+                    gfx.strokePath (wp, juce::PathStrokeType (Theme::Stroke::subtle));
 
                     // Duration label bottom-right
                     const juce::String dur = juce::String (m_grabbedLength, 1) + "s";

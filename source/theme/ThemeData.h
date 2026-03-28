@@ -115,6 +115,42 @@ struct ThemeData
     juce::Colour playheadColor  { 0xFF694412 };
     juce::Colour housingEdge    { 0xFF080604 };
 
+    // ── RADIUS ───────────────────────────────────────────────────────────────
+    float radiusXs   {  2.0f };  // step pads, badges, tiny elements
+    float radiusChip {  3.0f };  // compact buttons, labels, meter tracks
+    float radiusSm   {  4.0f };  // panels, cards, FX nodes
+    float radiusMd   {  6.0f };  // module slots, zone panels
+    float radiusLg   { 10.0f };  // large panels, overlays
+
+    // ── STROKE ───────────────────────────────────────────────────────────────
+    float strokeSubtle { 0.5f };  // dividers, inactive, ghost borders
+    float strokeNormal { 1.0f };  // panels, cards, default borders
+    float strokeAccent { 1.5f };  // selected, active, focused states
+    float strokeThick  { 2.0f };  // pin mode indicator, error states
+
+    // ── CONTROLS ─────────────────────────────────────────────────────────────
+    // Button family
+    float btnCornerRadius    {  4.0f };   // corner rounding (px)
+    float btnBorderStrength  {  0.45f };  // border alpha multiplier (0–1)
+    float btnFillStrength    {  1.0f };   // fill opacity multiplier (0–1)
+    float btnOnFillStrength  {  0.30f };  // active/on fill alpha (0–1)
+
+    // Slider family
+    float sliderTrackThickness {  4.0f };  // horizontal track bar height (px)
+    float sliderCornerRadius   {  4.0f };  // track/fill corner radius (px)
+    float sliderThumbSize      {  8.0f };  // thumb dot diameter (px)
+
+    // Knob family
+    float knobRingThickness {  2.5f };  // arc ring stroke weight (px)
+    float knobCapSize       {  0.72f }; // cap radius as fraction of knob radius
+    float knobDotSize       {  3.0f };  // pointer dot diameter (px)
+
+    // Switch / toggle family
+    float switchWidth        { 28.0f };  // toggle track width (px)
+    float switchHeight       { 14.0f };  // toggle track height (px)
+    float switchCornerRadius {  7.0f };  // track corner radius — set to switchHeight/2 for pill
+    float switchThumbInset   {  2.0f };  // thumb inset from track edge (px)
+
     // ── PRESET METADATA ──────────────────────────────────────────────────────
     juce::String presetName { "Espresso" };
 };

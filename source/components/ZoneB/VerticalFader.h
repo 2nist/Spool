@@ -30,9 +30,9 @@ public:
     // Setup
 
     void setParamId      (const juce::String& id)   { m_paramId = id; }
-    void setDisplayName  (const juce::String& name) { m_displayName = name; repaint(); }
-    void setParamColor   (juce::Colour c)            { m_paramColor = c; repaint(); }
-    void setDefaultValue (float normalizedDefault)   { m_defaultValue = normalizedDefault; }
+    void setDisplayName  (const juce::String& name) { m_displayName = name; m_slider.setName (name); repaint(); }
+    void setParamColor   (juce::Colour c)            { m_paramColor = c; m_slider.getProperties().set ("tint", c.toString()); repaint(); }
+    void setDefaultValue (float normalizedDefault)   { m_defaultValue = normalizedDefault; m_slider.setDoubleClickReturnValue (true, m_defaultValue); }
     void setBipolar      (bool bipolar)              { m_bipolar = bipolar; repaint(); }
 
     //==========================================================================
@@ -125,6 +125,7 @@ private:
     // Value
 
     float m_value        { 0.5f };
+    juce::Slider m_slider;
     float m_dragStartY   { 0.0f };
     float m_dragStartVal { 0.5f };
     bool  m_dragging     { false };

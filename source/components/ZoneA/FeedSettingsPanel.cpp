@@ -1,4 +1,5 @@
 #include "FeedSettingsPanel.h"
+#include "ZoneAControlStyle.h"
 
 //==============================================================================
 FeedSettingsPanel::FeedSettingsPanel()
@@ -10,8 +11,7 @@ FeedSettingsPanel::FeedSettingsPanel()
     m_items.add ({ "Link status",            true  });
     m_items.add ({ "Warnings",               true  });
 
-    m_speedSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    m_speedSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    ZoneAControlStyle::initBarSlider (m_speedSlider, "SPEED");
     m_speedSlider.setRange (0.0, 1.0, 0.01);
     m_speedSlider.setValue (0.5);
     addAndMakeVisible (m_speedSlider);
@@ -57,11 +57,11 @@ void FeedSettingsPanel::paint (juce::Graphics& g)
                                                   Theme::Zone::a,
                                                   item.enabled ? Theme::Helper::VisualState::selected
                                                                : Theme::Helper::VisualState::idle));
-        g.fillRoundedRectangle (cb.toFloat(), 2.0f);
+        g.fillRoundedRectangle (cb.toFloat(), Theme::Radius::xs);
         g.setColour (Theme::Helper::emphasisForState (Theme::Zone::a,
                                                       item.enabled ? Theme::Helper::VisualState::selected
                                                                    : Theme::Helper::VisualState::disabled).withAlpha (0.55f));
-        g.drawRoundedRectangle (cb.toFloat(), 2.0f, 0.5f);
+        g.drawRoundedRectangle (cb.toFloat(), Theme::Radius::xs, Theme::Stroke::subtle);
 
         if (item.enabled)
         {

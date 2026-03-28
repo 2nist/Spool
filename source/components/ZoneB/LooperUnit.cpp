@@ -196,9 +196,9 @@ void LooperUnit::drawToolbarButton (juce::Graphics& g,
     const auto edge = active ? accent : Theme::Colour::surfaceEdge;
     const auto fill = active ? accent.withAlpha (0.28f) : Theme::Colour::surface2;
     g.setColour (fill);
-    g.fillRoundedRectangle (r.toFloat(), 2.5f);
+    g.fillRoundedRectangle (r.toFloat(), Theme::Radius::chip);
     g.setColour (edge);
-    g.drawRoundedRectangle (r.toFloat(), 2.5f, 0.7f);
+    g.drawRoundedRectangle (r.toFloat(), Theme::Radius::chip, Theme::Stroke::subtle);
     g.setColour (active ? Theme::Colour::inkLight : Theme::Colour::inkGhost);
     g.setFont (Theme::Font::micro());
     g.drawText (label, r, juce::Justification::centred, false);
@@ -241,9 +241,9 @@ void LooperUnit::paintWaveform (juce::Graphics& g) const
 {
     auto wave = waveformRect();
     g.setColour (Theme::Colour::surface2);
-    g.fillRoundedRectangle (wave.toFloat(), 4.0f);
+    g.fillRoundedRectangle (wave.toFloat(), Theme::Radius::sm);
     g.setColour (Theme::Colour::surfaceEdge);
-    g.drawRoundedRectangle (wave.toFloat(), 4.0f, 0.8f);
+    g.drawRoundedRectangle (wave.toFloat(), Theme::Radius::sm, Theme::Stroke::subtle);
 
     if (! m_session.hasAudio())
     {
@@ -267,7 +267,7 @@ void LooperUnit::paintWaveform (juce::Graphics& g) const
     g.setColour (accent.withAlpha (0.25f));
     g.fillPath (wavePath);
     g.setColour (accent.withAlpha (0.75f));
-    g.strokePath (wavePath, juce::PathStrokeType (1.0f));
+    g.strokePath (wavePath, juce::PathStrokeType (Theme::Stroke::normal));
 
     g.setColour (accent.withAlpha (0.18f));
     g.fillRect (juce::Rectangle<float> (trimStartX, (float) wave.getY(),
@@ -277,7 +277,7 @@ void LooperUnit::paintWaveform (juce::Graphics& g) const
     {
         auto handle = trimHandleRect (startHandle);
         g.setColour (accent.withAlpha (0.95f));
-        g.fillRoundedRectangle (handle, 2.0f);
+        g.fillRoundedRectangle (handle, Theme::Radius::xs);
     };
 
     drawHandle (true);
@@ -466,7 +466,7 @@ void LooperUnit::beginDragOut()
     juce::Graphics g (image);
     g.fillAll (juce::Colours::transparentBlack);
     g.setColour (looperAccent().withAlpha (0.9f));
-    g.fillRoundedRectangle ({ 0.0f, 0.0f, 92.0f, 24.0f }, 4.0f);
+    g.fillRoundedRectangle ({ 0.0f, 0.0f, 92.0f, 24.0f }, Theme::Radius::sm);
     g.setColour (Theme::Colour::inkLight);
     g.setFont (Theme::Font::micro());
     g.drawText ("LOOPER CLIP", image.getBounds(), juce::Justification::centred, false);

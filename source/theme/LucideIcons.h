@@ -56,4 +56,14 @@ namespace LucideIcons
     inline constexpr const char* tape =
         "M12 2 A10 10 0 1 0 12 22 A10 10 0 0 0 12 2 Z "
         "M12 8 A4 4 0 1 0 12 16 A4 4 0 0 0 12 8 Z";
+
+    // Controls — sliders-horizontal icon
+    inline constexpr const char* controls =
+        "M3 6 L15 6 "
+        "M19 6 A2 2 0 1 0 19.001 6 Z "
+        "M3 12 L9 12 "
+        "M13 12 A2 2 0 1 0 13.001 12 Z "
+        "M17 12 L21 12 "
+        "M3 18 L15 18 "
+        "M19 18 A2 2 0 1 0 19.001 18 Z";
 }

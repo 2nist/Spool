@@ -1,5 +1,24 @@
 #include "FXNode.h"
 
+namespace
+{
+juce::String formatParamValue (const EffectParamDef& p, float value)
+{
+    if (p.type == EffectParamDef::Type::Bool)
+        return value >= 0.5f ? "ON" : "OFF";
+    if (p.type == EffectParamDef::Type::Enum)
+    {
+        const int idx = juce::jlimit (0, p.enumValues.size() - 1, (int) (value + 0.5f));
+        return idx < p.enumValues.size() ? p.enumValues[idx] : juce::String (idx);
+    }
+
+    if (p.maxVal >= 1000.0f)
+        return juce::String ((int) juce::roundToInt (value));
+
+    return juce::String (value, 1);
+}
+}
+
 //==============================================================================
 
 FXNode::FXNode (int nodeIndex, const EffectNode& data)
@@ -7,6 +26,78 @@ FXNode::FXNode (int nodeIndex, const EffectNode& data)
 {
     setSize (184, kHeight);
     setRepaintsOnMouseActivity (true);
+
+    for (int i = 0; i < kMaxVisibleRows; ++i)
+    {
+        auto& label = m_rowLabels[(size_t) i];
+        label.setJustificationType (juce::Justification::centredLeft);
+        label.setInterceptsMouseClicks (false, false);
+        addAndMakeVisible (label);
+
+        auto& valueLabel = m_rowValueLabels[(size_t) i];
+        valueLabel.setJustificationType (juce::Justification::centredRight);
+        valueLabel.setInterceptsMouseClicks (false, false);
+        addAndMakeVisible (valueLabel);
+
+        auto& slider = m_rowSliders[(size_t) i];
+        slider.setSliderStyle (juce::Slider::LinearHorizontal);
+        slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        slider.setScrollWheelEnabled (false);
+        slider.setPopupDisplayEnabled (true, true, this);
+        slider.onValueChange = [this, i]
+        {
+            auto* d = def();
+            if (d == nullptr || i >= d->params.size())
+                return;
+
+            const auto& p = d->params.getReference (i);
+            while (m_data.params.size() <= i)
+                m_data.params.add (p.defaultVal);
+
+            const float newValue = (float) m_rowSliders[(size_t) i].getValue();
+            m_data.params.set (i, newValue);
+            m_rowValueLabels[(size_t) i].setText (formatParamValue (p, newValue), juce::dontSendNotification);
+
+            if (onParamChanged)
+                onParamChanged (m_nodeIndex, i, newValue);
+        };
+        addAndMakeVisible (slider);
+
+        auto& button = m_rowButtons[(size_t) i];
+        button.setClickingTogglesState (true);
+        button.onClick = [this, i]
+        {
+            auto* d = def();
+            if (d == nullptr || i >= d->params.size())
+                return;
+
+            const float newValue = m_rowButtons[(size_t) i].getToggleState() ? 1.0f : 0.0f;
+            while (m_data.params.size() <= i)
+                m_data.params.add (d->params[i].defaultVal);
+            m_data.params.set (i, newValue);
+            m_rowButtons[(size_t) i].setButtonText (newValue >= 0.5f ? "ON" : "OFF");
+            if (onParamChanged)
+                onParamChanged (m_nodeIndex, i, newValue);
+        };
+        addAndMakeVisible (button);
+
+        auto& combo = m_rowCombos[(size_t) i];
+        combo.onChange = [this, i]
+        {
+            auto* d = def();
+            if (d == nullptr || i >= d->params.size())
+                return;
+            const float newValue = (float) juce::jmax (0, m_rowCombos[(size_t) i].getSelectedItemIndex());
+            while (m_data.params.size() <= i)
+                m_data.params.add (d->params[i].defaultVal);
+            m_data.params.set (i, newValue);
+            if (onParamChanged)
+                onParamChanged (m_nodeIndex, i, newValue);
+        };
+        addAndMakeVisible (combo);
+    }
+
+    refreshRowControls();
 }
 
 void FXNode::setData (int nodeIndex, const EffectNode& data)
@@ -14,6 +105,7 @@ void FXNode::setData (int nodeIndex, const EffectNode& data)
     m_nodeIndex = nodeIndex;
     m_data      = data;
     m_showConfirm = false;
+    refreshRowControls();
     repaint();
 }
 
@@ -32,6 +124,7 @@ void FXNode::setFocused (bool isFocused)
 void FXNode::showRemoveConfirmation (bool show)
 {
     m_showConfirm = show;
+    refreshRowControls();
     repaint();
 }
 
@@ -51,19 +144,18 @@ juce::Rectangle<int> FXNode::paramAreaRect() const noexcept
 
 juce::Rectangle<int> FXNode::bypassRect() const noexcept
 {
-    const int x = getWidth() - 6 - 8 - 4 - 14;  // from right: inset + handle + gap + bypass
+    const int x = getWidth() - 6 - 8 - 4 - 14;
     return { x, (kHeaderH - 14) / 2, 14, 14 };
 }
 
 juce::Rectangle<int> FXNode::removeRect() const noexcept
 {
-    const int x = getWidth() - 6 - 14;  // rightmost button
+    const int x = getWidth() - 6 - 14;
     return { x, (kHeaderH - 14) / 2, 14, 14 };
 }
 
 juce::Rectangle<int> FXNode::dragHandleRect() const noexcept
 {
-    // Between bypass and remove: 8px wide strip
     const int x = getWidth() - 6 - 8 - 4 - 14 - 4 - 8;
     return { x, 0, 8, kHeaderH };
 }
@@ -74,35 +166,18 @@ juce::Rectangle<int> FXNode::rowRect (int rowIdx) const noexcept
     return { 0, y, getWidth(), kRowH };
 }
 
-juce::Rectangle<int> FXNode::trackRect (juce::Rectangle<int> rowR) const noexcept
-{
-    // rowR: full row bounds
-    // Track occupies space between label and value display
-    const int x     = kLabelW;
-    const int w     = rowR.getWidth() - kLabelW - kValueW;
-    const int trackH = 2;
-    const int trackY = rowR.getY() + (kRowH - trackH) / 2;
-    return { x, trackY, w, trackH };
-}
-
 //==============================================================================
 // Paint
 //==============================================================================
 
 void FXNode::paint (juce::Graphics& g)
 {
-    auto* d = def();
-    const juce::Colour effectCol = d ? d->colour : Theme::Colour::accent;
-
-    // Lifted drag state
     if (m_isDragging)
     {
-        // Shadow
         const auto shadowR = getLocalBounds().translated (3, 3);
         g.setColour (Theme::Colour::surface0.withAlpha (0.6f));
         g.fillRoundedRectangle (shadowR.toFloat(), Theme::Radius::sm);
 
-        // Border in Zone::c
         g.setColour (Theme::Zone::c);
         g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f),
                                 Theme::Radius::sm, Theme::Stroke::accent);
@@ -127,8 +202,6 @@ void FXNode::paint (juce::Graphics& g)
         paintConfirm (g);
     else
         paintParams (g);
-
-    juce::ignoreUnused (effectCol);
 }
 
 void FXNode::paintHeader (juce::Graphics& g) const
@@ -137,53 +210,45 @@ void FXNode::paintHeader (juce::Graphics& g) const
     const juce::Colour effectCol = d ? d->colour : Theme::Colour::accent;
     const auto hdrR = headerRect();
 
-    // Header background (top corners rounded only)
     g.setColour (Theme::Colour::surface0);
     {
-        // Extend rect down by radius so bottom corners are hidden behind content
         juce::Path p;
         const auto paddedR = hdrR.toFloat().withBottom (hdrR.toFloat().getBottom() + Theme::Radius::sm);
         p.addRoundedRectangle (paddedR, Theme::Radius::sm);
         g.fillPath (p);
     }
 
-    // Colour dot
     const int dotD = 6;
     const int dotY = (kHeaderH - dotD) / 2;
     g.setColour (effectCol);
-    g.fillEllipse (8.0f, static_cast<float> (dotY), static_cast<float> (dotD), static_cast<float> (dotD));
+    g.fillEllipse (8.0f, (float) dotY, (float) dotD, (float) dotD);
 
-    // Effect name
     g.setFont (Theme::Font::label());
     g.setColour (Theme::Colour::inkLight);
     g.drawText (d ? d->displayName : m_data.effectType.toUpperCase(),
                 8 + dotD + 4, 0, bypassRect().getX() - (8 + dotD + 4) - 4, kHeaderH,
                 juce::Justification::centredLeft, false);
 
-    // Subtype tag — centered in remaining space
-    if (d)
+    if (d != nullptr)
     {
         g.setFont (Theme::Font::micro());
         g.setColour (Theme::Colour::inkGhost);
-        const int tagX = 8 + dotD + 4 + 32;  // after name approx
+        const int tagX = 8 + dotD + 4 + 32;
         g.drawText (d->tag, tagX, 0, dragHandleRect().getX() - tagX, kHeaderH,
                     juce::Justification::centredLeft, false);
     }
 
-    // Drag handle — three dots
     {
         const auto dh = dragHandleRect();
         g.setFont (Theme::Font::micro());
         g.setColour (Theme::Colour::inkGhost);
-        const int dotSpacing = 3;
         for (int i = 0; i < 3; ++i)
         {
-            const float dy = static_cast<float> (dh.getY() + (kHeaderH / 2) - dotSpacing + i * dotSpacing);
-            g.fillEllipse (static_cast<float> (dh.getX() + 3), dy, 2.0f, 2.0f);
+            const float dy = (float) (dh.getY() + (kHeaderH / 2) - 3 + i * 3);
+            g.fillEllipse ((float) (dh.getX() + 3), dy, 2.0f, 2.0f);
         }
     }
 
-    // Bypass button
     {
         const auto br = bypassRect();
         if (m_data.bypassed)
@@ -207,141 +272,30 @@ void FXNode::paintHeader (juce::Graphics& g) const
         }
     }
 
-    // Remove button
     {
         const auto rr = removeRect();
         g.setFont (Theme::Font::micro());
         g.setColour (m_hoverRemove ? Theme::Colour::inkMuted : Theme::Colour::inkGhost);
-        g.drawText ("\xc3\x97", rr, juce::Justification::centred, false);
+        g.drawText ("\xC3\x97", rr, juce::Justification::centred, false);
     }
 }
 
 void FXNode::paintParams (juce::Graphics& g) const
 {
     auto* d = def();
-    if (!d) return;
+    if (d == nullptr)
+        return;
 
-    // Param area background
     g.setColour (Theme::Colour::surface3);
     g.fillRoundedRectangle (paramAreaRect().toFloat(), Theme::Radius::sm);
 
-    const int count = juce::jmin (3, d->params.size());
-    for (int i = 0; i < count; ++i)
-        paintRow (g, i);
-}
-
-void FXNode::paintRow (juce::Graphics& g, int rowIdx) const
-{
-    const auto& theme = ThemeManager::get().theme();
-    auto* d = def();
-    if (!d || rowIdx >= d->params.size()) return;
-
-    const auto& p   = d->params.getReference (rowIdx);
-    const float val = rowIdx < m_data.params.size() ? m_data.params[rowIdx] : p.defaultVal;
-    const auto rowR = rowRect (rowIdx);
-
-    // 1px separator above rows (except first)
-    if (rowIdx > 0)
+    const int count = juce::jmin (kMaxVisibleRows, d->params.size());
+    for (int i = 1; i < count; ++i)
     {
+        const auto rowR = rowRect (i);
         g.setColour (Theme::Colour::surface0);
-        g.drawLine (static_cast<float> (rowR.getX()),
-                    static_cast<float> (rowR.getY()),
-                    static_cast<float> (rowR.getRight()),
-                    static_cast<float> (rowR.getY()), 1.0f);
-    }
-
-    // Label
-    g.setFont (Theme::Font::label());
-    g.setColour (Theme::Colour::inkMuted);
-    g.drawText (p.name, rowR.getX() + 2, rowR.getY(), kLabelW - 2, kRowH,
-                juce::Justification::centredLeft, false);
-
-    const juce::Colour effectCol = d->colour;
-
-    if (p.type == EffectParamDef::Type::Continuous)
-    {
-        // Slider track
-        auto tr = trackRect (rowR);
-
-        // Track bg
-        g.setColour (theme.controlBg.withAlpha (0.95f));
-        g.fillRoundedRectangle (tr.toFloat(), 3.0f);
-
-        // Track fill
-        const float norm = (p.maxVal > p.minVal)
-                           ? juce::jlimit (0.0f, 1.0f, (val - p.minVal) / (p.maxVal - p.minVal))
-                           : 0.0f;
-        g.setColour (theme.sliderTrack.interpolatedWith (effectCol, 0.35f));
-        g.fillRoundedRectangle (tr.withWidth (static_cast<int> (tr.getWidth() * norm)).toFloat(), 3.0f);
-
-        // Thumb
-        const int thumbD = 8;
-        const float thumbX = static_cast<float> (tr.getX()) + norm * static_cast<float> (tr.getWidth()) - thumbD * 0.5f;
-        const float thumbY = static_cast<float> (rowR.getY()) + (kRowH - thumbD) * 0.5f;
-        g.setColour (theme.sliderThumb);
-        g.fillEllipse (thumbX, thumbY, static_cast<float> (thumbD), static_cast<float> (thumbD));
-
-        // Value text
-        g.setFont (Theme::Font::label());
-        g.setColour (Theme::Colour::inkLight);
-        const juce::String valStr = juce::String (val, 1);
-        g.drawText (valStr,
-                    rowR.getRight() - kValueW - 2, rowR.getY(), kValueW, kRowH,
-                    juce::Justification::centredRight, false);
-    }
-    else if (p.type == EffectParamDef::Type::Bool)
-    {
-        const bool isOn = val >= 0.5f;
-        const int centerX = kLabelW + (getWidth() - kLabelW - kArrowW * 2 - kValueW) / 2;
-
-        // ‹ arrow
-        g.setFont (Theme::Font::micro());
-        g.setColour (Theme::Colour::inkMuted);
-        g.drawText ("\xe2\x80\xb9",
-                    rowR.getX() + kLabelW, rowR.getY(), kArrowW, kRowH,
-                    juce::Justification::centred, false);
-
-        // Value text
-        g.setColour (isOn ? effectCol : Theme::Colour::inkGhost);
-        g.drawText (isOn ? "ON" : "OFF",
-                    rowR.getX() + kLabelW + kArrowW, rowR.getY(),
-                    getWidth() - kLabelW - kArrowW * 2, kRowH,
-                    juce::Justification::centred, false);
-
-        // › arrow
-        g.setColour (Theme::Colour::inkMuted);
-        g.drawText ("\xe2\x80\xba",
-                    rowR.getRight() - kArrowW, rowR.getY(), kArrowW, kRowH,
-                    juce::Justification::centred, false);
-
-        juce::ignoreUnused (centerX);
-    }
-    else if (p.type == EffectParamDef::Type::Enum)
-    {
-        const int idx = juce::jlimit (0, p.enumValues.size() - 1,
-                                      static_cast<int> (val + 0.5f));
-        const juce::String enumVal = idx < p.enumValues.size()
-                                     ? p.enumValues[idx] : juce::String (idx);
-
-        // ‹ arrow
-        g.setFont (Theme::Font::micro());
-        g.setColour (Theme::Colour::inkMuted);
-        g.drawText ("\xe2\x80\xb9",
-                    rowR.getX() + kLabelW, rowR.getY(), kArrowW, kRowH,
-                    juce::Justification::centred, false);
-
-        // Value text
-        g.setColour (effectCol);
-        g.drawText (enumVal,
-                    rowR.getX() + kLabelW + kArrowW, rowR.getY(),
-                    getWidth() - kLabelW - kArrowW * 2, kRowH,
-                    juce::Justification::centred, false);
-
-        // › arrow
-        g.setColour (Theme::Colour::inkMuted);
-        g.drawText ("\xe2\x80\xba",
-                    rowR.getRight() - kArrowW, rowR.getY(), kArrowW, kRowH,
-                    juce::Justification::centred, false);
+        g.drawLine ((float) rowR.getX(), (float) rowR.getY(),
+                    (float) rowR.getRight(), (float) rowR.getY(), 1.0f);
     }
 }
 
@@ -364,71 +318,106 @@ void FXNode::paintConfirm (juce::Graphics& g) const
     const int totalW = btnW * 2 + gap;
     const int btnX0 = pa.getX() + (pa.getWidth() - totalW) / 2;
 
-    // YES button
     g.setColour (Theme::Colour::accentWarm);
-    g.fillRoundedRectangle (static_cast<float> (btnX0), static_cast<float> (btnY),
-                            static_cast<float> (btnW), static_cast<float> (btnH),
-                            Theme::Radius::xs);
+    g.fillRoundedRectangle ((float) btnX0, (float) btnY, (float) btnW, (float) btnH, Theme::Radius::xs);
     g.setFont (Theme::Font::micro());
     g.setColour (Theme::Colour::inkDark);
     g.drawText ("YES", btnX0, btnY, btnW, btnH, juce::Justification::centred, false);
 
-    // NO button
     const int btnX1 = btnX0 + btnW + gap;
     g.setColour (Theme::Colour::surface3);
-    g.fillRoundedRectangle (static_cast<float> (btnX1), static_cast<float> (btnY),
-                            static_cast<float> (btnW), static_cast<float> (btnH),
-                            Theme::Radius::xs);
+    g.fillRoundedRectangle ((float) btnX1, (float) btnY, (float) btnW, (float) btnH, Theme::Radius::xs);
     g.setColour (Theme::Colour::surfaceEdge);
-    g.drawRoundedRectangle (static_cast<float> (btnX1), static_cast<float> (btnY),
-                            static_cast<float> (btnW), static_cast<float> (btnH),
-                            Theme::Radius::xs, Theme::Stroke::subtle);
+    g.drawRoundedRectangle ((float) btnX1, (float) btnY, (float) btnW, (float) btnH, Theme::Radius::xs, Theme::Stroke::subtle);
     g.setColour (Theme::Colour::inkGhost);
     g.drawText ("NO", btnX1, btnY, btnW, btnH, juce::Justification::centred, false);
 }
 
+void FXNode::refreshRowControls()
+{
+    auto* d = def();
+    const bool controlsEnabled = (d != nullptr && !m_showConfirm);
+    const int count = d == nullptr ? 0 : juce::jmin (kMaxVisibleRows, d->params.size());
+    const juce::Colour effectCol = d != nullptr ? d->colour : Theme::Colour::accent;
+
+    for (int i = 0; i < kMaxVisibleRows; ++i)
+    {
+        auto& label = m_rowLabels[(size_t) i];
+        auto& valueLabel = m_rowValueLabels[(size_t) i];
+        auto& slider = m_rowSliders[(size_t) i];
+        auto& button = m_rowButtons[(size_t) i];
+        auto& combo = m_rowCombos[(size_t) i];
+
+        const bool rowVisible = controlsEnabled && (i < count);
+        label.setVisible (rowVisible);
+        valueLabel.setVisible (false);
+        slider.setVisible (false);
+        button.setVisible (false);
+        combo.setVisible (false);
+
+        if (!rowVisible)
+            continue;
+
+        const auto& p = d->params.getReference (i);
+        const float value = i < m_data.params.size() ? m_data.params[i] : p.defaultVal;
+        const auto rowR = rowRect (i);
+
+        label.setText (p.name, juce::dontSendNotification);
+        label.setFont (Theme::Font::label());
+        label.setColour (juce::Label::textColourId, Theme::Colour::inkMuted);
+        label.setBounds (rowR.getX() + 2, rowR.getY(), kLabelW - 4, kRowH);
+
+        const auto controlR = juce::Rectangle<int> (rowR.getX() + kLabelW + 2, rowR.getY() + 1,
+                                                    rowR.getWidth() - kLabelW - kValueW - 6, kRowH - 2);
+        const auto valueR = juce::Rectangle<int> (rowR.getRight() - kValueW - 2, rowR.getY(), kValueW, kRowH);
+
+        if (p.type == EffectParamDef::Type::Continuous)
+        {
+            slider.getProperties().set ("tint", effectCol.toString());
+            slider.setRange (p.minVal, p.maxVal, (p.maxVal - p.minVal) / 1000.0f);
+            slider.setValue (value, juce::dontSendNotification);
+            slider.setBounds (controlR);
+            slider.setVisible (true);
+
+            valueLabel.setFont (Theme::Font::label());
+            valueLabel.setColour (juce::Label::textColourId, Theme::Colour::inkLight);
+            valueLabel.setText (formatParamValue (p, value), juce::dontSendNotification);
+            valueLabel.setBounds (valueR);
+            valueLabel.setVisible (true);
+        }
+        else if (p.type == EffectParamDef::Type::Bool)
+        {
+            button.setButtonText (value >= 0.5f ? "ON" : "OFF");
+            button.setToggleState (value >= 0.5f, juce::dontSendNotification);
+            button.setBounds (controlR);
+            button.setVisible (true);
+        }
+        else
+        {
+            combo.clear (juce::dontSendNotification);
+            for (int item = 0; item < p.enumValues.size(); ++item)
+                combo.addItem (p.enumValues[item], item + 1);
+
+            const int idx = juce::jlimit (0, p.enumValues.size() - 1, (int) (value + 0.5f));
+            combo.setSelectedItemIndex (idx, juce::dontSendNotification);
+            combo.setBounds (controlR);
+            combo.setVisible (true);
+        }
+    }
+}
+
 //==============================================================================
-// resized — nothing to layout, children placed via regions in paint
+// resized
 //==============================================================================
 
-void FXNode::resized() {}
+void FXNode::resized()
+{
+    refreshRowControls();
+}
 
 //==============================================================================
 // Mouse
 //==============================================================================
-
-int FXNode::hitTestParam (juce::Point<int> pos) const noexcept
-{
-    auto* d = def();
-    if (!d) return -1;
-    const int count = juce::jmin (3, d->params.size());
-    for (int i = 0; i < count; ++i)
-    {
-        if (rowRect (i).contains (pos) &&
-            d->params[i].type == EffectParamDef::Type::Continuous)
-        {
-            auto tr = trackRect (rowRect (i));
-            // Expand hit area to full row height
-            const auto hitR = juce::Rectangle<int> (tr.getX(), rowRect (i).getY(),
-                                                    tr.getWidth(), kRowH);
-            if (hitR.contains (pos))
-                return i;
-        }
-    }
-    return -1;
-}
-
-int FXNode::hitTestArrow (juce::Point<int> pos, int rowIdx) const noexcept
-{
-    const auto rowR = rowRect (rowIdx);
-    // left arrow
-    if (juce::Rectangle<int> (rowR.getX() + kLabelW, rowR.getY(), kArrowW, kRowH).contains (pos))
-        return -1;
-    // right arrow
-    if (juce::Rectangle<int> (rowR.getRight() - kArrowW, rowR.getY(), kArrowW, kRowH).contains (pos))
-        return +1;
-    return 0;
-}
 
 void FXNode::mouseDown (const juce::MouseEvent& e)
 {
@@ -437,7 +426,6 @@ void FXNode::mouseDown (const juce::MouseEvent& e)
     if (onFocused)
         onFocused (m_nodeIndex);
 
-    // Drag handle
     if (dragHandleRect().contains (pos))
     {
         if (onDragStarted)
@@ -445,17 +433,16 @@ void FXNode::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Bypass
     if (bypassRect().contains (pos))
     {
         m_data.bypassed = !m_data.bypassed;
         if (onBypassToggled)
             onBypassToggled (m_nodeIndex);
+        refreshRowControls();
         repaint();
         return;
     }
 
-    // Remove
     if (removeRect().contains (pos))
     {
         if (onRemoveClicked)
@@ -463,7 +450,6 @@ void FXNode::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Confirm YES / NO
     if (m_showConfirm)
     {
         const auto pa = paramAreaRect();
@@ -473,115 +459,26 @@ void FXNode::mouseDown (const juce::MouseEvent& e)
 
         if (juce::Rectangle<int> (btnX0, btnY, btnW, btnH).contains (pos))
         {
-            // YES — fire remove (parent handles it)
             if (onRemoveClicked)
                 onRemoveClicked (m_nodeIndex);
             return;
         }
         if (juce::Rectangle<int> (btnX0 + btnW + gap, btnY, btnW, btnH).contains (pos))
         {
-            // NO — dismiss confirm
             showRemoveConfirmation (false);
             return;
-        }
-        return;
-    }
-
-    // Continuous param slider
-    auto* d = def();
-    if (!d) return;
-    const int count = juce::jmin (3, d->params.size());
-    for (int i = 0; i < count; ++i)
-    {
-        const auto& p = d->params.getReference (i);
-        if (p.type == EffectParamDef::Type::Continuous)
-        {
-            const auto tr = trackRect (rowRect (i));
-            const auto hitR = juce::Rectangle<int> (tr.getX(), rowRect (i).getY(),
-                                                    tr.getWidth(), kRowH);
-            if (hitR.contains (pos))
-            {
-                m_draggingParam = i;
-                m_dragStartVal  = i < m_data.params.size() ? m_data.params[i] : p.defaultVal;
-                m_dragStartX    = e.x;
-                setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
-                return;
-            }
-        }
-        else // Bool or Enum — handled on mouseUp via arrow hit-test
-        {
         }
     }
 }
 
 void FXNode::mouseDrag (const juce::MouseEvent& e)
 {
-    if (m_draggingParam < 0) return;
-    auto* d = def();
-    if (!d || m_draggingParam >= d->params.size()) return;
-
-    const auto& p  = d->params.getReference (m_draggingParam);
-    const auto  tr = trackRect (rowRect (m_draggingParam));
-    const float delta = static_cast<float> (e.x - m_dragStartX) / static_cast<float> (tr.getWidth());
-    const float newVal = juce::jlimit (p.minVal, p.maxVal,
-                                       m_dragStartVal + delta * (p.maxVal - p.minVal));
-
-    while (m_data.params.size() <= m_draggingParam)
-        m_data.params.add (p.defaultVal);
-    m_data.params.set (m_draggingParam, newVal);
-
-    if (onParamChanged)
-        onParamChanged (m_nodeIndex, m_draggingParam, newVal);
-
-    repaint();
+    juce::ignoreUnused (e);
 }
 
 void FXNode::mouseUp (const juce::MouseEvent& e)
 {
-    if (m_draggingParam >= 0)
-    {
-        m_draggingParam = -1;
-        setMouseCursor (juce::MouseCursor::NormalCursor);
-        return;
-    }
-
-    // Bool / Enum arrow clicks
-    auto* d = def();
-    if (!d) return;
-    const int count = juce::jmin (3, d->params.size());
-    for (int i = 0; i < count; ++i)
-    {
-        const auto& p = d->params.getReference (i);
-        if (p.type == EffectParamDef::Type::Continuous) continue;
-
-        if (rowRect (i).contains (e.getPosition()))
-        {
-            const int arrow = hitTestArrow (e.getPosition(), i);
-            if (arrow == 0) continue;
-
-            while (m_data.params.size() <= i)
-                m_data.params.add (p.defaultVal);
-
-            float cur = m_data.params[i];
-
-            if (p.type == EffectParamDef::Type::Bool)
-            {
-                cur = (cur >= 0.5f) ? 0.0f : 1.0f;
-            }
-            else // Enum
-            {
-                const int numVals = p.enumValues.size();
-                int idx = juce::jlimit (0, numVals - 1, static_cast<int> (cur + 0.5f));
-                idx = (idx + arrow + numVals) % numVals;
-                cur = static_cast<float> (idx);
-            }
-
-            m_data.params.set (i, cur);
-            if (onParamChanged) onParamChanged (m_nodeIndex, i, cur);
-            repaint();
-            return;
-        }
-    }
+    juce::ignoreUnused (e);
 }
 
 void FXNode::mouseMove (const juce::MouseEvent& e)
@@ -605,10 +502,7 @@ void FXNode::mouseExit (const juce::MouseEvent&)
 
 juce::MouseCursor FXNode::getMouseCursor()
 {
-    const auto pos = getMouseXYRelative();
-    if (dragHandleRect().contains (pos))
+    if (dragHandleRect().contains (getMouseXYRelative()))
         return juce::MouseCursor::UpDownResizeCursor;
-    if (hitTestParam (pos) >= 0)
-        return juce::MouseCursor::LeftRightResizeCursor;
     return juce::MouseCursor::NormalCursor;
 }

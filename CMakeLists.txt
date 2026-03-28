@@ -124,6 +124,9 @@ add_library(SharedCode INTERFACE)
 # Enable fast math, C++20 and a few other target defaults
 include(SharedCodeDefaults)
 
+# Expose third-party module headers (e.g. melatonin_inspector) to all consumers
+target_include_directories(SharedCode INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/modules")
+
 
 # Manually list all .h and .cpp files for the plugin
 # If you are like me, you'll use globs for your sanity.

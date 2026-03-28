@@ -2,6 +2,7 @@
 
 #include "../../Theme.h"
 #include "ChainState.h"
+#include <array>
 
 //==============================================================================
 /**
@@ -56,6 +57,8 @@ public:
     juce::MouseCursor getMouseCursor() override;
 
 private:
+    static constexpr int kMaxVisibleRows = 3;
+
     int        m_nodeIndex  { 0 };
     EffectNode m_data;
     bool       m_isDragging { false };
@@ -63,10 +66,11 @@ private:
     bool       m_showConfirm { false };
     bool       m_hoverRemove { false };
 
-    // Param slider drag state
-    int   m_draggingParam  { -1 };
-    float m_dragStartVal   { 0.0f };
-    int   m_dragStartX     { 0 };
+    std::array<juce::Label, kMaxVisibleRows>      m_rowLabels;
+    std::array<juce::Label, kMaxVisibleRows>      m_rowValueLabels;
+    std::array<juce::Slider, kMaxVisibleRows>     m_rowSliders;
+    std::array<juce::TextButton, kMaxVisibleRows> m_rowButtons;
+    std::array<juce::ComboBox, kMaxVisibleRows>   m_rowCombos;
 
     // Regions
     juce::Rectangle<int> headerRect()     const noexcept;
@@ -80,12 +84,7 @@ private:
     void paintHeader  (juce::Graphics&) const;
     void paintParams  (juce::Graphics&) const;
     void paintConfirm (juce::Graphics&) const;
-    void paintRow     (juce::Graphics&, int rowIdx) const;
-
-    juce::Rectangle<int> trackRect (juce::Rectangle<int> rowR) const noexcept;
-
-    int hitTestParam (juce::Point<int> pos) const noexcept;
-    int hitTestArrow (juce::Point<int> pos, int rowIdx) const noexcept; // -1,0,+1
+    void refreshRowControls();
 
     const EffectTypeDef* def() const noexcept
     {

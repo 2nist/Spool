@@ -24,7 +24,8 @@ public:
         full,
         typography,
         spacing,
-        tape
+        tape,
+        controls
     };
 
     explicit ThemePreviewPane (Mode previewMode) : m_mode (previewMode)
@@ -56,6 +57,9 @@ public:
                 break;
             case Mode::tape:
                 drawTapePreview (g, bounds);
+                break;
+            case Mode::controls:
+                drawControlsPreview (g, bounds);
                 break;
             case Mode::full:
             default:
@@ -230,6 +234,167 @@ private:
         ZoneAStyle::drawBadge (g, badgeBounds, badge, accent);
     }
 
+    static void drawControlsPreview (juce::Graphics& g, juce::Rectangle<int> bounds)
+    {
+        const auto& t = ThemeManager::get().theme();
+        ZoneAStyle::drawCard (g, bounds, juce::Colour (Theme::Colour::accent));
+        auto inner = bounds.reduced (8);
+
+        g.setColour (Theme::Colour::inkGhost);
+        g.setFont (Theme::Font::micro());
+        g.drawText ("CONTROLS PREVIEW", inner.removeFromTop (14), juce::Justification::centredLeft, false);
+
+        const float btnR  = juce::jlimit (0.f, 12.f, t.btnCornerRadius);
+        const float sldR  = juce::jlimit (0.f, 12.f, t.sliderCornerRadius);
+        const float sldTk = juce::jlimit (2.f, 16.f, t.sliderTrackThickness);
+        const float sldTh = juce::jlimit (4.f, 20.f, t.sliderThumbSize);
+        const float kRing = juce::jlimit (1.f,  6.f, t.knobRingThickness);
+        const float kCap  = juce::jlimit (0.4f, 0.92f, t.knobCapSize);
+        const float swW   = juce::jlimit (16.f, 48.f, t.switchWidth);
+        const float swH   = juce::jlimit (8.f,  24.f, t.switchHeight);
+        const float swR   = juce::jlimit (0.f,  swH * 0.5f, t.switchCornerRadius);
+        const float swIn  = juce::jlimit (1.f,   4.f, t.switchThumbInset);
+
+        // ── Button row ────────────────────────────────────────────────────────
+        {
+            auto row = inner.removeFromTop (20);
+            inner.removeFromTop (4);
+
+            // Idle button
+            auto b1 = row.removeFromLeft (52);
+            g.setColour (t.controlBg.withMultipliedAlpha (t.btnFillStrength));
+            g.fillRoundedRectangle (b1.toFloat(), btnR);
+            g.setColour (t.surfaceEdge.withAlpha (t.btnBorderStrength));
+            g.drawRoundedRectangle (b1.toFloat(), btnR, 1.0f);
+            g.setColour (t.controlText);
+            g.setFont (Theme::Font::microMedium());
+            g.drawText ("IDLE", b1, juce::Justification::centred, false);
+
+            row.removeFromLeft (4);
+
+            // Active / on button
+            auto b2 = row.removeFromLeft (52);
+            g.setColour (t.accent.withAlpha (t.btnOnFillStrength));
+            g.fillRoundedRectangle (b2.toFloat(), btnR);
+            g.setColour (t.accent.withAlpha (t.btnBorderStrength + 0.25f));
+            g.drawRoundedRectangle (b2.toFloat(), btnR, 1.0f);
+            g.setColour (t.controlTextOn);
+            g.drawText ("ON", b2, juce::Justification::centred, false);
+
+            row.removeFromLeft (4);
+
+            // Disabled button
+            auto b3 = row.removeFromLeft (52);
+            g.setColour (t.controlBg.withMultipliedAlpha (0.4f));
+            g.fillRoundedRectangle (b3.toFloat(), btnR);
+            g.setColour (t.surfaceEdge.withAlpha (0.25f));
+            g.drawRoundedRectangle (b3.toFloat(), btnR, 1.0f);
+            g.setColour (t.controlText.withMultipliedAlpha (0.4f));
+            g.drawText ("OFF", b3, juce::Justification::centred, false);
+        }
+
+        // ── Slider ────────────────────────────────────────────────────────────
+        {
+            const int trackH = juce::roundToInt (sldTk);
+            auto trackArea = inner.removeFromTop (trackH + 8);
+            inner.removeFromTop (4);
+            auto track = trackArea.reduced (0, (trackArea.getHeight() - trackH) / 2);
+            g.setColour (t.controlBg);
+            g.fillRoundedRectangle (track.toFloat(), sldR);
+            auto fill = track.withWidth (track.getWidth() * 3 / 5);
+            g.setColour (t.sliderTrack);
+            g.fillRoundedRectangle (fill.toFloat(), sldR);
+            g.setColour (t.surfaceEdge.withAlpha (0.6f));
+            g.drawRoundedRectangle (track.toFloat(), sldR, 1.0f);
+            // thumb dot
+            const float tx = (float) fill.getRight();
+            const float ty = (float) track.getCentreY();
+            g.setColour (t.sliderThumb);
+            g.fillEllipse (tx - sldTh * 0.5f, ty - sldTh * 0.5f, sldTh, sldTh);
+            g.setColour (t.controlText);
+            g.setFont (Theme::Font::micro());
+            g.drawText ("SLIDER", track.reduced (6, 0), juce::Justification::centredLeft, false);
+        }
+
+        // ── Knob ──────────────────────────────────────────────────────────────
+        {
+            auto knobRow = inner.removeFromTop (36);
+            inner.removeFromTop (4);
+            const float kSize = juce::jlimit (24.f, 36.f, (float) knobRow.getHeight());
+            const float kx = (float) knobRow.getX();
+            const float ky = (float) knobRow.getCentreY();
+            const float kr = kSize * 0.5f;
+            const juce::Point<float> kc { kx + kr, ky };
+
+            // Arc ring
+            const float startAngle = juce::MathConstants<float>::pi * 0.75f;
+            const float endAngle   = juce::MathConstants<float>::pi * 2.25f;
+            const float arcFill    = 0.65f;
+            juce::Path trackArc, fillArc;
+            trackArc.addCentredArc (kc.x, kc.y, kr - kRing * 0.5f, kr - kRing * 0.5f,
+                                    0.f, startAngle, endAngle, true);
+            fillArc.addCentredArc  (kc.x, kc.y, kr - kRing * 0.5f, kr - kRing * 0.5f,
+                                    0.f, startAngle, startAngle + (endAngle - startAngle) * arcFill, true);
+            g.setColour (t.surface3);
+            g.strokePath (trackArc, juce::PathStrokeType (kRing, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.setColour (t.sliderTrack);
+            g.strokePath (fillArc,  juce::PathStrokeType (kRing, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+            // Cap
+            g.setColour (t.surface4);
+            g.fillEllipse (kc.x - kr * kCap, kc.y - kr * kCap, kr * kCap * 2.f, kr * kCap * 2.f);
+            g.setColour (t.surfaceEdge);
+            g.drawEllipse (kc.x - kr * kCap, kc.y - kr * kCap, kr * kCap * 2.f, kr * kCap * 2.f, 1.0f);
+
+            // Pointer dot at arcFill angle
+            const float dotAngle = startAngle + (endAngle - startAngle) * arcFill - juce::MathConstants<float>::halfPi;
+            const float dotR = kr * kCap * 0.55f;
+            const float dotX = kc.x + std::cos (dotAngle) * dotR;
+            const float dotY = kc.y + std::sin (dotAngle) * dotR;
+            const float dotD = t.knobDotSize;
+            g.setColour (t.sliderThumb);
+            g.fillEllipse (dotX - dotD * 0.5f, dotY - dotD * 0.5f, dotD, dotD);
+
+            // Label
+            auto labelArea = knobRow.withLeft (juce::roundToInt (kx + kSize + 8));
+            g.setColour (t.controlText);
+            g.setFont (Theme::Font::micro());
+            g.drawText ("KNOB", labelArea, juce::Justification::centredLeft, false);
+        }
+
+        // ── Switch / toggle ───────────────────────────────────────────────────
+        {
+            auto swRow = inner.removeFromTop (juce::roundToInt (swH) + 6);
+            const float sx = (float) swRow.getX();
+            const float sy = (float) swRow.getCentreY() - swH * 0.5f;
+            const float thumbD = swH - swIn * 2.f;
+
+            // Off state
+            g.setColour (t.controlBg);
+            g.fillRoundedRectangle (sx, sy, swW, swH, swR);
+            g.setColour (t.surfaceEdge.withAlpha (0.7f));
+            g.drawRoundedRectangle (sx, sy, swW, swH, swR, 1.0f);
+            g.setColour (t.inkMuted);
+            g.fillEllipse (sx + swIn, sy + swIn, thumbD, thumbD);
+
+            // On state (offset to the right)
+            const float onX = sx + swW + 10.f;
+            g.setColour (t.accent.withAlpha (0.35f));
+            g.fillRoundedRectangle (onX, sy, swW, swH, swR);
+            g.setColour (t.accent.withAlpha (0.8f));
+            g.drawRoundedRectangle (onX, sy, swW, swH, swR, 1.0f);
+            g.setColour (t.controlTextOn);
+            g.fillEllipse (onX + swW - swIn - thumbD, sy + swIn, thumbD, thumbD);
+
+            // Labels
+            g.setColour (t.controlText);
+            g.setFont (Theme::Font::micro());
+            const float lblX = onX + swW + 10.f;
+            g.drawText ("SWITCH  off / on", juce::Rectangle<float> (lblX, sy, 90.f, swH),
+                        juce::Justification::centredLeft, false);
+        }
+    }
+
     static void drawControls (juce::Graphics& g, juce::Rectangle<int> area, juce::Colour accent)
     {
         const auto& theme = ThemeManager::get().theme();
@@ -305,13 +470,15 @@ ThemeEditorPanel::ThemeEditorPanel()
         LucideIcons::typography, // kType
         LucideIcons::spacing,    // kSpace
         LucideIcons::accent,     // kUi
+        LucideIcons::controls,   // kControls
+        LucideIcons::spacing,    // kStyle
         LucideIcons::zones,      // kPreview
         LucideIcons::tape,       // kTape
     };
     static const char* kTooltips[kTabCount] = {
         "Surface Colors", "Ink & Text", "Accent Colors", "Zone Colors",
-        "Signal Colors",  "Typography", "Spacing", "UI Chrome",
-        "Zone A Preview", "Tape Colors",
+        "Signal Colors",  "Typography", "Spacing",       "UI Chrome",
+        "Controls",       "Style (Radius + Stroke)", "Zone A Preview", "Tape Colors",
     };
     for (int i = 0; i < kTabCount; ++i)
     {
@@ -435,9 +602,11 @@ const char* ThemeEditorPanel::tabName (Tab t)
         case kSignal:  return "SIGNAL";
         case kType:    return "TYPE";
         case kSpace:   return "SPACE";
-        case kUi:      return "UI";
-        case kPreview: return "PREVIEW";
-        case kTape:    return "TAPE";
+        case kUi:       return "UI";
+        case kControls: return "CTRL";
+        case kStyle:    return "STYLE";
+        case kPreview:  return "PREVIEW";
+        case kTape:     return "TAPE";
         default:       return "?";
     }
 }
@@ -506,9 +675,11 @@ void ThemeEditorPanel::buildAllTabs()
             case kSignal:  buildSignalTab  (page.container); break;
             case kType:    buildTypeTab    (page.container); break;
             case kSpace:   buildSpaceTab   (page.container); break;
-            case kUi:      buildUiTab      (page.container); break;
-            case kPreview: buildPreviewTab (page.container); break;
-            case kTape:    buildTapeTab    (page.container); break;
+            case kUi:       buildUiTab       (page.container); break;
+            case kControls: buildControlsTab (page.container); break;
+            case kStyle:    buildStyleTab    (page.container); break;
+            case kPreview:  buildPreviewTab  (page.container); break;
+            case kTape:     buildTapeTab     (page.container); break;
             default: break;
         }
 
@@ -653,6 +824,48 @@ void ThemeEditorPanel::buildUiTab (juce::Component& c)
     addFR (c, fr, "Compact Gap",       &ThemeData::zoneACompactGap,           3.f, 12.f, 1.f);
 }
 
+void ThemeEditorPanel::buildControlsTab (juce::Component& c)
+{
+    auto& page = *m_pages[kControls];
+    page.customContent = std::make_unique<ThemePreviewPane> (ThemePreviewPane::Mode::controls);
+    page.contentHeight = 180;
+    c.addAndMakeVisible (*page.customContent);
+
+    auto& fr = m_pages[kControls]->floatRows;
+
+    // Button
+    addFR (c, fr, "Btn Corner R",    &ThemeData::btnCornerRadius,   0.f,  12.f, 0.5f);
+    addFR (c, fr, "Btn Border",      &ThemeData::btnBorderStrength, 0.f,   1.f, 0.05f);
+    addFR (c, fr, "Btn Fill",        &ThemeData::btnFillStrength,   0.f,   1.f, 0.05f);
+    addFR (c, fr, "Btn On Fill",     &ThemeData::btnOnFillStrength, 0.f,   1.f, 0.05f);
+
+    // Slider
+    addFR (c, fr, "Slider Track H",  &ThemeData::sliderTrackThickness, 2.f, 16.f, 0.5f);
+    addFR (c, fr, "Slider Corner R", &ThemeData::sliderCornerRadius,   0.f, 12.f, 0.5f);
+
+    // Knob
+    addFR (c, fr, "Knob Ring W",     &ThemeData::knobRingThickness, 1.f,  6.f, 0.25f);
+    addFR (c, fr, "Knob Dot D",      &ThemeData::knobDotSize,       1.5f, 8.f, 0.25f);
+}
+
+void ThemeEditorPanel::buildStyleTab (juce::Component& c)
+{
+    auto& fr = m_pages[kStyle]->floatRows;
+
+    // Radius family
+    addFR (c, fr, "Radius XS  (steps/badges)",   &ThemeData::radiusXs,   0.f, 8.f,  0.5f);
+    addFR (c, fr, "Radius Chip (buttons/labels)", &ThemeData::radiusChip, 0.f, 8.f,  0.5f);
+    addFR (c, fr, "Radius SM  (panels/cards)",    &ThemeData::radiusSm,   0.f, 12.f, 0.5f);
+    addFR (c, fr, "Radius MD  (modules/zones)",   &ThemeData::radiusMd,   0.f, 16.f, 0.5f);
+    addFR (c, fr, "Radius LG  (overlays)",        &ThemeData::radiusLg,   0.f, 20.f, 0.5f);
+
+    // Stroke family
+    addFR (c, fr, "Stroke Subtle (dividers)",     &ThemeData::strokeSubtle, 0.f, 2.f, 0.25f);
+    addFR (c, fr, "Stroke Normal (borders)",      &ThemeData::strokeNormal, 0.f, 3.f, 0.25f);
+    addFR (c, fr, "Stroke Accent (active)",       &ThemeData::strokeAccent, 0.f, 4.f, 0.25f);
+    addFR (c, fr, "Stroke Thick  (emphasis)",     &ThemeData::strokeThick,  0.f, 4.f, 0.25f);
+}
+
 void ThemeEditorPanel::buildPreviewTab (juce::Component& c)
 {
     auto& page = *m_pages[kPreview];
@@ -710,51 +923,94 @@ void ThemeEditorPanel::onPresetSelected (int comboId)
 
     const int idx = comboId - 1;
     if (idx >= 0 && idx < all.size())
+    {
         ThemeManager::get().applyTheme (all[idx]);
+        AppPreferences::get().setThemePresetName (all[idx].presetName);
+    }
 }
 
 void ThemeEditorPanel::onExportClicked()
 {
-    // Generate a compilable Theme.h snippet with current values
     const auto& t  = ThemeManager::get().theme();
-    juce::String s = "// Generated by SPOOL Theme Editor — " + t.presetName + "\n";
-    s += "// Paste into source/Theme.h namespace Colour block\n\n";
+    const auto hex = [] (juce::Colour c) { return "0xFF" + c.toString().toUpperCase().substring (2); };
+    const auto flt = [] (float v) { return juce::String (v, 4) + "f"; };
 
-    auto hex = [] (juce::Colour c) { return "0xFF" + c.toString().toUpperCase().substring (2); };
-    s += "// Surfaces\n";
-    s += "inline const juce::Colour surface0    { " + hex (t.surface0)    + " };\n";
-    s += "inline const juce::Colour surface1    { " + hex (t.surface1)    + " };\n";
-    s += "inline const juce::Colour surface2    { " + hex (t.surface2)    + " };\n";
-    s += "inline const juce::Colour surface3    { " + hex (t.surface3)    + " };\n";
-    s += "inline const juce::Colour surface4    { " + hex (t.surface4)    + " };\n";
-    s += "inline const juce::Colour surfaceEdge { " + hex (t.surfaceEdge) + " };\n\n";
-    s += "// Ink\n";
-    s += "inline const juce::Colour inkLight    { " + hex (t.inkLight)    + " };\n";
-    s += "inline const juce::Colour inkMid      { " + hex (t.inkMid)      + " };\n";
-    s += "inline const juce::Colour inkMuted    { " + hex (t.inkMuted)    + " };\n";
-    s += "inline const juce::Colour inkGhost    { " + hex (t.inkGhost)    + " };\n";
-    s += "inline const juce::Colour inkDark     { " + hex (t.inkDark)     + " };\n\n";
-    s += "// Accent\n";
-    s += "inline const juce::Colour accent      { " + hex (t.accent)      + " };\n";
-    s += "inline const juce::Colour accentWarm  { " + hex (t.accentWarm)  + " };\n";
-    s += "inline const juce::Colour accentDim   { " + hex (t.accentDim)   + " };\n\n";
-    s += "// Zones\n";
-    s += "inline const juce::Colour zoneA       { " + hex (t.zoneA)    + " };\n";
-    s += "inline const juce::Colour zoneB       { " + hex (t.zoneB)    + " };\n";
-    s += "inline const juce::Colour zoneC       { " + hex (t.zoneC)    + " };\n";
-    s += "inline const juce::Colour zoneD       { " + hex (t.zoneD)    + " };\n";
-    s += "inline const juce::Colour zoneMenu    { " + hex (t.zoneMenu) + " };\n";
-    s += "// Zone backgrounds\n";
-    s += "inline const juce::Colour zoneBgA     { " + hex (t.zoneBgA)  + " };\n";
-    s += "inline const juce::Colour zoneBgB     { " + hex (t.zoneBgB)  + " };\n";
-    s += "inline const juce::Colour zoneBgC     { " + hex (t.zoneBgC)  + " };\n";
-    s += "inline const juce::Colour zoneBgD     { " + hex (t.zoneBgD)  + " };\n";
+    // ── 1. Save full .spool-theme file to user theme directory ────────────────
+    ThemeManager::get().saveToFile (ThemeManager::get().getUserThemeDir()
+                                        .getChildFile (t.presetName + ".spool-theme"));
+
+    // ── 2. Build a complete C++ header snippet for clipboard ──────────────────
+    juce::String s;
+    s << "// Generated by SPOOL Theme Editor — " << t.presetName << "\n"
+      << "// Preset file also saved to: " << ThemeManager::get().getUserThemeDir().getFullPathName() << "\n"
+      << "// Paste ThemeData defaults into source/theme/ThemeData.h to bake this theme at compile time.\n\n";
+
+    s << "// ── SURFACES\n"
+      << "juce::Colour surface0     { " << hex (t.surface0)    << " };\n"
+      << "juce::Colour surface1     { " << hex (t.surface1)    << " };\n"
+      << "juce::Colour surface2     { " << hex (t.surface2)    << " };\n"
+      << "juce::Colour surface3     { " << hex (t.surface3)    << " };\n"
+      << "juce::Colour surface4     { " << hex (t.surface4)    << " };\n"
+      << "juce::Colour surfaceEdge  { " << hex (t.surfaceEdge) << " };\n\n";
+
+    s << "// ── INK\n"
+      << "juce::Colour inkLight     { " << hex (t.inkLight)  << " };\n"
+      << "juce::Colour inkMid       { " << hex (t.inkMid)    << " };\n"
+      << "juce::Colour inkMuted     { " << hex (t.inkMuted)  << " };\n"
+      << "juce::Colour inkGhost     { " << hex (t.inkGhost)  << " };\n"
+      << "juce::Colour inkDark      { " << hex (t.inkDark)   << " };\n\n";
+
+    s << "// ── ACCENT\n"
+      << "juce::Colour accent       { " << hex (t.accent)     << " };\n"
+      << "juce::Colour accentWarm   { " << hex (t.accentWarm) << " };\n"
+      << "juce::Colour accentDim    { " << hex (t.accentDim)  << " };\n\n";
+
+    s << "// ── ZONES\n"
+      << "juce::Colour zoneA        { " << hex (t.zoneA)    << " };\n"
+      << "juce::Colour zoneB        { " << hex (t.zoneB)    << " };\n"
+      << "juce::Colour zoneC        { " << hex (t.zoneC)    << " };\n"
+      << "juce::Colour zoneD        { " << hex (t.zoneD)    << " };\n"
+      << "juce::Colour zoneMenu     { " << hex (t.zoneMenu) << " };\n"
+      << "juce::Colour zoneBgA      { " << hex (t.zoneBgA)  << " };\n"
+      << "juce::Colour zoneBgB      { " << hex (t.zoneBgB)  << " };\n"
+      << "juce::Colour zoneBgC      { " << hex (t.zoneBgC)  << " };\n"
+      << "juce::Colour zoneBgD      { " << hex (t.zoneBgD)  << " };\n\n";
+
+    s << "// ── UI CHROME\n"
+      << "juce::Colour sliderTrack  { " << hex (t.sliderTrack)  << " };\n"
+      << "juce::Colour sliderThumb  { " << hex (t.sliderThumb)  << " };\n"
+      << "juce::Colour controlBg    { " << hex (t.controlBg)    << " };\n"
+      << "juce::Colour controlOnBg  { " << hex (t.controlOnBg)  << " };\n\n";
+
+    s << "// ── CONTROLS — button\n"
+      << "float btnCornerRadius     { " << flt (t.btnCornerRadius)   << " };\n"
+      << "float btnBorderStrength   { " << flt (t.btnBorderStrength) << " };\n"
+      << "float btnFillStrength     { " << flt (t.btnFillStrength)   << " };\n"
+      << "float btnOnFillStrength   { " << flt (t.btnOnFillStrength) << " };\n\n";
+
+    s << "// ── CONTROLS — slider\n"
+      << "float sliderTrackThickness{ " << flt (t.sliderTrackThickness) << " };\n"
+      << "float sliderCornerRadius  { " << flt (t.sliderCornerRadius)   << " };\n"
+      << "float sliderThumbSize     { " << flt (t.sliderThumbSize)      << " };\n\n";
+
+    s << "// ── CONTROLS — knob\n"
+      << "float knobRingThickness   { " << flt (t.knobRingThickness) << " };\n"
+      << "float knobCapSize         { " << flt (t.knobCapSize)       << " };\n"
+      << "float knobDotSize         { " << flt (t.knobDotSize)       << " };\n\n";
+
+    s << "// ── CONTROLS — switch\n"
+      << "float switchWidth         { " << flt (t.switchWidth)        << " };\n"
+      << "float switchHeight        { " << flt (t.switchHeight)       << " };\n"
+      << "float switchCornerRadius  { " << flt (t.switchCornerRadius) << " };\n"
+      << "float switchThumbInset    { " << flt (t.switchThumbInset)   << " };\n";
 
     juce::SystemClipboard::copyTextToClipboard (s);
+
     juce::AlertWindow::showMessageBoxAsync (
         juce::MessageBoxIconType::InfoIcon,
         "Theme Exported",
-        "Colour values copied to clipboard.\n\nPaste into source/Theme.h to lock the theme at compile time.",
+        "Full preset saved to:\n" + ThemeManager::get().getUserThemeDir().getFullPathName()
+            + "\n\nC++ defaults (all fields incl. controls) copied to clipboard.",
         "OK");
 }
 

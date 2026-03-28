@@ -1,10 +1,10 @@
 #include "TransportSettingsPanel.h"
+#include "ZoneAControlStyle.h"
 
 //==============================================================================
 TransportSettingsPanel::TransportSettingsPanel()
 {
-    m_metronomeSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    m_metronomeSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    ZoneAControlStyle::initBarSlider (m_metronomeSlider, "VOL");
     m_metronomeSlider.setRange (0.0, 1.0, 0.01);
     m_metronomeSlider.setValue (m_metronomeVolume);
     m_metronomeSlider.onValueChange = [this]

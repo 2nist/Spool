@@ -11,13 +11,13 @@ void drawCompactShellSlider (juce::Graphics& g,
                              juce::Colour accent)
 {
     g.setColour (Theme::Colour::surface2);
-    g.fillRoundedRectangle (bounds, 3.0f);
+    g.fillRoundedRectangle (bounds, Theme::Radius::chip);
     g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.65f));
-    g.drawRoundedRectangle (bounds, 3.0f, 0.8f);
+    g.drawRoundedRectangle (bounds, Theme::Radius::chip, Theme::Stroke::subtle);
 
     auto track = bounds.reduced (18.0f, 3.0f);
     g.setColour (Theme::Colour::surface0);
-    g.fillRoundedRectangle (track, 2.5f);
+    g.fillRoundedRectangle (track, Theme::Radius::chip);
 
     if (bipolar)
     {
@@ -28,7 +28,7 @@ void drawCompactShellSlider (juce::Graphics& g,
         if (fillW > 0.0f)
         {
             g.setColour (accent.withAlpha (0.72f));
-            g.fillRoundedRectangle ({ fillX, track.getY(), fillW, track.getHeight() }, 2.5f);
+            g.fillRoundedRectangle ({ fillX, track.getY(), fillW, track.getHeight() }, Theme::Radius::chip);
         }
 
         g.setColour (accent.withAlpha (0.35f));
@@ -40,7 +40,7 @@ void drawCompactShellSlider (juce::Graphics& g,
         if (fillW > 0.0f)
         {
             g.setColour (accent.withAlpha (0.72f));
-            g.fillRoundedRectangle ({ track.getX(), track.getY(), fillW, track.getHeight() }, 2.5f);
+            g.fillRoundedRectangle ({ track.getX(), track.getY(), fillW, track.getHeight() }, Theme::Radius::chip);
         }
     }
 

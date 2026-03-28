@@ -5,6 +5,7 @@
 #include "ColourRow.h"
 #include "FloatRow.h"
 #include "../Theme.h"
+#include "../state/AppPreferences.h"
 #include "IconTabButton.h"
 
 //==============================================================================
@@ -41,7 +42,7 @@ private:
 
     //==========================================================================
     // Tab identifiers
-    enum Tab { kSurface, kInk, kAccent, kZones, kSignal, kType, kSpace, kUi, kPreview, kTape, kTabCount };
+    enum Tab { kSurface, kInk, kAccent, kZones, kSignal, kType, kSpace, kUi, kControls, kStyle, kPreview, kTape, kTabCount };
     static const char* tabName (Tab t);
 
     void buildAllTabs();
@@ -53,6 +54,8 @@ private:
     void buildTypeTab     (juce::Component& container);
     void buildSpaceTab    (juce::Component& container);
     void buildUiTab       (juce::Component& container);
+    void buildControlsTab (juce::Component& container);
+    void buildStyleTab    (juce::Component& container);
     void buildPreviewTab  (juce::Component& container);
     void buildTapeTab     (juce::Component& container);
     void relayoutPage     (TabPage& page);

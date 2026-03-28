@@ -88,6 +88,25 @@ private:
     forwarded so call sites like Theme::Colour::inkLight.withAlpha(0.5f) keep
     working unchanged.
 */
+/**
+    LiveFloat — a transparent proxy for a float field in ThemeData.
+
+    Implicitly converts to float by reading the current runtime value from
+    ThemeManager on every access. Drop-in replacement for constexpr float
+    constants — all existing callsites that pass Theme::Radius::sm or
+    Theme::Stroke::normal to drawing functions work without modification.
+*/
+struct LiveFloat
+{
+    float (ThemeData::* ptr) { nullptr };
+
+    operator float() const
+    {
+        if (ptr == nullptr) return 0.f;
+        return ThemeManager::get().theme().*ptr;
+    }
+};
+
 struct LiveColour
 {
     juce::Colour (ThemeData::* ptr) { nullptr };
@@ -242,14 +261,13 @@ namespace Semantic
 
 namespace Space
 {
-    inline constexpr float base { 4.0f };   // base unit
-
-    inline constexpr float xs  { base * 1 };   //  4px — tight internal gaps
-    inline constexpr float sm  { base * 2 };   //  8px — component padding
-    inline constexpr float md  { base * 3 };   // 12px — inner section padding
-    inline constexpr float lg  { base * 4 };   // 16px — between components
-    inline constexpr float xl  { base * 5 };   // 20px — zone internal padding
-    inline constexpr float xxl { base * 6 };   // 24px — between zones/sections
+    // Spacing scale — live, editable from Theme Editor (SPACE tab)
+    inline LiveFloat xs  { &ThemeData::spaceXs  };   //  4px base — tight internal gaps
+    inline LiveFloat sm  { &ThemeData::spaceSm  };   //  8px — component padding
+    inline LiveFloat md  { &ThemeData::spaceMd  };   // 12px — inner section padding
+    inline LiveFloat lg  { &ThemeData::spaceLg  };   // 16px — between components
+    inline LiveFloat xl  { &ThemeData::spaceXl  };   // 20px — zone internal padding
+    inline LiveFloat xxl { &ThemeData::spaceXxl };   // 24px — between zones/sections
 
     // Specific layout values
     inline constexpr float menuBarHeight    { 28.0f };   // top menu bar — always 28px
@@ -281,30 +299,31 @@ namespace Space
 
 namespace Radius
 {
+    // Structural constants — never need to be runtime-editable
     inline constexpr float none   { 0.0f };    // hard edge — dividers, menu bar
-    inline constexpr float xs     { 2.0f };    // buttons, step pads, chips, badges
-    inline constexpr float sm     { 4.0f };    // panels, cards, FX nodes
-    inline constexpr float md     { 6.0f };    // module slots, zone panels
-    inline constexpr float lg     { 10.0f };   // large panels, palette overlays
     inline constexpr float pill   { 20.0f };   // status tags, signal type badges
     inline constexpr float circle { 999.0f };  // knobs, port dots, link pip
+
+    // Live — editable from Theme Editor (STYLE tab)
+    inline LiveFloat xs   { &ThemeData::radiusXs   };  // step pads, badges, tiny elements
+    inline LiveFloat chip { &ThemeData::radiusChip  };  // compact buttons, labels, tracks
+    inline LiveFloat sm   { &ThemeData::radiusSm   };  // panels, cards, FX nodes
+    inline LiveFloat md   { &ThemeData::radiusMd   };  // module slots, zone panels
+    inline LiveFloat lg   { &ThemeData::radiusLg   };  // large panels, overlays
 
 } // namespace Radius
 
 //==============================================================================
 // STROKE / BORDER WEIGHTS
-// Three weights cover all cases.
-// subtle — structural dividers, inactive borders
-// normal — panels, cards, inactive module slots
-// accent — selected state, active connections, zone stripes
 //==============================================================================
 
 namespace Stroke
 {
-    inline constexpr float subtle { 0.5f };   // dividers, inactive, ghost borders
-    inline constexpr float normal { 1.0f };   // panels, cards, default borders
-    inline constexpr float accent { 1.5f };   // selected, active, focused states
-    inline constexpr float thick  { 2.0f };   // pin mode indicator, error states
+    // Live — editable from Theme Editor (STYLE tab)
+    inline LiveFloat subtle { &ThemeData::strokeSubtle };  // dividers, inactive, ghost borders
+    inline LiveFloat normal { &ThemeData::strokeNormal };  // panels, cards, default borders
+    inline LiveFloat accent { &ThemeData::strokeAccent };  // selected, active, focused states
+    inline LiveFloat thick  { &ThemeData::strokeThick  };  // pin mode indicator, error states
 
 } // namespace Stroke
 

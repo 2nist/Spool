@@ -1,5 +1,33 @@
 #include "ModuleSlot.h"
 
+namespace
+{
+struct ModuleLayoutProfile
+{
+    int topTextRows = 0;                    // number of compact rows reserved for status text
+    bool showCompactControls = true;        // show slider rows in module face
+    const char* topStatusText = "";         // optional first-row status text
+    bool emphasizeTopStatus = false;        // heading style vs micro style
+    bool showOpenEditorLink = false;        // draw/use "OPEN EDITOR ↗" hotspot
+    int openEditorHotZoneHeight = 12;       // clickable area at bottom of face
+};
+
+ModuleLayoutProfile layoutProfileForType (ModuleSlot::ModuleType type)
+{
+    switch (type)
+    {
+        case ModuleSlot::ModuleType::Sampler:
+            return { 1, true, "no sample loaded", false, false, 12 };
+        case ModuleSlot::ModuleType::Vst3:
+            return { 1, true, "\xE2\x80\x94 empty \xE2\x80\x94", true, true, 12 };
+        case ModuleSlot::ModuleType::DrumMachine:
+            return { 0, false, "", false, false, 12 };
+        default:
+            return { 0, true, "", false, false, 12 };
+    }
+}
+}
+
 //==============================================================================
 // Construction
 //==============================================================================
@@ -7,9 +35,45 @@
 ModuleSlot::ModuleSlot (int index)
     : m_index (index)
 {
+    for (int i = 0; i < kCompactRows; ++i)
+    {
+        auto& slider = m_compactSliders[(size_t) i];
+        slider.setSliderStyle (juce::Slider::LinearHorizontal);
+        slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        slider.setRange (0.0, 1.0, 0.001);
+        slider.setScrollWheelEnabled (false);
+        slider.setPopupDisplayEnabled (true, true, this);
+        slider.onValueChange = [this, i]
+        {
+            const int paramIdx = m_compactParamIndex[(size_t) i];
+            if (paramIdx < 0 || paramIdx >= m_allParams.size())
+                return;
+
+            auto& p = m_allParams.getReference (paramIdx);
+            p.value = (float) m_compactSliders[(size_t) i].getValue();
+            m_compactValues[(size_t) i].setText (juce::String (p.value, 2), juce::dontSendNotification);
+
+            m_inlineEditor.setParams (m_allParams, getSignalColour(),
+                                      getModuleTypeName(), m_inPorts, m_outPorts);
+        };
+        addAndMakeVisible (slider);
+
+        auto& label = m_compactLabels[(size_t) i];
+        label.setJustificationType (juce::Justification::centredLeft);
+        label.setInterceptsMouseClicks (false, false);
+        addAndMakeVisible (label);
+
+        auto& value = m_compactValues[(size_t) i];
+        value.setJustificationType (juce::Justification::centredRight);
+        value.setInterceptsMouseClicks (false, false);
+        addAndMakeVisible (value);
+    }
+
     // InlineEditor is added LAST so it paints above everything else
     addAndMakeVisible (m_inlineEditor);
     m_inlineEditor.setVisible (false);
+
+    refreshCompactControls();
 }
 
 //==============================================================================
@@ -34,6 +98,7 @@ void ModuleSlot::setModuleType (ModuleType type)
     m_inlineEditor.setParams (m_allParams, getSignalColour(),
                                getModuleTypeName(), m_inPorts, m_outPorts);
     m_inlineEditor.setVisible (false);  // never auto-show in group layout
+    refreshCompactControls();
     resized();
     repaint();
 }
@@ -60,6 +125,7 @@ void ModuleSlot::setGroupColor (juce::Colour c)
 void ModuleSlot::setMuted (bool muted)
 {
     m_muted = muted;
+    refreshCompactControls();
     repaint();
 }
 
@@ -187,6 +253,7 @@ juce::Rectangle<int> ModuleSlot::regionPort() const noexcept
 void ModuleSlot::resized()
 {
     m_inlineEditor.setBounds (0, kBaseH, getWidth(), kEditorH);
+    refreshCompactControls();
 }
 
 //==============================================================================
@@ -323,51 +390,39 @@ void ModuleSlot::paintFaceLoaded (juce::Graphics& g) const
 {
     const float alpha = m_muted ? Theme::Alpha::disabled : 1.0f;
     const auto  faceR = regionFace();
+    const auto  profile = layoutProfileForType (m_type);
     g.setColour (Theme::Colour::surface3.withAlpha (alpha));
     g.fillRect  (faceR);
 
-    // Special first-row text display for SAMPLER and VST3
-    int firstParamRow = 0;
-    if (m_type == ModuleType::Sampler)
+    if (profile.topTextRows > 0 && juce::String (profile.topStatusText).isNotEmpty())
     {
         const auto textRowR = juce::Rectangle<int> (
             faceR.getX() + static_cast<int> (Theme::Space::xs),
             faceR.getY() + kPadV,
             faceR.getWidth() - static_cast<int> (Theme::Space::xs) * 2,
             kRowH);
-        g.setFont   (Theme::Font::micro());
-        g.setColour (Theme::Colour::inkMuted.withAlpha (alpha));
-        g.drawText  ("no sample loaded", textRowR, juce::Justification::centredLeft, true);
-        firstParamRow = 1;  // skip slot 0 in allParams for compact display
-    }
-    else if (m_type == ModuleType::Vst3)
-    {
-        const auto textRowR = juce::Rectangle<int> (
-            faceR.getX() + static_cast<int> (Theme::Space::xs),
-            faceR.getY() + kPadV,
-            faceR.getWidth() - static_cast<int> (Theme::Space::xs) * 2,
-            kRowH);
-        g.setFont   (Theme::Font::label());
-        g.setColour (Theme::Colour::inkLight.withAlpha (alpha));
-        g.drawText  ("\xe2\x80\x94 empty \xe2\x80\x94", textRowR, juce::Justification::centredLeft, true);
+        g.setFont   (profile.emphasizeTopStatus ? Theme::Font::label() : Theme::Font::micro());
+        g.setColour ((profile.emphasizeTopStatus ? Theme::Colour::inkLight
+                                                 : Theme::Colour::inkMuted).withAlpha (alpha));
+        g.drawText  (profile.topStatusText, textRowR, juce::Justification::centredLeft, true);
 
-        // "OPEN EDITOR ↗" bottom right of face
+        // Optional "OPEN EDITOR ↗" link region for plugin-backed modules
+        if (profile.showOpenEditorLink)
+        {
+            g.setFont   (Theme::Font::micro());
+            g.setColour (Theme::Colour::inkGhost.withAlpha (alpha));
+            g.drawText  ("OPEN EDITOR \xE2\x86\x97",
+                         faceR.withTrimmedRight (static_cast<int> (Theme::Space::xs)),
+                         juce::Justification::bottomRight, false);
+        }
+    }
+    else if (profile.showOpenEditorLink)
+    {
         g.setFont   (Theme::Font::micro());
         g.setColour (Theme::Colour::inkGhost.withAlpha (alpha));
-        g.drawText  ("OPEN EDITOR \xe2\x86\x97",
+        g.drawText  ("OPEN EDITOR \xE2\x86\x97",
                      faceR.withTrimmedRight (static_cast<int> (Theme::Space::xs)),
                      juce::Justification::bottomRight, false);
-        firstParamRow = 1;
-    }
-
-    // Compact param rows (up to 3 rows, starting at firstParamRow)
-    const int rows = juce::jmin (m_allParams.size() - firstParamRow, 3);
-    for (int i = 0; i < rows; ++i)
-    {
-        const int absIdx = firstParamRow + i;
-        const int rowY   = faceR.getY() + kPadV + (firstParamRow > 0 ? kRowH : 0) + i * kRowH;
-        const auto rowR  = juce::Rectangle<int> (faceR.getX(), rowY, faceR.getWidth(), kRowH);
-        paintCompactRow (g, rowR, m_allParams[absIdx], absIdx);
     }
 }
 
@@ -421,54 +476,59 @@ void ModuleSlot::paintFaceDrumMachine (juce::Graphics& g) const
     }
 }
 
-juce::Rectangle<int> ModuleSlot::compactSliderTrack (juce::Rectangle<int> rowR) const noexcept
+void ModuleSlot::refreshCompactControls()
 {
+    const auto profile = layoutProfileForType (m_type);
+    const bool canShow = !isEmpty() && profile.showCompactControls;
+    const int firstParam = profile.topTextRows;
+    const int rows = canShow ? juce::jmin (m_allParams.size() - firstParam, kCompactRows) : 0;
+    const auto faceR = regionFace();
     const int pad = static_cast<int> (Theme::Space::xs);
-    return { rowR.getX() + kLabelW + pad,
-             rowR.getCentreY() - 1,
-             rowR.getWidth() - kLabelW - kValueW - pad * 2,
-             2 };
-}
-
-void ModuleSlot::paintCompactRow (juce::Graphics& g, juce::Rectangle<int> rowR,
-                                   const InlineEditor::Param& p, int idx) const
-{
+    const auto tint = getSignalColour();
     const float alpha = m_muted ? Theme::Alpha::disabled : 1.0f;
-    const int   pad   = static_cast<int> (Theme::Space::xs);
-    const auto  col   = getSignalColour();
-    const auto  tk    = compactSliderTrack (rowR);
 
-    // Label
-    g.setFont   (Theme::Font::micro());
-    g.setColour (Theme::Colour::inkMid.withAlpha (alpha));
-    g.drawText  (p.label,
-                 juce::Rectangle<int> (rowR.getX() + pad, rowR.getY(), kLabelW, rowR.getHeight()),
-                 juce::Justification::centredLeft, false);
-
-    // Track
-    g.setColour (Theme::Colour::surface0.withAlpha (alpha));
-    g.fillRect  (tk);
-    const float t     = (p.max > p.min) ? (p.value - p.min) / (p.max - p.min) : 0.0f;
-    const int   fillW = static_cast<int> (t * static_cast<float> (tk.getWidth()));
-    if (fillW > 0)
+    for (int i = 0; i < kCompactRows; ++i)
     {
-        g.setColour (col.withAlpha (alpha));
-        g.fillRect  (tk.withWidth (fillW));
+        auto& slider = m_compactSliders[(size_t) i];
+        auto& label  = m_compactLabels[(size_t) i];
+        auto& value  = m_compactValues[(size_t) i];
+
+        if (i >= rows)
+        {
+            m_compactParamIndex[(size_t) i] = -1;
+            slider.setVisible (false);
+            label.setVisible (false);
+            value.setVisible (false);
+            continue;
+        }
+
+        const int paramIdx = firstParam + i;
+        m_compactParamIndex[(size_t) i] = paramIdx;
+        const auto& p = m_allParams[paramIdx];
+
+        const int rowY = faceR.getY() + kPadV + (firstParam > 0 ? kRowH : 0) + i * kRowH;
+        const auto rowR = juce::Rectangle<int> (faceR.getX(), rowY, faceR.getWidth(), kRowH);
+
+        label.setText (p.label, juce::dontSendNotification);
+        label.setFont (Theme::Font::micro());
+        label.setColour (juce::Label::textColourId, Theme::Colour::inkMid.withAlpha (alpha));
+        label.setBounds (rowR.getX() + pad, rowR.getY(), kLabelW, rowR.getHeight());
+        label.setVisible (true);
+
+        slider.getProperties().set ("tint", tint.toString());
+        slider.setRange (p.min, p.max, (p.max - p.min) / 1000.0f);
+        slider.setValue (p.value, juce::dontSendNotification);
+        slider.setAlpha (alpha);
+        slider.setBounds (rowR.getX() + kLabelW + pad, rowR.getY() + 1,
+                          rowR.getWidth() - kLabelW - kValueW - pad * 2, rowR.getHeight() - 2);
+        slider.setVisible (true);
+
+        value.setText (juce::String (p.value, 2), juce::dontSendNotification);
+        value.setFont (Theme::Font::value());
+        value.setColour (juce::Label::textColourId, Theme::Colour::inkLight.withAlpha (alpha));
+        value.setBounds (rowR.getRight() - kValueW - pad, rowR.getY(), kValueW, rowR.getHeight());
+        value.setVisible (true);
     }
-
-    // Thumb
-    const float thumbCx = static_cast<float> (tk.getX() + fillW);
-    const float thumbY  = static_cast<float> (rowR.getCentreY()) - kThumbD * 0.5f;
-    g.setColour ((m_draggingCompactParam == idx ? col.brighter (0.3f) : col).withAlpha (alpha));
-    g.fillEllipse (thumbCx - kThumbD * 0.5f, thumbY, kThumbD, kThumbD);
-
-    // Value text
-    g.setFont   (Theme::Font::value());
-    g.setColour (Theme::Colour::inkLight.withAlpha (alpha));
-    g.drawText  (juce::String (p.value, 2),
-                 juce::Rectangle<int> (rowR.getRight() - kValueW - pad, rowR.getY(),
-                                       kValueW, rowR.getHeight()),
-                 juce::Justification::centredRight, false);
 }
 
 void ModuleSlot::paintPortRow (juce::Graphics& g) const
@@ -533,81 +593,23 @@ void ModuleSlot::paintPortRow (juce::Graphics& g) const
 // Mouse
 //==============================================================================
 
-int ModuleSlot::hitTestCompactSlider (juce::Point<int> pos) const noexcept
-{
-    if (isEmpty()) return -1;
-
-    const auto faceR       = regionFace();
-    const int  firstParam  = (m_type == ModuleType::Sampler || m_type == ModuleType::Vst3) ? 1 : 0;
-    const int  rows        = juce::jmin (m_allParams.size() - firstParam, 3);
-
-    for (int i = 0; i < rows; ++i)
-    {
-        const int absIdx = firstParam + i;
-        const int rowY   = faceR.getY() + kPadV + (firstParam > 0 ? kRowH : 0) + i * kRowH;
-        const auto rowR  = juce::Rectangle<int> (faceR.getX(), rowY, faceR.getWidth(), kRowH);
-        const auto tk    = compactSliderTrack (rowR);
-        if (tk.expanded (0, kThumbD / 2).contains (pos))
-            return absIdx;
-    }
-    return -1;
-}
-
 void ModuleSlot::mouseDown (const juce::MouseEvent& e)
 {
-    m_mouseDragOccurred = false;
-
     if (isEmpty())
         return;  // handled in mouseUp
 
     if (e.mods.isRightButtonDown())
         return;  // handled in mouseUp
-
-    // Check for compact slider drag start
-    const int paramIdx = hitTestCompactSlider (e.getPosition());
-    if (paramIdx >= 0)
-    {
-        m_draggingCompactParam = paramIdx;
-        m_dragStartValue       = m_allParams[paramIdx].value;
-        m_dragStartX           = e.x;
-    }
 }
 
 void ModuleSlot::mouseDrag (const juce::MouseEvent& e)
 {
-    if (m_draggingCompactParam < 0) return;
-
-    m_mouseDragOccurred = true;
-
-    const auto faceR      = regionFace();
-    const int  firstParam = (m_type == ModuleType::Sampler || m_type == ModuleType::Vst3) ? 1 : 0;
-    const int  rows       = juce::jmin (m_allParams.size() - firstParam, 3);
-    const int  localIdx   = m_draggingCompactParam - firstParam;
-    if (localIdx < 0 || localIdx >= rows) return;
-
-    const int  rowY  = faceR.getY() + kPadV + (firstParam > 0 ? kRowH : 0) + localIdx * kRowH;
-    const auto rowR  = juce::Rectangle<int> (faceR.getX(), rowY, faceR.getWidth(), kRowH);
-    const auto tk    = compactSliderTrack (rowR);
-    if (tk.getWidth() <= 0) return;
-
-    auto& p = m_allParams.getReference (m_draggingCompactParam);
-    const float ratio = static_cast<float> (e.x - m_dragStartX) / static_cast<float> (tk.getWidth());
-    p.value = juce::jlimit (p.min, p.max, m_dragStartValue + ratio * (p.max - p.min));
-
-    // Keep InlineEditor in sync
-    m_inlineEditor.setParams (m_allParams, getSignalColour(),
-                               getModuleTypeName(), m_inPorts, m_outPorts);
-    repaint();
+    juce::ignoreUnused (e);
 }
 
 void ModuleSlot::mouseUp (const juce::MouseEvent& e)
 {
-    const bool wasCompactSliderDrag = (m_draggingCompactParam >= 0 && m_mouseDragOccurred);
-    m_draggingCompactParam = -1;
-    m_mouseDragOccurred    = false;
-    repaint();
-
-    if (wasCompactSliderDrag) return;
+    const auto profile = layoutProfileForType (m_type);
 
     // Right-click on header of loaded slot → context menu
     if (e.mods.isRightButtonDown() && !isEmpty() && regionHeader().contains (e.getPosition()))
@@ -638,10 +640,10 @@ void ModuleSlot::mouseUp (const juce::MouseEvent& e)
         }
     }
 
-    // VST3 "OPEN EDITOR" link in face (bottom-right)
-    if (m_type == ModuleType::Vst3 && regionFace().contains (e.getPosition()))
+    // Module-specific "OPEN EDITOR" hotspot in face (bottom-right)
+    if (profile.showOpenEditorLink && regionFace().contains (e.getPosition()))
     {
-        if (e.y > regionFace().getBottom() - 12)
+        if (e.y > regionFace().getBottom() - profile.openEditorHotZoneHeight)
         {
             DBG ("open vst editor slot " + juce::String (m_index));
         }
@@ -650,7 +652,5 @@ void ModuleSlot::mouseUp (const juce::MouseEvent& e)
 
 juce::MouseCursor ModuleSlot::getMouseCursor()
 {
-    if (!isEmpty() && hitTestCompactSlider (getMouseXYRelative()) >= 0)
-        return juce::MouseCursor (juce::MouseCursor::LeftRightResizeCursor);
     return juce::MouseCursor (juce::MouseCursor::NormalCursor);
 }

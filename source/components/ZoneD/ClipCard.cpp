@@ -33,7 +33,7 @@ void ClipCard::paint (juce::Graphics& g,
                                    ? Theme::Zone::d
                                    : theme.tapeClipBorder;
     g.setColour (borderCol);
-    g.drawRoundedRectangle (rect, Theme::Radius::xs, 0.5f);
+    g.drawRoundedRectangle (rect, Theme::Radius::xs, Theme::Stroke::subtle);
 
     // Clip content area (inset 2px)
     const auto contentR = rect.reduced (2.0f);

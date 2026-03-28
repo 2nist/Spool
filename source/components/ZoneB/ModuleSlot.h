@@ -4,6 +4,7 @@
 #include "InlineEditor.h"
 #include "SlotPattern.h"
 #include "DrumMachineData.h"
+#include <array>
 
 //==============================================================================
 /**
@@ -93,12 +94,11 @@ private:
     juce::StringArray m_inPorts, m_outPorts;
 
     InlineEditor m_inlineEditor;
-
-    // Mini-slider drag state (compact face only)
-    int   m_draggingCompactParam { -1 };
-    float m_dragStartValue       { 0.0f };
-    int   m_dragStartX           { 0 };
-    bool  m_mouseDragOccurred    { false };
+    static constexpr int kCompactRows = 3;
+    std::array<juce::Slider, kCompactRows> m_compactSliders;
+    std::array<juce::Label,  kCompactRows> m_compactLabels;
+    std::array<juce::Label,  kCompactRows> m_compactValues;
+    std::array<int,          kCompactRows> m_compactParamIndex { -1, -1, -1 };
 
     // Region constants
     static constexpr int kStripeH = 3;
@@ -110,7 +110,6 @@ private:
     static constexpr int kLabelW  = 36;   // label column width
     static constexpr int kValueW  = 28;   // value column width
     static constexpr int kPadV    = 3;    // top/bottom padding inside face
-    static constexpr int kThumbD  = 8;    // slider thumb diameter (compact)
 
     juce::Rectangle<int> regionStripe() const noexcept;
     juce::Rectangle<int> regionHeader() const noexcept;
@@ -124,20 +123,13 @@ private:
     void paintFaceDrumMachine (juce::Graphics&) const;
     void paintPortRow         (juce::Graphics&) const;
 
-    void paintCompactRow (juce::Graphics& g, juce::Rectangle<int> rowR,
-                          const InlineEditor::Param& p, int idx) const;
-
-    juce::Rectangle<int> compactSliderTrack (juce::Rectangle<int> rowR) const noexcept;
+    void refreshCompactControls();
 
     /** How many rows fit in compact face (capped at 3). */
     int compactRowCount() const noexcept
     {
         return juce::jmin (m_allParams.size(), 3);
     }
-
-    /** Returns the compact param index hit by point (relative to component),
-        or -1 if none. Only checks slider track region. */
-    int hitTestCompactSlider (juce::Point<int> pos) const noexcept;
 
     void initParams();
 

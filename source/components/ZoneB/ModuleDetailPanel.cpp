@@ -60,7 +60,7 @@ void ModuleDetailPanel::paint (juce::Graphics& g)
         const int badgeY = (kHeaderH - kBadgeH) / 2;
 
         g.setColour (m_groupColour.withAlpha (0.25f));
-        g.fillRoundedRectangle (juce::Rectangle<int> (8, badgeY, kBadgeW, kBadgeH).toFloat(), 3.0f);
+        g.fillRoundedRectangle (juce::Rectangle<int> (8, badgeY, kBadgeW, kBadgeH).toFloat(), Theme::Radius::chip);
 
         g.setFont (Theme::Font::micro());
         g.setColour (m_groupColour.brighter (0.3f));

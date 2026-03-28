@@ -122,13 +122,13 @@ void ZoomStrip::drawModeButtons (juce::Graphics& g) const
             g.setColour (activeBtn);
             g.fillRoundedRectangle (r.toFloat(), Theme::Radius::xs);
             g.setColour (activeBtnBorder);
-            g.drawRoundedRectangle (r.toFloat(), Theme::Radius::xs, 0.5f);
+            g.drawRoundedRectangle (r.toFloat(), Theme::Radius::xs, Theme::Stroke::subtle);
             g.setColour (activeBtnText);
         }
         else
         {
             g.setColour (zoomStripBorder.withAlpha (0.5f));
-            g.drawRoundedRectangle (r.toFloat(), Theme::Radius::xs, 0.5f);
+            g.drawRoundedRectangle (r.toFloat(), Theme::Radius::xs, Theme::Stroke::subtle);
             g.setColour (textColor);
         }
 
@@ -141,7 +141,7 @@ void ZoomStrip::drawExpandButton (juce::Graphics& g) const
 {
     const bool expanded = (m_heightMode == HeightMode::expand);
     g.setColour (zoomStripBorder.withAlpha (0.5f));
-    g.drawRoundedRectangle (m_expandBtnRect.toFloat(), Theme::Radius::xs, 0.5f);
+    g.drawRoundedRectangle (m_expandBtnRect.toFloat(), Theme::Radius::xs, Theme::Stroke::subtle);
     g.setFont (Theme::Font::micro());
     g.setColour (textColor);
     g.drawText (expanded ? "v COLLAPSE" : "^ EXPAND",

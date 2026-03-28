@@ -115,7 +115,7 @@ void TracksPanel::paintTransportBtn (juce::Graphics& g,
     g.setColour (active ? Theme::Zone::d.withAlpha (0.3f) : Theme::Colour::surface2);
     g.fillRoundedRectangle (r.toFloat(), Theme::Radius::xs);
     g.setColour (active ? Theme::Zone::d : Theme::Colour::surfaceEdge);
-    g.drawRoundedRectangle (r.toFloat(), Theme::Radius::xs, 0.5f);
+    g.drawRoundedRectangle (r.toFloat(), Theme::Radius::xs, Theme::Stroke::subtle);
     g.setFont (Theme::Font::micro());
     g.setColour (active ? Theme::Zone::d : Theme::Colour::inkMid);
     g.drawText (label, r, juce::Justification::centred, false);
@@ -242,7 +242,7 @@ void TracksPanel::paintLanesTab (juce::Graphics& g) const
         auto paintMiniBtn = [&] (const juce::Rectangle<int>& br, const juce::String& lbl, bool active, juce::Colour activeCol)
         {
             g.setColour (active ? activeCol.withAlpha (0.3f) : Theme::Colour::surface3);
-            g.fillRoundedRectangle (br.toFloat(), 2.0f);
+            g.fillRoundedRectangle (br.toFloat(), Theme::Radius::xs);
             g.setColour (active ? activeCol : Theme::Colour::inkGhost);
             g.setFont (Theme::Font::micro());
             g.drawText (lbl, br, juce::Justification::centred, false);
@@ -317,9 +317,9 @@ void TracksPanel::paintViewTab (juce::Graphics& g) const
     {
         const auto mr = juce::Rectangle<int> (kPad + m * (modeW + 2), y, modeW, 18);
         g.setColour (Theme::Colour::surface3);
-        g.fillRoundedRectangle (mr.toFloat(), 2.0f);
+        g.fillRoundedRectangle (mr.toFloat(), Theme::Radius::xs);
         g.setColour (Theme::Colour::inkGhost);
-        g.drawRoundedRectangle (mr.toFloat(), 2.0f, 0.5f);
+        g.drawRoundedRectangle (mr.toFloat(), Theme::Radius::xs, Theme::Stroke::subtle);
         g.drawText (modes[m], mr, juce::Justification::centred, false);
     }
     y += 26;
