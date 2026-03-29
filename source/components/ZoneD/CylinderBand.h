@@ -18,7 +18,7 @@
     The cylinder rotation model lives here:
       - m_loopLengthBars, m_beatsPerBar, m_pxPerBeat, m_currentBeat
       - timelineXForBeat() — ALL element positions go through this
-      - signedOffsetPxForBeat() — canonical left-to-right beat mapping around the playhead
+      - signedOffsetPxForBeat() — canonical left-to-right transport mapping around the playhead
 */
 class CylinderBand : public juce::Component,
                      public juce::DragAndDropTarget

@@ -16,7 +16,7 @@
     Destinations:
       REEL     — loadClipToReelSlot()    full DSP load + Zone A editor panel
       LOOPER   — routeClipToLooper()     stores in m_looperClip; loop engine pending
-      TIMELINE — routeClipToTimeline()   stub; opens Tracks panel; arrangement pending
+      TIMELINE — routeClipToTimeline()   places clip in lane model + timeline playback queue
 */
 struct CapturedAudioClip
 {

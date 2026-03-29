@@ -38,7 +38,8 @@ CylinderBand::CylinderBand()
 
 bool CylinderBand::isInterestedInDragSource (const SourceDetails& details)
 {
-    return details.description.toString() == "audio-history-clip";
+    const auto desc = details.description.toString();
+    return desc == "audio-history-clip" || desc == "CapturedAudioClip";
 }
 
 void CylinderBand::itemDropped (const SourceDetails& details)
@@ -81,10 +82,10 @@ float CylinderBand::signedOffsetPxForBeat (float beatPosition) const noexcept
     if (loopBeats <= 0.0f)
         return 0.0f;
 
-    float deltaBeats = std::fmod (beatPosition - m_currentBeat, loopBeats);
+    float deltaBeats = std::fmod (m_currentBeat - beatPosition, loopBeats);
 
-    // Canonical timeline rule:
-    // earlier beats live to the left of the playhead, later beats to the right.
+    // Left-to-right transport motion:
+    // as current beat increases, fixed tape content moves right.
     if (deltaBeats < -loopBeats * 0.5f)
         deltaBeats += loopBeats;
     else if (deltaBeats >= loopBeats * 0.5f)
@@ -422,9 +423,13 @@ void CylinderBand::paintClips (juce::Graphics& g,
 
     for (const auto& clip : lane.clips)
     {
-        const float clipLeft  = timelineXForBeat (clip.startBeat, centerX);
-        const float clipW     = clip.lengthBeats * m_pxPerBeat;
-        const float clipRight = clipLeft + clipW;
+        const float clipStartX = timelineXForBeat (clip.startBeat, centerX);
+        const float clipW = clip.lengthBeats * m_pxPerBeat;
+        const float oneBeatLaterX = timelineXForBeat (clip.startBeat + 1.0f, centerX);
+        const float beatAxisDir = (oneBeatLaterX >= clipStartX) ? 1.0f : -1.0f;
+        const float clipEndX = clipStartX + beatAxisDir * clipW;
+        const float clipLeft = juce::jmin (clipStartX, clipEndX);
+        const float clipRight = juce::jmax (clipStartX, clipEndX);
 
         auto drawClipAt = [&] (float left, float right)
         {

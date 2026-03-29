@@ -1,6 +1,8 @@
 #include "PluginEditor.h"
 #include "instruments/drum/DrumModuleState.h"
 #include "theme/ThemeEditorPanel.h"
+#include <cmath>
+#include <limits>
 
 //==============================================================================
 // Helpers
@@ -32,10 +34,99 @@ constexpr int kViewMenuHistoryTape = 23;
 constexpr int kViewMenuLooper = 24;
 constexpr int kViewMenuZoneCMacros = 25;
 constexpr int kViewMenuCompactHeader = 26;
+constexpr int kViewMenuTimelineDebug = 27;
 constexpr int kSettingsMenuPreferences = 31;
 constexpr int kSettingsMenuThemeDesigner = 32;
 constexpr int kSettingsMenuImportTheme = 33;
 constexpr int kSettingsMenuExportTheme = 34;
+constexpr const char* kTimelineAssetsRootDir = "spool-media";
+constexpr const char* kTimelineAssetsLeafDir = "timeline-clips";
+
+juce::String makeTimelineClipId()
+{
+    auto id = juce::Uuid().toString()
+                  .retainCharacters ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_");
+    if (id.isEmpty())
+        id = juce::String (juce::Time::currentTimeMillis());
+    return id;
+}
+
+juce::Array<float> buildWaveformPreview (const juce::AudioBuffer<float>& buffer, int bins = 80)
+{
+    juce::Array<float> peaks;
+    bins = juce::jlimit (8, 512, bins);
+    if (buffer.getNumChannels() <= 0 || buffer.getNumSamples() <= 0)
+        return peaks;
+
+    peaks.ensureStorageAllocated (bins);
+    const int numSamples = buffer.getNumSamples();
+    const int numChannels = buffer.getNumChannels();
+    for (int b = 0; b < bins; ++b)
+    {
+        const int start = (b * numSamples) / bins;
+        const int end = juce::jmax (start + 1, ((b + 1) * numSamples) / bins);
+        float peak = 0.0f;
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float* src = buffer.getReadPointer (ch);
+            for (int s = start; s < end; ++s)
+                peak = juce::jmax (peak, std::abs (src[s]));
+        }
+
+        peaks.add (juce::jlimit (0.0f, 1.0f, peak));
+    }
+
+    return peaks;
+}
+
+CapturedAudioClip trimmedTimelineClip (const CapturedAudioClip& clip)
+{
+    constexpr float kSilenceThreshold = 0.0025f;
+    if (clip.buffer.getNumChannels() <= 0 || clip.buffer.getNumSamples() <= 0)
+        return clip;
+
+    const int numChannels = clip.buffer.getNumChannels();
+    const int numSamples = clip.buffer.getNumSamples();
+    int first = numSamples;
+    int last = -1;
+
+    for (int s = 0; s < numSamples; ++s)
+    {
+        float peak = 0.0f;
+        for (int ch = 0; ch < numChannels; ++ch)
+            peak = juce::jmax (peak, std::abs (clip.buffer.getSample (ch, s)));
+
+        if (peak >= kSilenceThreshold)
+        {
+            first = juce::jmin (first, s);
+            last = s;
+        }
+    }
+
+    if (last < first)
+        return clip;
+
+    if (first == 0 && last == numSamples - 1)
+        return clip;
+
+    CapturedAudioClip trimmed = clip;
+    const int trimmedSamples = juce::jmax (1, last - first + 1);
+    trimmed.buffer.setSize (numChannels, trimmedSamples);
+    for (int ch = 0; ch < numChannels; ++ch)
+        trimmed.buffer.copyFrom (ch, 0, clip.buffer, ch, first, trimmedSamples);
+
+    // Recompute inferred bars from trimmed duration.
+    trimmed.bars = 0;
+    if (trimmed.tempo > 0.0)
+    {
+        const double beatsPerBar = 4.0;
+        const double barsExact = static_cast<double> (trimmed.durationSeconds()) * trimmed.tempo / 60.0 / beatsPerBar;
+        trimmed.bars = juce::jmax (0, juce::roundToInt (barsExact));
+    }
+
+    return trimmed;
+}
 
 std::vector<juce::String> parseLyricImportLines (const juce::String& text)
 {
@@ -253,6 +344,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     juce::ignoreUnused (processorRef);
     setLookAndFeel (&m_lookAndFeel);
     setWantsKeyboardFocus (true);
+    m_audioFormatManager.registerBasicFormats();
 
     // Load last in-editor state if it exists, otherwise fall back to the named preset.
     if (!ThemeManager::get().loadFromFile (ThemeManager::get().getCurrentThemeFile()))
@@ -294,6 +386,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         zoneA.setMixerSlots         (names);
         zoneA.setTrackLanes         (names);
         syncAllSlotRuntimeFromModuleList();
+        refreshTimelinePlacementsUi();
     };
 
     // Wire Zone A InstrumentPanel browser slot selection to full slot-selected flow
@@ -468,7 +561,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                 const auto& structure = processorRef.getSongManager().getStructureState();
                 zoneD.setStructureView (&structure, &processorRef.getStructureEngine());
                 zoneD.seedStructureRails (structure);
-                zoneD.setStructureBeat (processorRef.getAppState().transport.playheadBeats);
+                zoneD.setStructureBeat (processorRef.getCurrentSongBeat());
                 zoneD.setStructureFollowState (computeFollowState (processorRef.isStructureFollowForTracksEnabled(),
                                                                    structureHasScaffold (structure)));
                 if (auto* song = zoneA.getSongPanel())
@@ -580,7 +673,11 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
     historyStrip.onSendToTimeline = [this]
     {
-        if (!processorRef.hasGrabbedClip()) return;
+        if (!processorRef.hasGrabbedClip())
+        {
+            systemFeed.addMessage ("Timeline send needs a grabbed clip (use 4/8/16 or FREE first)");
+            return;
+        }
         routeClipToTimeline (buildGrabClip());
     };
 
@@ -639,7 +736,11 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
         ls.onSendToTimeline = [this]
         {
-            if (!processorRef.hasGrabbedClip()) return;
+            if (!processorRef.hasGrabbedClip())
+            {
+                systemFeed.addMessage ("Timeline send needs a grabbed clip (use 4/8/16 or FREE first)");
+                return;
+            }
             routeClipToTimeline (buildGrabClip());
         };
 
@@ -753,6 +854,26 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
     // Wire gear button in Zone D transport strip → TPRT panel
     zoneD.onSettingsClicked = [this] { openSettingsPanel(); };
+    zoneD.onClipDropped = [this] (int laneIndex)
+    {
+        if (! m_dragClip.has_value())
+        {
+            systemFeed.addMessage ("Timeline drop ignored: no clip payload");
+            return;
+        }
+
+        const int targetSlot = (laneIndex >= 0) ? laneIndex
+                                                : ((m_focusedSlotIndex >= 0) ? m_focusedSlotIndex : 0);
+        routeClipToTimeline (*m_dragClip, targetSlot);
+        m_dragClip.reset();
+    };
+    zoneD.onLoopLengthChanged = [this] (float bars)
+    {
+        const auto beatsPerBar = juce::jmax (1.0, processorRef.getBeatsPerBar());
+        processorRef.setTimelineLoopLengthBeats (static_cast<double> (bars) * beatsPerBar);
+    };
+    processorRef.setTimelineLoopLengthBeats (static_cast<double> (zoneD.loopLengthBars())
+                                             * juce::jmax (1.0, processorRef.getBeatsPerBar()));
 
     zoneB.addListener (this);
     zoneD.addTransportListener (this);
@@ -920,6 +1041,12 @@ void PluginEditor::paint (juce::Graphics& g)
     g.fillAll (Theme::Colour::surface1);
 }
 
+void PluginEditor::paintOverChildren (juce::Graphics& g)
+{
+    if (m_timelineDebugOverlayEnabled)
+        paintTimelineDebugOverlay (g);
+}
+
 bool PluginEditor::keyPressed (const juce::KeyPress& key)
 {
     const bool commandDown = key.getModifiers().isCommandDown() || key.getModifiers().isCtrlDown();
@@ -955,6 +1082,13 @@ bool PluginEditor::keyPressed (const juce::KeyPress& key)
     if (key.getTextCharacter() == 'i' || key.getKeyCode() == 'I')
     {
         m_inspector->toggle();
+        return true;
+    }
+
+    if (key.getModifiers().isShiftDown()
+        && (key.getTextCharacter() == 'd' || key.getTextCharacter() == 'D' || key.getKeyCode() == 'D'))
+    {
+        toggleTimelineDebugOverlay();
         return true;
     }
 
@@ -1116,6 +1250,9 @@ void PluginEditor::playStateChanged (bool playing)
                                + " BPM");
     else
         systemFeed.addMessage ("Transport: stopped");
+
+    if (m_timelineDebugOverlayEnabled)
+        repaint();
 }
 
 void PluginEditor::onStepAdvanced (int step)
@@ -1163,6 +1300,9 @@ void PluginEditor::positionChanged (float beat)
     // Feed Zone D absolute beat; sub-components can wrap for loop visuals as needed.
     zoneD.setStructureBeat (processorBeat);
     updateSequencerStructureContext (wrappedStructureBeat);
+
+    if (m_timelineDebugOverlayEnabled)
+        repaint();
 }
 
 void PluginEditor::updateSequencerStructureContext (double structureBeat)
@@ -1210,6 +1350,10 @@ void PluginEditor::recordStateChanged (bool recording)
     processorRef.getAppState().transport.isRecording = recording;
     if (auto* tp = zoneA.getTracksPanel())
         tp->setRecording (recording);
+
+    systemFeed.addMessage (recording
+                               ? "Record armed (use History grab controls to capture clips)"
+                               : "Record disarmed");
 }
 
 void PluginEditor::loadClipToReelSlot (const CapturedAudioClip& clip, int slotIndex)
@@ -1302,22 +1446,89 @@ void PluginEditor::routeClipToLooper (const CapturedAudioClip& clip)
     systemFeed.addMessage (msg);
 }
 
-void PluginEditor::routeClipToTimeline (const CapturedAudioClip& clip)
+void PluginEditor::routeClipToTimeline (const CapturedAudioClip& clip, std::optional<int> targetSlotOverride)
 {
-    // TIMELINE destination stub — no arrangement DSP engine in this build.
-    // Opens the Tracks panel to show placement intent.
-    // Future: TracksPanel::placeClip (clip, barPosition) goes here.
-    juce::String msg = "TIMELINE \xe2\x86\x92 " + juce::String (clip.durationSeconds(), 1)
-                       + "s from " + clip.sourceName;
-    if (clip.bars > 0)
-        msg += " (" + juce::String (clip.bars) + " bars)";
-    msg += " \xc2\xb7 stub";
-    systemFeed.addMessage (msg);
+    const auto routedClip = trimmedTimelineClip (clip);
+    const auto beatsPerBar = juce::jmax (1.0, processorRef.getBeatsPerBar());
+    const auto loopLengthBeats = juce::jmax (1.0, static_cast<double> (zoneD.loopLengthBars()) * beatsPerBar);
+    const auto timelineNowBeat = juce::jmax (0.0, processorRef.getCurrentSongBeat());
+    const auto startBeat = processorRef.isPlaying()
+                               ? std::fmod (timelineNowBeat, loopLengthBeats)
+                               : 0.0;
+    const int preferredSlot = targetSlotOverride.has_value()
+                                  ? *targetSlotOverride
+                                  : (routedClip.sourceSlot >= 0
+                                         ? routedClip.sourceSlot
+                                         : (m_focusedSlotIndex >= 0 ? m_focusedSlotIndex : 0));
+    const auto targetSlot = juce::jlimit (0, SpoolAudioGraph::kNumSlots - 1, preferredSlot);
+
+    auto lengthBeats = 0.0;
+    const auto tempo = routedClip.tempo > 0.0 ? routedClip.tempo : static_cast<double> (processorRef.getBpm());
+    if (tempo > 0.0 && routedClip.durationSeconds() > 0.0f)
+        lengthBeats = static_cast<double> (routedClip.durationSeconds()) * tempo / 60.0;
+    else if (routedClip.bars > 0)
+        lengthBeats = static_cast<double> (routedClip.bars) * beatsPerBar;
+    lengthBeats = juce::jmax (0.25, lengthBeats);
+    lengthBeats = juce::jmin (lengthBeats, loopLengthBeats);
+
+    Clip timelineClip;
+    timelineClip.startBeat = static_cast<float> (startBeat);
+    timelineClip.lengthBeats = static_cast<float> (lengthBeats);
+    timelineClip.name = routedClip.sourceName.isNotEmpty() ? routedClip.sourceName : "CAPTURE";
+    timelineClip.type = ClipType::audio;
+    timelineClip.tint = Theme::Signal::audio.withAlpha (0.92f);
+    timelineClip.waveformPreview = buildWaveformPreview (routedClip.buffer);
+
+    const auto moduleType = moduleTypeForSlot (targetSlot);
+    zoneD.setLaneInfo (targetSlot, true, moduleType);
+    zoneD.addTimelineClip (targetSlot, timelineClip, moduleType);
+
+    TimelineClipPlacement placementModel;
+    placementModel.laneIndex = targetSlot;
+    placementModel.moduleType = moduleType;
+    placementModel.clipName = timelineClip.name;
+    placementModel.clipId = makeTimelineClipId();
+    if (m_currentSongFile.existsAsFile())
+    {
+        const auto assetFile = timelineAssetFileFor (m_currentSongFile, placementModel.clipId);
+        placementModel.audioAssetPath = assetFile.getRelativePathFrom (m_currentSongFile.getParentDirectory());
+    }
+    placementModel.startBeat = timelineClip.startBeat;
+    placementModel.lengthBeats = timelineClip.lengthBeats;
+    processorRef.getSongManager().addTimelinePlacement (placementModel);
+    upsertTimelineClipAudio (placementModel.clipId, routedClip);
+    processorRef.addTimelineAudioClip (routedClip,
+                                       startBeat,
+                                       lengthBeats,
+                                       targetSlot,
+                                       moduleType,
+                                       timelineClip.name);
 
     m_contentPanelOpen = true;
     m_tabStrip.setActiveTab ("tracks");
     zoneA.setActivePanel ("tracks");
     resized();
+
+    if (auto* tracks = zoneA.getTracksPanel())
+    {
+        TracksPanel::TimelinePlacement placementUi;
+        placementUi.laneIndex = targetSlot;
+        placementUi.laneName = moduleType + " " + juce::String (targetSlot + 1).paddedLeft ('0', 2);
+        placementUi.clipName = timelineClip.name;
+        placementUi.startBeat = timelineClip.startBeat;
+        placementUi.lengthBeats = timelineClip.lengthBeats;
+        tracks->addTimelinePlacement (placementUi);
+    }
+
+    const auto startBar = juce::jmax (1, juce::roundToInt (std::floor (startBeat / beatsPerBar)) + 1);
+    const auto barLen = static_cast<float> (lengthBeats / beatsPerBar);
+    juce::String msg = "TIMELINE placed " + timelineClip.name
+                       + " -> lane " + juce::String (targetSlot + 1).paddedLeft ('0', 2)
+                       + " @ bar " + juce::String (startBar)
+                       + " (" + juce::String (barLen, 1) + " bars)";
+    systemFeed.addMessage (msg);
+
+    updateSequencerStructureContext (processorRef.getCurrentSongBeat());
 }
 
 DrumMachineData* PluginEditor::getDrumStateForSlot (int slotIndex) noexcept
@@ -1359,12 +1570,265 @@ void PluginEditor::syncSlotRuntimeFromModuleType (int slotIndex, const juce::Str
 
 void PluginEditor::syncAllSlotRuntimeFromModuleList()
 {
-    for (int slotIndex = 0; slotIndex < m_lastModuleNames.size(); ++slotIndex)
+    for (int slotIndex = 0; slotIndex < SpoolAudioGraph::kNumSlots; ++slotIndex)
     {
-        const auto moduleType =
-            m_lastModuleNames[slotIndex].fromLastOccurrenceOf (":", false, false);
+        juce::String moduleType;
+        if (slotIndex < m_lastModuleNames.size())
+            moduleType = m_lastModuleNames[slotIndex].fromLastOccurrenceOf (":", false, false);
         syncSlotRuntimeFromModuleType (slotIndex, moduleType);
     }
+}
+
+juce::String PluginEditor::moduleTypeForSlot (int slotIndex) const
+{
+    if (slotIndex < 0 || slotIndex >= m_lastModuleNames.size())
+        return "AUDIO";
+
+    const auto type = m_lastModuleNames[slotIndex].fromLastOccurrenceOf (":", false, false).trim();
+    return type.isNotEmpty() ? type : juce::String ("AUDIO");
+}
+
+void PluginEditor::refreshTimelinePlacementsUi()
+{
+    processorRef.clearTimelineAudioClips();
+    zoneD.clearTimelineClips();
+
+    if (auto* tracks = zoneA.getTracksPanel())
+        tracks->clearTimelinePlacements();
+
+    const auto& placements = processorRef.getSongManager().getTimelinePlacements();
+    for (const auto& placement : placements)
+    {
+        const int slotIndex = juce::jlimit (0, SpoolAudioGraph::kNumSlots - 1, placement.laneIndex);
+        const auto moduleType = placement.moduleType.isNotEmpty()
+                                    ? placement.moduleType
+                                    : moduleTypeForSlot (slotIndex);
+
+        Clip clip;
+        clip.startBeat = juce::jmax (0.0f, placement.startBeat);
+        clip.lengthBeats = juce::jmax (0.25f, placement.lengthBeats);
+        clip.name = placement.clipName.isNotEmpty() ? placement.clipName : "CAPTURE";
+        clip.type = ClipType::audio;
+        clip.tint = Theme::Signal::audio.withAlpha (0.92f);
+
+        const CapturedAudioClip* cachedClip = placement.clipId.isNotEmpty()
+                                                  ? findTimelineClipAudio (placement.clipId)
+                                                  : nullptr;
+        CapturedAudioClip loadedClip;
+        if (cachedClip == nullptr
+            && placement.audioAssetPath.isNotEmpty()
+            && loadTimelineClipAudioFromFile (placement, loadedClip))
+        {
+            const auto normalizedLoadedClip = trimmedTimelineClip (loadedClip);
+            if (placement.clipId.isNotEmpty())
+            {
+                upsertTimelineClipAudio (placement.clipId, normalizedLoadedClip);
+                cachedClip = findTimelineClipAudio (placement.clipId);
+            }
+            else
+            {
+                loadedClip = normalizedLoadedClip;
+                cachedClip = &loadedClip;
+            }
+        }
+
+        if (cachedClip != nullptr)
+        {
+            clip.waveformPreview = buildWaveformPreview (cachedClip->buffer);
+            processorRef.addTimelineAudioClip (*cachedClip,
+                                               placement.startBeat,
+                                               placement.lengthBeats,
+                                               slotIndex,
+                                               moduleType,
+                                               clip.name);
+        }
+
+        zoneD.setLaneInfo (slotIndex, true, moduleType);
+        zoneD.addTimelineClip (slotIndex, clip, moduleType);
+
+        if (auto* tracks = zoneA.getTracksPanel())
+        {
+            TracksPanel::TimelinePlacement placementUi;
+            placementUi.laneIndex = slotIndex;
+            placementUi.laneName = moduleType + " " + juce::String (slotIndex + 1).paddedLeft ('0', 2);
+            placementUi.clipName = clip.name;
+            placementUi.startBeat = clip.startBeat;
+            placementUi.lengthBeats = clip.lengthBeats;
+            tracks->addTimelinePlacement (placementUi);
+        }
+    }
+}
+
+juce::String PluginEditor::ensureTimelineClipId (TimelineClipPlacement& placement)
+{
+    if (placement.clipId.trim().isEmpty())
+        placement.clipId = makeTimelineClipId();
+    return placement.clipId;
+}
+
+juce::File PluginEditor::timelineAssetFileFor (const juce::File& songFile, const juce::String& clipId) const
+{
+    auto safeClipId = clipId.retainCharacters ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_");
+    if (safeClipId.isEmpty())
+        safeClipId = makeTimelineClipId();
+
+    return songFile.getParentDirectory()
+        .getChildFile (kTimelineAssetsRootDir)
+        .getChildFile (songFile.getFileNameWithoutExtension())
+        .getChildFile (kTimelineAssetsLeafDir)
+        .getChildFile (safeClipId + ".wav");
+}
+
+const CapturedAudioClip* PluginEditor::findTimelineClipAudio (const juce::String& clipId) const
+{
+    for (const auto& entry : m_timelineClipAudioCache)
+    {
+        if (entry.clipId == clipId)
+            return &entry.clip;
+    }
+
+    return nullptr;
+}
+
+void PluginEditor::upsertTimelineClipAudio (const juce::String& clipId, const CapturedAudioClip& clip)
+{
+    if (clipId.trim().isEmpty())
+        return;
+
+    for (auto& entry : m_timelineClipAudioCache)
+    {
+        if (entry.clipId == clipId)
+        {
+            entry.clip = clip;
+            return;
+        }
+    }
+
+    TimelineClipAudioCacheEntry entry;
+    entry.clipId = clipId;
+    entry.clip = clip;
+    m_timelineClipAudioCache.add (std::move (entry));
+}
+
+bool PluginEditor::loadTimelineClipAudioFromFile (const TimelineClipPlacement& placement, CapturedAudioClip& outClip)
+{
+    if (! m_currentSongFile.existsAsFile() || placement.audioAssetPath.trim().isEmpty())
+        return false;
+
+    const auto audioFile = m_currentSongFile.getParentDirectory().getChildFile (placement.audioAssetPath);
+    if (! audioFile.existsAsFile())
+        return false;
+
+    std::unique_ptr<juce::AudioFormatReader> reader (m_audioFormatManager.createReaderFor (audioFile));
+    if (reader == nullptr || reader->numChannels <= 0 || reader->lengthInSamples <= 0)
+        return false;
+
+    outClip.buffer.setSize (static_cast<int> (reader->numChannels),
+                            static_cast<int> (reader->lengthInSamples));
+    if (! reader->read (&outClip.buffer,
+                        0,
+                        static_cast<int> (reader->lengthInSamples),
+                        0,
+                        true,
+                        true))
+        return false;
+
+    outClip.sampleRate = reader->sampleRate > 0.0 ? reader->sampleRate : 44100.0;
+    outClip.sourceName = placement.clipName.isNotEmpty() ? placement.clipName : juce::String ("CAPTURE");
+    outClip.sourceSlot = placement.laneIndex;
+    outClip.tempo = static_cast<double> (processorRef.getSongManager().getTempo());
+    const auto beatsPerBar = juce::jmax (1.0, processorRef.getBeatsPerBar());
+    if (outClip.tempo > 0.0 && beatsPerBar > 0.0)
+    {
+        const double barsExact = outClip.durationSeconds() * outClip.tempo / 60.0 / beatsPerBar;
+        outClip.bars = juce::jmax (1, juce::roundToInt (barsExact));
+    }
+
+    return true;
+}
+
+bool PluginEditor::saveTimelineClipAudioToFile (const CapturedAudioClip& clip, const juce::File& file) const
+{
+    if (clip.buffer.getNumChannels() <= 0 || clip.buffer.getNumSamples() <= 0)
+        return false;
+
+    const auto parent = file.getParentDirectory();
+    if (! parent.exists())
+    {
+        auto createResult = parent.createDirectory();
+        if (createResult.failed())
+            return false;
+    }
+
+    juce::WavAudioFormat format;
+    std::unique_ptr<juce::OutputStream> stream (file.createOutputStream());
+    if (stream == nullptr)
+        return false;
+
+    const auto options = juce::AudioFormatWriterOptions {}
+                             .withSampleRate (clip.sampleRate > 0.0 ? clip.sampleRate : 44100.0)
+                             .withNumChannels (clip.buffer.getNumChannels())
+                             .withBitsPerSample (24);
+    auto writer = format.createWriterFor (stream, options);
+    if (writer == nullptr)
+        return false;
+
+    return writer->writeFromAudioSampleBuffer (clip.buffer, 0, clip.buffer.getNumSamples());
+}
+
+bool PluginEditor::writeTimelineAudioAssetsForSong (const juce::File& songFile)
+{
+    auto placements = processorRef.getSongManager().getTimelinePlacements();
+    if (placements.isEmpty())
+        return true;
+
+    bool placementsChanged = false;
+    int missingClips = 0;
+    int failedWrites = 0;
+
+    for (auto& placement : placements)
+    {
+        const bool hadClipId = placement.clipId.isNotEmpty();
+        auto clipId = ensureTimelineClipId (placement);
+        if (! hadClipId)
+            placementsChanged = true;
+
+        const auto previousAssetPath = placement.audioAssetPath;
+        const auto targetAssetFile = timelineAssetFileFor (songFile, clipId);
+        const auto targetRelativePath = targetAssetFile.getRelativePathFrom (songFile.getParentDirectory());
+        if (placement.audioAssetPath != targetRelativePath)
+        {
+            placement.audioAssetPath = targetRelativePath;
+            placementsChanged = true;
+        }
+
+        const CapturedAudioClip* cachedClip = findTimelineClipAudio (clipId);
+        CapturedAudioClip loadedClip;
+        if (cachedClip == nullptr && previousAssetPath.isNotEmpty() && m_currentSongFile.existsAsFile())
+        {
+            TimelineClipPlacement lookupPlacement = placement;
+            lookupPlacement.audioAssetPath = previousAssetPath;
+            if (loadTimelineClipAudioFromFile (lookupPlacement, loadedClip))
+            {
+                upsertTimelineClipAudio (clipId, trimmedTimelineClip (loadedClip));
+                cachedClip = findTimelineClipAudio (clipId);
+            }
+        }
+
+        if (cachedClip == nullptr)
+        {
+            ++missingClips;
+            continue;
+        }
+
+        if (! saveTimelineClipAudioToFile (*cachedClip, targetAssetFile))
+            ++failedWrites;
+    }
+
+    if (placementsChanged)
+        processorRef.getSongManager().replaceTimelinePlacements (placements);
+
+    return missingClips == 0 && failedWrites == 0;
 }
 
 void PluginEditor::applyDrumStateToRuntime (int slotIndex)
@@ -1492,6 +1956,7 @@ void PluginEditor::showViewMenu (juce::Rectangle<int> anchorBounds)
     menu.addItem (kViewMenuLooper, "Show Looper", true, prefs.getShowLooper());
     menu.addItem (kViewMenuZoneCMacros, "Show Zone C Macros", true, prefs.getShowZoneCMacros());
     menu.addItem (kViewMenuCompactHeader, "Compact Song Header", prefs.getShowSongHeader(), prefs.getCompactSongHeader());
+    menu.addItem (kViewMenuTimelineDebug, "Timeline Debug Overlay", true, m_timelineDebugOverlayEnabled);
     menu.addSeparator();
     menu.addItem (kSettingsMenuPreferences, "Open Settings...");
 
@@ -1505,6 +1970,7 @@ void PluginEditor::showViewMenu (juce::Rectangle<int> anchorBounds)
                             else if (result == kViewMenuLooper) prefs.setShowLooper (! prefs.getShowLooper());
                             else if (result == kViewMenuZoneCMacros) prefs.setShowZoneCMacros (! prefs.getShowZoneCMacros());
                             else if (result == kViewMenuCompactHeader) prefs.setCompactSongHeader (! prefs.getCompactSongHeader());
+                            else if (result == kViewMenuTimelineDebug) toggleTimelineDebugOverlay();
                             else if (result == kSettingsMenuPreferences) openSettingsPanel (anchorBounds);
                         }));
 }
@@ -1528,11 +1994,149 @@ void PluginEditor::showSettingsMenu (juce::Rectangle<int> anchorBounds)
                         }));
 }
 
+void PluginEditor::toggleTimelineDebugOverlay()
+{
+    m_timelineDebugOverlayEnabled = ! m_timelineDebugOverlayEnabled;
+    systemFeed.addMessage (juce::String ("Timeline Debug overlay ")
+                           + (m_timelineDebugOverlayEnabled ? "enabled" : "disabled")
+                           + " (Cmd/Ctrl+Shift+D)");
+    repaint();
+}
+
+void PluginEditor::paintTimelineDebugOverlay (juce::Graphics& g) const
+{
+    const auto& placements = processorRef.getSongManager().getTimelinePlacements();
+    const double beatsPerBar = juce::jmax (1.0, processorRef.getBeatsPerBar());
+    const double loopBeats = juce::jmax (1.0, static_cast<double> (zoneD.loopLengthBars()) * beatsPerBar);
+    const double processorBeat = juce::jmax (0.0, processorRef.getCurrentSongBeat());
+
+    auto wrapPositive = [] (double value, double modulus)
+    {
+        if (modulus <= 0.0)
+            return value;
+
+        auto wrapped = std::fmod (value, modulus);
+        if (wrapped < 0.0)
+            wrapped += modulus;
+        return wrapped;
+    };
+
+    const double beatInLoop = wrapPositive (processorBeat, loopBeats);
+
+    struct Match
+    {
+        int index = -1;
+        bool active = false;
+        double score = std::numeric_limits<double>::max();
+        double startBeat = 0.0;
+        double lengthBeats = 0.0;
+        double relativeBeat = 0.0;
+        juce::String name;
+    };
+
+    Match chosen;
+
+    auto containsBeat = [loopBeats] (double beat, double startBeat, double lengthBeats) noexcept
+    {
+        if (lengthBeats >= loopBeats - 1.0e-6)
+            return true;
+
+        const double endBeat = startBeat + lengthBeats;
+        if (endBeat <= loopBeats)
+            return beat >= startBeat && beat < endBeat;
+
+        const double wrappedEnd = endBeat - loopBeats;
+        return beat >= startBeat || beat < wrappedEnd;
+    };
+
+    for (int i = 0; i < placements.size(); ++i)
+    {
+        const auto& placement = placements.getReference (i);
+        const double startBeat = wrapPositive (placement.startBeat, loopBeats);
+        const double lengthBeats = juce::jlimit (0.25, loopBeats,
+                                                 static_cast<double> (placement.lengthBeats));
+        const double relativeBeat = wrapPositive (beatInLoop - startBeat, loopBeats);
+        const double centerBeat = wrapPositive (startBeat + lengthBeats * 0.5, loopBeats);
+        double score = std::abs (beatInLoop - centerBeat);
+        score = juce::jmin (score, loopBeats - score);
+        const bool isActive = containsBeat (beatInLoop, startBeat, lengthBeats);
+
+        if (isActive)
+        {
+            if (! chosen.active || score < chosen.score)
+            {
+                chosen.index = i;
+                chosen.active = true;
+                chosen.score = score;
+                chosen.startBeat = startBeat;
+                chosen.lengthBeats = lengthBeats;
+                chosen.relativeBeat = relativeBeat;
+                chosen.name = placement.clipName.isNotEmpty() ? placement.clipName : "CAPTURE";
+            }
+        }
+        else if (! chosen.active && score < chosen.score)
+        {
+            chosen.index = i;
+            chosen.score = score;
+            chosen.startBeat = startBeat;
+            chosen.lengthBeats = lengthBeats;
+            chosen.relativeBeat = relativeBeat;
+            chosen.name = placement.clipName.isNotEmpty() ? placement.clipName : "CAPTURE";
+        }
+    }
+
+    const int panelW = 300;
+    const int panelH = 102;
+    const int x = juce::jmax (10, getWidth() - panelW - 10);
+    const int y = juce::jmax (topOffset() + 8, 8);
+    const juce::Rectangle<float> panel ((float) x, (float) y, (float) panelW, (float) panelH);
+    const auto inner = panel.reduced (10.0f);
+
+    g.setColour (Theme::Colour::surface1.withAlpha (0.88f));
+    g.fillRoundedRectangle (panel, 6.0f);
+    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.62f));
+    g.drawRoundedRectangle (panel, 6.0f, 1.0f);
+
+    g.setFont (Theme::Font::micro());
+    g.setColour (Theme::Colour::inkLight.withAlpha (0.95f));
+
+    auto drawLine = [&] (int lineIndex, const juce::String& text)
+    {
+        const float lineH = 13.0f;
+        const juce::Rectangle<int> r (juce::roundToInt (inner.getX()),
+                                      juce::roundToInt (inner.getY() + lineIndex * lineH),
+                                      juce::roundToInt (inner.getWidth()),
+                                      juce::roundToInt (lineH));
+        g.drawText (text, r, juce::Justification::centredLeft, false);
+    };
+
+    drawLine (0, "Timeline Debug");
+    drawLine (1, "beat " + juce::String (processorBeat, 2)
+                 + " | loop " + juce::String (beatInLoop, 2)
+                 + " / " + juce::String (loopBeats, 2));
+    drawLine (2, "clips " + juce::String (placements.size()));
+
+    if (chosen.index >= 0)
+    {
+        drawLine (3, juce::String (chosen.active ? "active " : "nearest ")
+                     + chosen.name);
+        drawLine (4, "start " + juce::String (chosen.startBeat, 2)
+                     + " len " + juce::String (chosen.lengthBeats, 2)
+                     + " rel " + juce::String (chosen.relativeBeat, 2));
+    }
+    else
+    {
+        drawLine (3, "no timeline clips");
+        drawLine (4, "drop a clip to inspect timing");
+    }
+}
+
 void PluginEditor::newSong()
 {
     processorRef.getSongManager().resetToDefault();
     processorRef.getStructureEngine().rebuild();
     processorRef.syncAuthoredSongToRuntime();
+    m_timelineClipAudioCache.clearQuick();
     m_currentSongFile = {};
     applyAuthoredSongToUi();
     systemFeed.addMessage ("New song");
@@ -1558,6 +2162,7 @@ void PluginEditor::openSong()
 
                               processorRef.getStructureEngine().rebuild();
                               processorRef.syncAuthoredSongToRuntime();
+                              m_timelineClipAudioCache.clearQuick();
                               m_currentSongFile = file;
                               applyAuthoredSongToUi();
                               systemFeed.addMessage ("Opened song: " + file.getFileName());
@@ -1572,8 +2177,13 @@ void PluginEditor::saveSong()
         return;
     }
 
+    const bool timelineAssetsOk = writeTimelineAudioAssetsForSong (m_currentSongFile);
     if (processorRef.getSongManager().saveToFile (m_currentSongFile))
+    {
         systemFeed.addMessage ("Saved song: " + m_currentSongFile.getFileName());
+        if (! timelineAssetsOk)
+            systemFeed.addMessage ("Timeline audio warning: some clip audio assets were missing.");
+    }
     else
         systemFeed.addMessage ("Save failed: " + m_currentSongFile.getFileName());
 }
@@ -1597,10 +2207,13 @@ void PluginEditor::saveSongAs()
                               if (! file.hasFileExtension ("spool-song"))
                                   file = file.withFileExtension ("spool-song");
 
+                              const bool timelineAssetsOk = writeTimelineAudioAssetsForSong (file);
                               if (processorRef.getSongManager().saveToFile (file))
                               {
                                   m_currentSongFile = file;
                                   systemFeed.addMessage ("Saved song: " + file.getFileName());
+                                  if (! timelineAssetsOk)
+                                      systemFeed.addMessage ("Timeline audio warning: some clip audio assets were missing.");
                               }
                               else
                               {
@@ -1698,7 +2311,6 @@ void PluginEditor::exportThemeFile()
 
 void PluginEditor::applyAuthoredSongToUi()
 {
-    auto& appState = processorRef.getAppState();
     const auto& authoredStructure = processorRef.getSongManager().getStructureState();
 
     songHeader.setCompactMode (AppPreferences::get().getCompactSongHeader());
@@ -1734,9 +2346,12 @@ void PluginEditor::applyAuthoredSongToUi()
     zoneD.setAuthoredTimelineData (&processorRef.getSongManager().getLyricsState(),
                                    &processorRef.getSongManager().getAutomationState());
     zoneD.seedStructureRails (authoredStructure);
-    zoneD.setStructureBeat (appState.transport.playheadBeats);
+    refreshTimelinePlacementsUi();
+    zoneD.setStructureBeat (processorRef.getCurrentSongBeat());
     zoneD.setStructureFollowState (computeFollowState (processorRef.isStructureFollowForTracksEnabled(),
                                                        structureHasScaffold (authoredStructure)));
+    processorRef.setTimelineLoopLengthBeats (static_cast<double> (zoneD.loopLengthBars())
+                                             * juce::jmax (1.0, processorRef.getBeatsPerBar()));
     updateSequencerStructureContext (processorRef.getCurrentSongBeat());
     resized();
     repaint();

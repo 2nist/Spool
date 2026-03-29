@@ -110,8 +110,9 @@ float AudioHistoryStrip::xToSecondsAgo (float x) const noexcept
     if (wr.getWidth() <= 0) return 0.0f;
     const float rimW      = 4.0f;
     const float waveW     = static_cast<float> (wr.getWidth()) - rimW * 2.0f;
+    if (waveW <= 0.0f) return 0.0f;
     const float relX      = x - static_cast<float> (wr.getX()) - rimW;
-    const float normalized = 1.0f - relX / waveW;  // 0=now, 1=oldest
+    const float normalized = relX / waveW;  // 0=now, 1=oldest
     return juce::jlimit (0.0f, static_cast<float> (m_windowSeconds),
                          normalized * static_cast<float> (m_windowSeconds));
 }
@@ -122,8 +123,9 @@ float AudioHistoryStrip::secondsAgoToX (float secondsAgo) const noexcept
     if (wr.getWidth() <= 0) return 0.0f;
     const float rimW   = 4.0f;
     const float waveW  = static_cast<float> (wr.getWidth()) - rimW * 2.0f;
+    if (waveW <= 0.0f) return static_cast<float> (wr.getX()) + rimW;
     const float norm   = secondsAgo / static_cast<float> (m_windowSeconds);
-    return static_cast<float> (wr.getX()) + rimW + (1.0f - norm) * waveW;
+    return static_cast<float> (wr.getX()) + rimW + norm * waveW;
 }
 
 //==============================================================================
@@ -292,10 +294,10 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
     // Age wash — subtle warm tint on oldest signal
     {
         const int ageW = juce::jmin (200, wr.getWidth() * 2 / 3);
-        juce::ColourGradient aw (juce::Colour (0x18C0A870), (float)(wr.getX() + 4),          0.f,
-                                  juce::Colour (0x00C0A870), (float)(wr.getX() + 4 + ageW),  0.f, false);
+        juce::ColourGradient aw (juce::Colour (0x00C0A870), (float)(wr.getRight() - 4 - ageW),  0.f,
+                                  juce::Colour (0x18C0A870), (float)(wr.getRight() - 4),         0.f, false);
         g.setGradientFill (aw);
-        g.fillRect (wr.getX() + 4, wr.getY(), ageW, wr.getHeight());
+        g.fillRect (wr.getRight() - 4 - ageW, wr.getY(), ageW, wr.getHeight());
     }
 
     // Centreline reference (very faint)
@@ -313,6 +315,10 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
         const float waveStartX = (float)(wr.getX() + 4);
         const float waveW      = (float)(wr.getWidth() - 8);
         const int   n          = m_waveformData.size();
+        auto sampleAt = [this, n] (int i) noexcept
+        {
+            return m_waveformData[juce::jlimit (0, n - 1, n - 1 - i)];
+        };
 
         // Ink colour: very dark, barely tinted towards source
         const juce::Colour ink = kInk.interpolatedWith (m_sourceColor.withBrightness (0.12f), 0.20f);
@@ -321,9 +327,9 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
         juce::Path fillPath;
         fillPath.startNewSubPath (waveStartX, cx);
         for (int i = 0; i < n; ++i)
-            fillPath.lineTo (waveStartX + ((float)i / n) * waveW, cx - m_waveformData[i] * maxH);
+            fillPath.lineTo (waveStartX + ((float)i / n) * waveW, cx - sampleAt (i) * maxH);
         for (int i = n - 1; i >= 0; --i)
-            fillPath.lineTo (waveStartX + ((float)i / n) * waveW, cx + m_waveformData[i] * maxH);
+            fillPath.lineTo (waveStartX + ((float)i / n) * waveW, cx + sampleAt (i) * maxH);
         fillPath.closeSubPath();
         g.setColour (ink.withAlpha (0.07f));
         g.fillPath  (fillPath);
@@ -332,7 +338,7 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
         juce::Path topPath;
         topPath.startNewSubPath (waveStartX, cx);
         for (int i = 0; i < n; ++i)
-            topPath.lineTo (waveStartX + ((float)i / n) * waveW, cx - m_waveformData[i] * maxH);
+            topPath.lineTo (waveStartX + ((float)i / n) * waveW, cx - sampleAt (i) * maxH);
         g.setColour (ink.withAlpha (0.75f));
         g.strokePath (topPath, juce::PathStrokeType (Theme::Stroke::normal));
 
@@ -340,37 +346,42 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
         juce::Path botPath;
         botPath.startNewSubPath (waveStartX, cx);
         for (int i = 0; i < n; ++i)
-            botPath.lineTo (waveStartX + ((float)i / n) * waveW, cx + m_waveformData[i] * maxH);
+            botPath.lineTo (waveStartX + ((float)i / n) * waveW, cx + sampleAt (i) * maxH);
         g.setColour (ink.withAlpha (0.40f));
         g.strokePath (botPath, juce::PathStrokeType (Theme::Stroke::subtle));
 
         // Freshness overlay — denser ink density at the "now" edge
         const int freshW = juce::jmin (60, wr.getWidth() / 5);
         {
-            juce::ColourGradient fresh (ink.withAlpha (0.18f), (float)(wr.getRight() - 4),          0.f,
-                                        ink.withAlpha (0.0f),  (float)(wr.getRight() - 4 - freshW), 0.f, false);
+            juce::ColourGradient fresh (ink.withAlpha (0.18f), (float)(wr.getX() + 4),          0.f,
+                                        ink.withAlpha (0.0f),  (float)(wr.getX() + 4 + freshW), 0.f, false);
             g.setGradientFill (fresh);
-            g.fillRect (wr.getRight() - 4 - freshW, wr.getY(), freshW, wr.getHeight());
+            g.fillRect (wr.getX() + 4, wr.getY(), freshW, wr.getHeight());
         }
     }
 
     // ─── 3  Selection highlight — material ready to extract ─────────────────
     if (m_hasSelection && m_selStart != m_selEnd)
     {
-        const float x1  = secondsAgoToX ((float)juce::jmax (m_selStart, m_selEnd));
-        const float x2  = secondsAgoToX ((float)juce::jmin (m_selStart, m_selEnd));
-        const auto  selR = juce::Rectangle<float> (x1, (float)wr.getY(), x2 - x1, (float)wr.getHeight());
+        const float x1  = secondsAgoToX ((float)m_selStart);
+        const float x2  = secondsAgoToX ((float)m_selEnd);
+        const float leftX = juce::jmin (x1, x2);
+        const float rightX = juce::jmax (x1, x2);
+        const auto  selR = juce::Rectangle<float> (leftX,
+                                                   (float)wr.getY(),
+                                                   rightX - leftX,
+                                                   (float)wr.getHeight());
 
         g.setColour (juce::Colours::white.withAlpha (0.55f));
         g.fillRect  (selR);
         g.setColour (Theme::Colour::accent.withAlpha (0.70f));
-        g.drawLine  (x1, (float)wr.getY(), x1, (float)wr.getBottom(), 1.5f);
-        g.drawLine  (x2, (float)wr.getY(), x2, (float)wr.getBottom(), 1.5f);
+        g.drawLine  (leftX, (float)wr.getY(), leftX, (float)wr.getBottom(), 1.5f);
+        g.drawLine  (rightX, (float)wr.getY(), rightX, (float)wr.getBottom(), 1.5f);
 
         const double len = std::abs (m_selEnd - m_selStart);
         const juce::String lbl = (len < 60.0) ? juce::String (len, 1) + "s"
                                                : juce::String (len / 60.0, 1) + "m";
-        const float lblX = (x1 + x2) * 0.5f - 20.0f;
+        const float lblX = (leftX + rightX) * 0.5f - 20.0f;
         const auto  lblR = juce::Rectangle<int> ((int)lblX, wr.getY() + 2, 40, 12);
         g.setColour (juce::Colour (0xCCF5F1EC));
         g.fillRoundedRectangle (lblR.toFloat().expanded (4.0f, 0.0f), Theme::Radius::chip);
@@ -384,8 +395,11 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
     {
         const float x1 = secondsAgoToX ((float)(m_grabbedStart + m_grabbedLength));
         const float x2 = secondsAgoToX ((float)m_grabbedStart);
-        const auto  gr = juce::Rectangle<float> (x1, (float)wr.getY(),
-                                                  juce::jmax (2.0f, x2 - x1),
+        const float leftX = juce::jmin (x1, x2);
+        const float rightX = juce::jmax (x1, x2);
+        const auto  gr = juce::Rectangle<float> (leftX,
+                                                  (float)wr.getY(),
+                                                  juce::jmax (2.0f, rightX - leftX),
                                                   (float)wr.getHeight());
 
         // Lifted clip fill (brighter when drag-pending, approaching object state)
@@ -403,13 +417,17 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
             const float waveStartX = (float)(wr.getX() + 4);
             const float waveW      = (float)(wr.getWidth() - 8);
             const int   n          = m_waveformData.size();
+            auto sampleAt = [this, n] (int i) noexcept
+            {
+                return m_waveformData[juce::jlimit (0, n - 1, n - 1 - i)];
+            };
 
             juce::Path clipFill;
             clipFill.startNewSubPath (waveStartX, cx);
             for (int i = 0; i < n; ++i)
-                clipFill.lineTo (waveStartX + ((float)i / n) * waveW, cx - m_waveformData[i] * maxH);
+                clipFill.lineTo (waveStartX + ((float)i / n) * waveW, cx - sampleAt (i) * maxH);
             for (int i = n - 1; i >= 0; --i)
-                clipFill.lineTo (waveStartX + ((float)i / n) * waveW, cx + m_waveformData[i] * maxH);
+                clipFill.lineTo (waveStartX + ((float)i / n) * waveW, cx + sampleAt (i) * maxH);
             clipFill.closeSubPath();
 
             g.setColour (m_sourceColor.withAlpha (0.45f));
@@ -447,13 +465,13 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
 
     // ─── 5  Write-head needle — small stylus arm at the live write position ─
     {
-        const float rimX  = (float)(wr.getRight() - 4);
+        const float rimX  = (float)(wr.getX() + 4);
         const float cy    = (float)wr.getCentreY();
 
         // Cantilever arm: base just outside the rim, angled down to tape surface
-        const float baseX = rimX + 1.0f;
+        const float baseX = rimX - 1.0f;
         const float baseY = cy - 7.0f;
-        const float tipX  = rimX - 2.0f;
+        const float tipX  = rimX + 2.0f;
         const float tipY  = cy;
 
         g.setColour (kNeedle.withAlpha (0.65f));
@@ -486,7 +504,7 @@ void AudioHistoryStrip::paintWaveform (juce::Graphics& g) const
         g.setFont   (Theme::Font::micro());
         g.setColour (juce::Colour (0x70200E04));
         g.drawText  ("NOW",
-                     juce::Rectangle<int> ((int)(wr.getRight() - 4) - 14, wr.getY() + 8, 28, 8),
+                     juce::Rectangle<int> ((int)(wr.getX() + 4) - 14, wr.getY() + 8, 28, 8),
                      juce::Justification::centred, false);
     }
 }
@@ -636,8 +654,10 @@ void AudioHistoryStrip::mouseDown (const juce::MouseEvent& e)
         // drag-and-drop gesture instead of starting a selection.
         if (m_hasGrabbedRegion)
         {
-            const float leftX  = secondsAgoToX (static_cast<float> (m_grabbedStart + m_grabbedLength));
-            const float rightX = secondsAgoToX (static_cast<float> (m_grabbedStart));
+            const float xA = secondsAgoToX (static_cast<float> (m_grabbedStart + m_grabbedLength));
+            const float xB = secondsAgoToX (static_cast<float> (m_grabbedStart));
+            const float leftX = juce::jmin (xA, xB);
+            const float rightX = juce::jmax (xA, xB);
             const float px     = static_cast<float> (pos.x);
             if (px >= leftX - 8.0f && px <= rightX + 8.0f)
             {
@@ -651,7 +671,14 @@ void AudioHistoryStrip::mouseDown (const juce::MouseEvent& e)
 
         if (mode == SelDrag::ResizingLeft || mode == SelDrag::ResizingRight)
         {
-            m_selDrag    = mode;
+            const float startX = secondsAgoToX (static_cast<float> (m_selStart));
+            const float endX   = secondsAgoToX (static_cast<float> (m_selEnd));
+            const bool  startIsLeft = startX <= endX;
+            const bool  dragLeftEdge = (mode == SelDrag::ResizingLeft);
+            const bool  adjustStart = dragLeftEdge ? startIsLeft : !startIsLeft;
+
+            // m_selDrag variants drive which endpoint is edited in mouseDrag.
+            m_selDrag    = adjustStart ? SelDrag::ResizingLeft : SelDrag::ResizingRight;
             m_dragAnchor = sAgo;
         }
         else if (mode == SelDrag::Moving)
@@ -699,10 +726,15 @@ void AudioHistoryStrip::mouseDrag (const juce::MouseEvent& e)
                 const int n = m_waveformData.size();
                 if (n > 1 && m_hasGrabbedRegion && dragWr.getWidth() > 0)
                 {
+                    const double secA = m_grabbedStart;
+                    const double secB = m_grabbedStart + m_grabbedLength;
+                    const double newerSec = juce::jmin (secA, secB);
+                    const double olderSec = juce::jmax (secA, secB);
+
                     const int leftIdx  = juce::jlimit (0, n - 1,
-                        (int)((m_grabbedStart + m_grabbedLength) / m_windowSeconds * n));
+                        (int)((newerSec / m_windowSeconds) * (double)(n - 1)));
                     const int rightIdx = juce::jlimit (0, n - 1,
-                        (int)(m_grabbedStart / m_windowSeconds * n));
+                        (int)((olderSec / m_windowSeconds) * (double)(n - 1)));
                     const int span     = juce::jmax (1, rightIdx - leftIdx);
 
                     const float cx   = ib.getCentreY();
@@ -817,14 +849,16 @@ AudioHistoryStrip::SelDrag AudioHistoryStrip::selDragModeAt (juce::Point<int> po
     if (!m_hasSelection) return SelDrag::None;
     if (!waveRect().contains (pos)) return SelDrag::None;
 
-    const float x1 = secondsAgoToX (static_cast<float> (juce::jmax (m_selStart, m_selEnd)));
-    const float x2 = secondsAgoToX (static_cast<float> (juce::jmin (m_selStart, m_selEnd)));
+    const float x1 = secondsAgoToX (static_cast<float> (m_selStart));
+    const float x2 = secondsAgoToX (static_cast<float> (m_selEnd));
+    const float leftX = juce::jmin (x1, x2);
+    const float rightX = juce::jmax (x1, x2);
     const float px = static_cast<float> (pos.x);
     const int   edge = 8;
 
-    if (px >= x1 - edge && px <= x1 + edge) return SelDrag::ResizingLeft;
-    if (px >= x2 - edge && px <= x2 + edge) return SelDrag::ResizingRight;
-    if (px >= x1 && px <= x2)               return SelDrag::Moving;
+    if (px >= leftX - edge && px <= leftX + edge) return SelDrag::ResizingLeft;
+    if (px >= rightX - edge && px <= rightX + edge) return SelDrag::ResizingRight;
+    if (px >= leftX && px <= rightX)               return SelDrag::Moving;
     return SelDrag::None;
 }
 

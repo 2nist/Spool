@@ -1,5 +1,6 @@
 #include "TracksPanel.h"
 #include "ZoneAStyle.h"
+#include <cmath>
 
 //==============================================================================
 TracksPanel::TracksPanel()
@@ -37,6 +38,23 @@ void TracksPanel::setBpm (float bpm)
 void TracksPanel::setPosition (float beat)
 {
     m_beat = beat;
+    repaint();
+}
+
+void TracksPanel::addTimelinePlacement (const TimelinePlacement& placement)
+{
+    m_timelinePlacements.add (placement);
+
+    static constexpr int kMaxPlacements = 48;
+    while (m_timelinePlacements.size() > kMaxPlacements)
+        m_timelinePlacements.remove (0);
+
+    repaint();
+}
+
+void TracksPanel::clearTimelinePlacements()
+{
+    m_timelinePlacements.clear();
     repaint();
 }
 
@@ -232,6 +250,19 @@ void TracksPanel::paintLanesTab (juce::Graphics& g) const
         g.drawText (lane.name, kPad + 10, y, getWidth() - 120, kLaneRowH,
                     juce::Justification::centredLeft, false);
 
+        int clipCount = 0;
+        for (const auto& placement : m_timelinePlacements)
+            if (placement.laneIndex == i)
+                ++clipCount;
+        g.setColour (Theme::Colour::inkGhost);
+        g.drawText ("C" + juce::String (clipCount),
+                    getWidth() - 84,
+                    y,
+                    20,
+                    kLaneRowH,
+                    juce::Justification::centred,
+                    false);
+
         // M / S / ARM buttons
         const int btnW = 18, btnH = 14;
         const int btnY = rowR.getCentreY() - btnH / 2;
@@ -289,6 +320,37 @@ void TracksPanel::paintLoopTab (juce::Graphics& g) const
     g.setColour (Theme::Colour::inkGhost);
     g.drawText ("LOOP END  Bar " + juce::String (juce::roundToInt (m_loopStart + m_loopLength)),
                 kPad, y, getWidth() - kPad * 2, 14, juce::Justification::centredLeft, false);
+
+    y += 18;
+    g.setColour (Theme::Colour::inkGhost);
+    g.drawText ("TIMELINE CLIPS", kPad, y, getWidth() - kPad * 2, 14,
+                juce::Justification::centredLeft, false);
+    y += 16;
+
+    if (m_timelinePlacements.isEmpty())
+    {
+        g.setColour (Theme::Colour::inkGhost.withAlpha (0.8f));
+        g.drawText ("No clips placed yet", kPad, y, getWidth() - kPad * 2, 14,
+                    juce::Justification::centredLeft, false);
+        return;
+    }
+
+    const int first = juce::jmax (0, m_timelinePlacements.size() - 5);
+    for (int i = first; i < m_timelinePlacements.size() && y + 14 <= ca.getBottom(); ++i)
+    {
+        const auto& placement = m_timelinePlacements.getReference (i);
+        const int barStart = juce::jmax (1, juce::roundToInt (std::floor (placement.startBeat / 4.0f)) + 1);
+        const int bars = juce::jmax (1, juce::roundToInt (placement.lengthBeats / 4.0f));
+        const auto laneLabel = placement.laneName.isNotEmpty()
+                                   ? placement.laneName
+                                   : ("L" + juce::String (placement.laneIndex + 1));
+        const juce::String line = laneLabel + "  "
+                                  + placement.clipName + "  @ bar "
+                                  + juce::String (barStart) + "  (" + juce::String (bars) + " bars)";
+        g.setColour (Theme::Colour::inkMid);
+        g.drawText (line, kPad, y, getWidth() - kPad * 2, 14, juce::Justification::centredLeft, true);
+        y += 14;
+    }
 }
 
 void TracksPanel::paintViewTab (juce::Graphics& g) const

@@ -8,6 +8,7 @@
 #include "dsp/SpoolAudioGraph.h"
 #include "dsp/MidiRouter.h"
 #include "dsp/CircularAudioBuffer.h"
+#include "dsp/CapturedAudioClip.h"
 #include "dsp/SongManager.h"
 #include "midi/MidiConstraintEngine.h"
 #include "state/AppState.h"
@@ -149,8 +150,18 @@ public:
     void setLooperPreviewClip (const juce::AudioBuffer<float>& buffer, double sampleRate);
     void clearLooperPreview();
     void setLooperPreviewState (bool playing, bool looping);
+    void setTimelineLoopLengthBeats (double beats) noexcept;
     float getLooperPreviewProgress() const noexcept { return m_looperPreviewProgress.load(); }
     bool isLooperPreviewPlaying() const noexcept { return m_looperPreviewPlaying.load(); }
+
+    /** Timeline clip playback (audio-thread mixed in processBlock). */
+    void addTimelineAudioClip (const CapturedAudioClip& clip,
+                               double startBeat,
+                               double lengthBeats,
+                               int laneIndex,
+                               const juce::String& moduleType,
+                               const juce::String& clipName);
+    void clearTimelineAudioClips();
 
     bool hasGrabbedClip() const noexcept { return m_hasGrabbedClip; }
     const juce::AudioBuffer<float>& getGrabbedClip() const noexcept { return m_grabbedClip; }
@@ -196,6 +207,15 @@ private:
     bool m_looperPreviewLoopingFlag { true };
     std::atomic<bool> m_looperPreviewPlaying { false };
     std::atomic<float> m_looperPreviewProgress { 0.0f };
+    struct TimelineAudioClip
+    {
+        juce::AudioBuffer<float> buffer;
+        double startBeat { 0.0 };
+        double lengthBeats { 4.0 };
+    };
+    juce::SpinLock m_timelineAudioLock;
+    juce::Array<TimelineAudioClip> m_timelineAudioClips;
+    std::atomic<double> m_timelineLoopLengthBeats { 32.0 };
 
     // Per-slot MIDI scratch buffers (pre-allocated, cleared each block)
     juce::MidiBuffer m_slotMidi[SpoolAudioGraph::kNumSlots];
@@ -340,6 +360,10 @@ private:
     void updatePhraseMemory (int slot, int realizedNote, SlotPattern::StepRole role, const Chord& currentChord);
     void releaseFinishedSlotNotes (int slot, int sampleOffset);
     void pushHeldNote (int slot, int note, int lengthTicks);
+    void mixTimelineAudio (juce::AudioBuffer<float>& buffer,
+                           int numSamples,
+                           double blockStartBeat,
+                           double beatsPerSample) noexcept;
     
     std::atomic<double> m_currentSongBeat { 0.0 };
     

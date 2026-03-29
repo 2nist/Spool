@@ -48,6 +48,17 @@ struct ActiveSongState {
     ChordEvent activeChord {};
 };
 
+struct TimelineClipPlacement
+{
+    int          laneIndex   = 0;
+    juce::String moduleType;
+    juce::String clipName;
+    juce::String clipId;
+    juce::String audioAssetPath;
+    float        startBeat   = 0.0f;
+    float        lengthBeats = 0.0f;
+};
+
 class SongManager
 {
 public:
@@ -62,6 +73,7 @@ public:
     const juce::String& getNotes() const;
     const LyricsState& getLyricsState() const;
     const AutomationState& getAutomationState() const;
+    const juce::Array<TimelineClipPlacement>& getTimelinePlacements() const;
 
     void setSongTitle (const juce::String& title);
     void setTempo (int bpm);
@@ -74,6 +86,9 @@ public:
     void resetToDefault();
     void replaceLyricsState (const LyricsState& lyrics);
     void replaceAutomationState (const AutomationState& automation);
+    void addTimelinePlacement (const TimelineClipPlacement& placement);
+    void clearTimelinePlacements();
+    void replaceTimelinePlacements (const juce::Array<TimelineClipPlacement>& placements);
 
     const StructureState& getStructureState() const;
     StructureState& getStructureStateForEdit();
@@ -114,6 +129,7 @@ private:
         StructureState structure;
         LyricsState lyrics;
         AutomationState automation;
+        juce::Array<TimelineClipPlacement> timelinePlacements;
         juce::Array<SongPattern> patterns;
         juce::Array<SongSection> sections;
         juce::Array<ChordEvent> chords;

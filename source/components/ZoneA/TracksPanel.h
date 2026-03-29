@@ -42,6 +42,16 @@ public:
     void setRecording  (bool recording);
     void setBpm        (float bpm);
     void setPosition   (float beat);
+    struct TimelinePlacement
+    {
+        int          laneIndex   { 0 };
+        juce::String laneName;
+        juce::String clipName;
+        float        startBeat   { 0.0f };
+        float        lengthBeats { 0.0f };
+    };
+    void addTimelinePlacement (const TimelinePlacement& placement);
+    void clearTimelinePlacements();
 
     /** Current lane height scale (0.4..3.0). */
     void setLaneHeightScale (float s);
@@ -78,6 +88,7 @@ private:
     float m_bpm          { 120.0f };
     float m_beat         { 0.0f };
     int   m_activeSubTab { kLanes };
+    juce::Array<TimelinePlacement> m_timelinePlacements;
 
     float m_laneHeightScale { 1.0f };
     float m_loopStart       { 1.0f };

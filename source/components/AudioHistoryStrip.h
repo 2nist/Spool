@@ -8,7 +8,7 @@
     AudioHistoryStrip — full-width resizable strip between Zone B/C and Zone D.
 
     Displays the continuous circular audio history as a rolling waveform.
-    Present moment is pinned to the right edge; past scrolls left.
+    Present moment is pinned to the left edge; past scrolls right.
 
     Layout (left to right):
       Left tab:   28px  — icon, "HIST" label, collapse arrow

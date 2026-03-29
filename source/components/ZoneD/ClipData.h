@@ -22,6 +22,7 @@ struct Clip
     bool         selected    = false;
     bool         armed       = false;
     juce::Colour tint        = juce::Colours::transparentBlack;
+    juce::Array<float> waveformPreview; // normalized 0..1 peak envelope bins
 };
 
 //==============================================================================

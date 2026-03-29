@@ -67,7 +67,7 @@ void StructureTimelineLane::paint (juce::Graphics& g)
     const double normalizedCurrentBeat = wrappedBeat;
     auto timelineXForBeat = [normalizedCurrentBeat, loopBeats] (float startX, float width, double beat)
     {
-        return startX + width * 0.5f + static_cast<float> (((beat - normalizedCurrentBeat) / loopBeats) * static_cast<double> (width));
+        return startX + width * 0.5f + static_cast<float> (((normalizedCurrentBeat - beat) / loopBeats) * static_cast<double> (width));
     };
     auto drawWrappedBeatRange = [&] (float bandStart,
                                      float bandWidth,

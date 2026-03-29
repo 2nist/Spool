@@ -1,4 +1,5 @@
 #include "ZoneDComponent.h"
+#include <cmath>
 
 //==============================================================================
 ZoneDComponent::ZoneDComponent()
@@ -40,6 +41,8 @@ ZoneDComponent::ZoneDComponent()
     {
         m_loopLengthBars = bars;
         m_cylinderBand.setLoopLengthBars (bars);
+        if (onLoopLengthChanged)
+            onLoopLengthChanged (bars);
     };
 
     // Wire TransportStrip → mixer gutter toggle
@@ -59,6 +62,12 @@ ZoneDComponent::ZoneDComponent()
     };
 
     m_cylinderBand.setLoopLengthBars (m_loopLengthBars);
+
+    m_cylinderBand.onClipDropped = [this] (int laneIndex)
+    {
+        if (onClipDropped)
+            onClipDropped (laneIndex);
+    };
 }
 
 //==============================================================================
@@ -203,6 +212,65 @@ void ZoneDComponent::setStructureBeat (double beat)
 void ZoneDComponent::setStructureFollowState (TransportStrip::StructureFollowState state)
 {
     m_transportStrip.setStructureFollowState (state);
+}
+
+void ZoneDComponent::clearTimelineClips()
+{
+    bool changed = false;
+    for (auto& lane : m_lanes)
+    {
+        for (int i = lane.clips.size(); --i >= 0;)
+        {
+            if (lane.clips.getReference (i).type != ClipType::scaffold)
+            {
+                lane.clips.remove (i);
+                changed = true;
+            }
+        }
+    }
+
+    if (changed)
+    {
+        juce::Array<LaneData> lanes;
+        lanes.addArray (m_lanes.data(), static_cast<int> (m_lanes.size()));
+        m_cylinderBand.setLanes (lanes);
+    }
+}
+
+void ZoneDComponent::addTimelineClip (int slotIndex, const Clip& clip, const juce::String& moduleType)
+{
+    if (slotIndex < 0 || slotIndex >= static_cast<int> (m_lanes.size()))
+        return;
+
+    auto& lane = m_lanes[static_cast<size_t> (slotIndex)];
+    lane.slotIndex = slotIndex;
+    lane.active = true;
+
+    if (moduleType.isNotEmpty())
+        lane.moduleType = moduleType;
+    if (lane.moduleType.isEmpty())
+        lane.moduleType = "AUDIO";
+    lane.dotColor = dotColorForModule (lane.moduleType);
+
+    // Remove the auto-seeded full-lane placeholder the first time a real clip arrives.
+    if (lane.clips.size() == 1)
+    {
+        const auto& existing = lane.clips.getReference (0);
+        const float loopBeats = m_loopLengthBars * 4.0f;
+        const bool isPlaceholder = std::abs (existing.startBeat) < 0.0001f
+                                   && std::abs (existing.lengthBeats - loopBeats) < 0.0001f
+                                   && (existing.name.trim().isEmpty()
+                                       || existing.name == lane.moduleType
+                                       || existing.name == "—");
+        if (isPlaceholder)
+            lane.clips.clearQuick();
+    }
+
+    lane.clips.add (clip);
+
+    juce::Array<LaneData> lanes;
+    lanes.addArray (m_lanes.data(), static_cast<int> (m_lanes.size()));
+    m_cylinderBand.setLanes (lanes);
 }
 
 void ZoneDComponent::seedStructureRails (const StructureState& structure)

@@ -20,6 +20,7 @@
 #include "state/AppPreferences.h"
 #include "melatonin_inspector/melatonin_inspector.h"
 #include "theme/SpoolLookAndFeel.h"
+#include <juce_audio_formats/juce_audio_formats.h>
 
 //==============================================================================
 class PluginEditor : public juce::AudioProcessorEditor,
@@ -35,6 +36,7 @@ public:
 
     //==============================================================================
     void paint   (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized () override;
     bool keyPressed (const juce::KeyPress& key) override;
     void refreshFromAuthoredSong();
@@ -125,6 +127,8 @@ private:
     void showEditMenu (juce::Rectangle<int> anchorBounds);
     void showViewMenu (juce::Rectangle<int> anchorBounds);
     void showSettingsMenu (juce::Rectangle<int> anchorBounds);
+    void toggleTimelineDebugOverlay();
+    void paintTimelineDebugOverlay (juce::Graphics& g) const;
     void newSong();
     void openSong();
     void saveSong();
@@ -149,9 +153,9 @@ private:
         Updates LooperStrip UI; loop playback DSP is stubbed pending engine work. */
     void routeClipToLooper (const CapturedAudioClip& clip);
 
-    /** TIMELINE destination — stub. Opens Tracks panel to indicate placement intent.
-        Arrangement DSP not yet implemented; clip provenance logged to system feed. */
-    void routeClipToTimeline (const CapturedAudioClip& clip);
+    /** TIMELINE destination — places clip metadata onto the timeline lane model.
+        Opens Tracks panel and mirrors placement in Zone D + TracksPanel summary. */
+    void routeClipToTimeline (const CapturedAudioClip& clip, std::optional<int> targetSlotOverride = std::nullopt);
 
     DrumMachineData* getDrumStateForSlot (int slotIndex) noexcept;
     const DrumMachineData* getDrumStateForSlot (int slotIndex) const noexcept;
@@ -160,15 +164,32 @@ private:
     void applyDrumStateToRuntime (int slotIndex);
     void replaceDrumStateForSlot (int slotIndex, const DrumMachineData& state);
     void updateSequencerStructureContext (double structureBeat);
+    juce::String moduleTypeForSlot (int slotIndex) const;
+    void refreshTimelinePlacementsUi();
+    bool writeTimelineAudioAssetsForSong (const juce::File& songFile);
+    juce::String ensureTimelineClipId (TimelineClipPlacement& placement);
+    juce::File timelineAssetFileFor (const juce::File& songFile, const juce::String& clipId) const;
+    const CapturedAudioClip* findTimelineClipAudio (const juce::String& clipId) const;
+    void upsertTimelineClipAudio (const juce::String& clipId, const CapturedAudioClip& clip);
+    bool loadTimelineClipAudioFromFile (const TimelineClipPlacement& placement, CapturedAudioClip& outClip);
+    bool saveTimelineClipAudioToFile (const CapturedAudioClip& clip, const juce::File& file) const;
 
     juce::Component::SafePointer<juce::CallOutBox> m_settingsCallout;
     juce::Component::SafePointer<juce::DialogWindow> m_themeDesignerWindow;
     juce::File m_currentSongFile;
+    struct TimelineClipAudioCacheEntry
+    {
+        juce::String clipId;
+        CapturedAudioClip clip;
+    };
+    juce::Array<TimelineClipAudioCacheEntry> m_timelineClipAudioCache;
+    juce::AudioFormatManager m_audioFormatManager;
     SpoolLookAndFeel m_lookAndFeel;
     std::unique_ptr<melatonin::Inspector> m_inspector;
     double m_lastObservedProcessorBeat { 0.0 };
     bool m_hasObservedProcessorBeat { false };
     juce::int64 m_lastBackstepWarningMs { 0 };
+    bool m_timelineDebugOverlayEnabled { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

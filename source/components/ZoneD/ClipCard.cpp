@@ -70,13 +70,30 @@ void ClipCard::paintAudio (juce::Graphics& g,
                 contentR.withHeight (8.0f).toNearestInt(),
                 juce::Justification::topRight, false);
 
-    // Waveform placeholder — bottom half
-    const float waveY = contentR.getBottom() - 10.0f;
-    g.setColour (Theme::Colour::inkDark.withAlpha (0.35f));
-    g.drawHorizontalLine (juce::roundToInt (waveY + 5.0f),
-                          contentR.getX(),
-                          contentR.getRight());
-    // TODO: real waveform from audio data
+    // Waveform (fallbacks to center line when no preview is available).
+    auto waveR = contentR.withTrimmedTop (9.0f).reduced (1.0f, 0.5f);
+    const float centerY = waveR.getCentreY();
+    const float halfH = juce::jmax (1.0f, waveR.getHeight() * 0.45f);
+    g.setColour (Theme::Colour::inkDark.withAlpha (0.26f));
+    g.drawHorizontalLine (juce::roundToInt (centerY),
+                          waveR.getX(),
+                          waveR.getRight());
+
+    if (clip.waveformPreview.size() > 1)
+    {
+        g.setColour (Theme::Colour::inkDark.withAlpha (0.72f));
+        const int n = clip.waveformPreview.size();
+        for (int i = 0; i < n; ++i)
+        {
+            const float x = juce::jmap ((float) i,
+                                        0.0f,
+                                        (float) (n - 1),
+                                        waveR.getX(),
+                                        waveR.getRight());
+            const float amp = halfH * juce::jlimit (0.0f, 1.0f, clip.waveformPreview.getUnchecked (i));
+            g.drawLine (x, centerY - amp, x, centerY + amp, 1.0f);
+        }
+    }
 
     juce::ignoreUnused (loopLengthBeats, pxPerBeat);
 }

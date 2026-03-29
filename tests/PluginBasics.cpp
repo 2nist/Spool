@@ -7,6 +7,65 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <cmath>
 
+namespace
+{
+constexpr double kTestSampleRate = 48000.0;
+constexpr int    kTestBlockSize  = 480;
+constexpr float   kAudioThreshold = 0.0001f;
+
+CapturedAudioClip makeConstantTimelineClip (int numSamples = 24000, float value = 1.0f)
+{
+    CapturedAudioClip clip;
+    clip.sampleRate = kTestSampleRate;
+    clip.sourceName = "TEST";
+    clip.sourceSlot = 0;
+    clip.tempo = 120.0;
+    clip.bars = 1;
+    clip.buffer.setSize (2, numSamples);
+
+    for (int ch = 0; ch < clip.buffer.getNumChannels(); ++ch)
+        for (int i = 0; i < clip.buffer.getNumSamples(); ++i)
+            clip.buffer.setSample (ch, i, value);
+
+    return clip;
+}
+
+void deactivateAllSlots (PluginProcessor& processor)
+{
+    for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
+        processor.setSlotActive (slot, false);
+}
+
+juce::AudioBuffer<float> processTimelineBlock (PluginProcessor& processor)
+{
+    juce::AudioBuffer<float> buffer (2, kTestBlockSize);
+    buffer.clear();
+    juce::MidiBuffer midi;
+    processor.processBlock (buffer, midi);
+    return buffer;
+}
+
+bool hasAudibleSample (const juce::AudioBuffer<float>& buffer, float threshold = kAudioThreshold)
+{
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+            if (std::abs (buffer.getSample (ch, i)) > threshold)
+                return true;
+
+    return false;
+}
+
+int firstAudibleSample (const juce::AudioBuffer<float>& buffer, float threshold = kAudioThreshold)
+{
+    for (int i = 0; i < buffer.getNumSamples(); ++i)
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            if (std::abs (buffer.getSample (ch, i)) > threshold)
+                return i;
+
+    return -1;
+}
+} // namespace
+
 TEST_CASE ("one is equal to one", "[dummy]")
 {
     REQUIRE (1 == 1);
@@ -21,6 +80,69 @@ TEST_CASE ("Plugin instance", "[instance]")
         CHECK_THAT (testPlugin.getName().toStdString(),
             Catch::Matchers::Equals ("Spool"));
     }
+}
+
+TEST_CASE ("Timeline clip starts on playhead beat", "[timeline][playback]")
+{
+    PluginProcessor processor;
+    processor.prepareToPlay (kTestSampleRate, kTestBlockSize);
+    deactivateAllSlots (processor);
+    processor.setTimelineLoopLengthBeats (8.0);
+    processor.setPlaying (true);
+
+    const auto clip = makeConstantTimelineClip();
+    processor.addTimelineAudioClip (clip, 2.0, 1.0, 0, "AUDIO", "TEST CLIP");
+
+    processor.seekTransport (1.98);
+    auto before = processTimelineBlock (processor);
+    CHECK_FALSE (hasAudibleSample (before));
+
+    processor.seekTransport (2.0);
+    auto atStart = processTimelineBlock (processor);
+    CHECK (hasAudibleSample (atStart));
+    CHECK (firstAudibleSample (atStart) <= 2);
+}
+
+TEST_CASE ("Timeline clip wraps with loop region", "[timeline][loop]")
+{
+    PluginProcessor processor;
+    processor.prepareToPlay (kTestSampleRate, kTestBlockSize);
+    deactivateAllSlots (processor);
+    processor.setTimelineLoopLengthBeats (4.0);
+    processor.setPlaying (true);
+
+    const auto clip = makeConstantTimelineClip();
+    processor.addTimelineAudioClip (clip, 3.5, 1.0, 0, "AUDIO", "WRAP CLIP");
+
+    processor.seekTransport (3.40);
+    auto preClip = processTimelineBlock (processor);
+    CHECK_FALSE (hasAudibleSample (preClip));
+
+    processor.seekTransport (3.99);
+    auto nearWrap = processTimelineBlock (processor);
+    CHECK (hasAudibleSample (nearWrap));
+
+    auto wrapped = processTimelineBlock (processor);
+    CHECK (hasAudibleSample (wrapped));
+}
+
+TEST_CASE ("Timeline clip onset stays near expected sample", "[timeline][timing]")
+{
+    PluginProcessor processor;
+    processor.prepareToPlay (kTestSampleRate, kTestBlockSize);
+    deactivateAllSlots (processor);
+    processor.setTimelineLoopLengthBeats (8.0);
+    processor.setPlaying (true);
+
+    const auto clip = makeConstantTimelineClip();
+    processor.addTimelineAudioClip (clip, 2.25, 1.0, 0, "AUDIO", "DRIFT CLIP");
+
+    processor.seekTransport (2.24);
+    auto block = processTimelineBlock (processor);
+    const int onset = firstAudibleSample (block);
+    REQUIRE (onset >= 0);
+    CHECK (onset >= 238);
+    CHECK (onset <= 242);
 }
 
 TEST_CASE ("SongManager JSON round-trip", "[song][json]")
@@ -48,6 +170,16 @@ TEST_CASE ("SongManager JSON round-trip", "[song][json]")
     chord.root = 65;
     source.addChord (chord);
 
+    TimelineClipPlacement placement;
+    placement.laneIndex = 2;
+    placement.moduleType = "SYNTH";
+    placement.clipName = "SLOT 03";
+    placement.clipId = "clip-abc";
+    placement.audioAssetPath = "spool-media/Test/timeline-clips/clip-abc.wav";
+    placement.startBeat = 16.0f;
+    placement.lengthBeats = 8.0f;
+    source.addTimelinePlacement (placement);
+
     auto temp = juce::File::getSpecialLocation (juce::File::tempDirectory)
                   .getChildFile ("pamplejuce-songmanager-roundtrip.json");
     temp.deleteFile();
@@ -64,6 +196,14 @@ TEST_CASE ("SongManager JSON round-trip", "[song][json]")
     CHECK (loaded.getSections().getReference (0).patternId == 1);
     CHECK (loaded.getChords().size() == 1);
     CHECK (loaded.getChords().getReference (0).root == 65);
+    REQUIRE (loaded.getTimelinePlacements().size() == 1);
+    CHECK (loaded.getTimelinePlacements().getReference (0).laneIndex == 2);
+    CHECK (loaded.getTimelinePlacements().getReference (0).moduleType == "SYNTH");
+    CHECK (loaded.getTimelinePlacements().getReference (0).clipName == "SLOT 03");
+    CHECK (loaded.getTimelinePlacements().getReference (0).clipId == "clip-abc");
+    CHECK (loaded.getTimelinePlacements().getReference (0).audioAssetPath == "spool-media/Test/timeline-clips/clip-abc.wav");
+    CHECK (std::abs (loaded.getTimelinePlacements().getReference (0).startBeat - 16.0f) < 0.001f);
+    CHECK (std::abs (loaded.getTimelinePlacements().getReference (0).lengthBeats - 8.0f) < 0.001f);
 }
 
 TEST_CASE ("SongManager beat query mapping", "[song][query]")

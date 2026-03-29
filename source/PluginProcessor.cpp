@@ -24,6 +24,17 @@ double wrapBeatToStructure (double beat, const StructureState& structure)
     return std::fmod (juce::jmax (0.0, beat), totalBeats);
 }
 
+double wrapPositive (double value, double modulus)
+{
+    if (modulus <= 0.0)
+        return value;
+
+    double wrapped = std::fmod (value, modulus);
+    if (wrapped < 0.0)
+        wrapped += modulus;
+    return wrapped;
+}
+
 int snapToNearestPitchClass (const std::vector<int>& allowedPitchClasses, int inputNote)
 {
     if (allowedPitchClasses.empty())
@@ -780,6 +791,9 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 {
     juce::ScopedNoDenormals noDenormals;
     const int numSamples = buffer.getNumSamples();
+    const bool transportPlaying = m_playing.load (std::memory_order_relaxed);
+    double blockStartBeat = m_currentSongBeat.load (std::memory_order_relaxed);
+    double beatsPerSample = 0.0;
 
     // Constraint pass: incoming MIDI -> structure-aware constrained notes
     juce::MidiBuffer constrainedIncoming;
@@ -851,15 +865,15 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     m_midiRouter.route (midiMessages, m_slotMidi, SpoolAudioGraph::kNumSlots);
 
     // ── Song clock ───────────────────────────────────────────────────────────
-    if (m_playing.load())
+    if (transportPlaying)
     {
         const double bpm            = static_cast<double> (m_bpm.load());
         const double bps            = bpm / 60.0;
-        const double samplesPerBeat = m_sampleRate / bps;
-        const double beatDelta      = static_cast<double> (numSamples) / samplesPerBeat;
-        
+        beatsPerSample = bps / m_sampleRate;
+        const double beatDelta = static_cast<double> (numSamples) * beatsPerSample;
+
         const auto currentBeat = m_currentBeat.load (std::memory_order_relaxed) + beatDelta;
-        const auto currentSongBeat = m_currentSongBeat.load (std::memory_order_relaxed) + beatDelta;
+        const auto currentSongBeat = blockStartBeat + beatDelta;
         m_currentBeat.store (currentBeat, std::memory_order_relaxed);
         m_currentSongBeat.store (currentSongBeat, std::memory_order_relaxed);
         m_appState.transport.playheadBeats = currentSongBeat;
@@ -876,7 +890,7 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         juce::ignoreUnused (activeSection, activeChord);
 
         // Per-sample tick advance so micro-events can land inside each step.
-        const double samplesPerTick = samplesPerBeat / static_cast<double> (kSequencerTicksPerBeat);
+        const double samplesPerTick = (1.0 / beatsPerSample) / static_cast<double> (kSequencerTicksPerBeat);
         for (int i = 0; i < numSamples; ++i)
         {
             m_samplePos += 1.0;
@@ -902,6 +916,10 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const int numCh = juce::jmin (getTotalNumOutputChannels(), buffer.getNumChannels());
     if (numCh > 0) buffer.applyGain (0, 0, numSamples, leftGain);
     if (numCh > 1) buffer.applyGain (1, 0, numSamples, rightGain);
+
+    // ── Timeline clip playback (captured audio routed onto Zone D lanes) ──────
+    if (transportPlaying && beatsPerSample > 0.0)
+        mixTimelineAudio (buffer, numSamples, blockStartBeat, beatsPerSample);
 
     // ── Circular buffer — LAST operation before looper audition ───────────────
     if (m_circularBuffer.isActive())
@@ -1190,7 +1208,9 @@ void PluginProcessor::syncTransportFromAppState() noexcept
 
     if (oldPlaying != desiredPlaying)
     {
-        m_playing.store (desiredPlaying);
+        // Route through the canonical transport mutator so stop/start side effects
+        // (flush held notes, phrase reset) remain consistent across all UI paths.
+        setPlaying (desiredPlaying);
         DBG ("Play state updated via AppState: " << (desiredPlaying ? "playing" : "stopped"));
     }
 }
@@ -1363,6 +1383,90 @@ void PluginProcessor::setLooperPreviewState (bool playing, bool looping)
     m_looperPreviewPlaying.store (playing && m_looperPreviewBuffer.getNumSamples() > 0, std::memory_order_relaxed);
     m_looperPreviewProgress.store (playing ? m_looperPreviewProgress.load (std::memory_order_relaxed) : 0.0f,
                                    std::memory_order_relaxed);
+}
+
+void PluginProcessor::setTimelineLoopLengthBeats (double beats) noexcept
+{
+    m_timelineLoopLengthBeats.store (juce::jmax (1.0, beats), std::memory_order_relaxed);
+}
+
+void PluginProcessor::addTimelineAudioClip (const CapturedAudioClip& clip,
+                                             double startBeat,
+                                             double lengthBeats,
+                                             int laneIndex,
+                                             const juce::String& moduleType,
+                                             const juce::String& clipName)
+{
+    if (clip.buffer.getNumSamples() <= 0 || clip.buffer.getNumChannels() <= 0)
+        return;
+
+    TimelineAudioClip timelineClip;
+    timelineClip.buffer.makeCopyOf (clip.buffer);
+    timelineClip.startBeat = juce::jmax (0.0, startBeat);
+    timelineClip.lengthBeats = juce::jmax (0.25, lengthBeats);
+    juce::ignoreUnused (laneIndex, moduleType, clipName);
+
+    const juce::SpinLock::ScopedLockType lock (m_timelineAudioLock);
+    m_timelineAudioClips.add (timelineClip);
+}
+
+void PluginProcessor::clearTimelineAudioClips()
+{
+    const juce::SpinLock::ScopedLockType lock (m_timelineAudioLock);
+    m_timelineAudioClips.clearQuick();
+}
+
+void PluginProcessor::mixTimelineAudio (juce::AudioBuffer<float>& buffer,
+                                        int numSamples,
+                                        double blockStartBeat,
+                                        double beatsPerSample) noexcept
+{
+    if (numSamples <= 0 || beatsPerSample <= 0.0 || buffer.getNumChannels() <= 0)
+        return;
+
+    juce::SpinLock::ScopedTryLockType lock (m_timelineAudioLock);
+    if (! lock.isLocked() || m_timelineAudioClips.isEmpty())
+        return;
+
+    const double loopBeats = juce::jmax (1.0, m_timelineLoopLengthBeats.load (std::memory_order_relaxed));
+    const int outChannels = buffer.getNumChannels();
+
+    for (const auto& clip : m_timelineAudioClips)
+    {
+        const int clipSamples = clip.buffer.getNumSamples();
+        const int clipChannels = clip.buffer.getNumChannels();
+        if (clipSamples < 2 || clipChannels <= 0)
+            continue;
+
+        const double clipStartLoop = wrapPositive (clip.startBeat, loopBeats);
+        const double clipLengthBeats = juce::jlimit (1.0e-6, loopBeats, static_cast<double> (clip.lengthBeats));
+
+        for (int sample = 0; sample < numSamples; ++sample)
+        {
+            const double beatAtSample = blockStartBeat + beatsPerSample * static_cast<double> (sample);
+            const double beatInLoop = wrapPositive (beatAtSample, loopBeats);
+            double relativeBeat = beatInLoop - clipStartLoop;
+            if (relativeBeat < 0.0)
+                relativeBeat += loopBeats;
+            if (relativeBeat >= clipLengthBeats)
+                continue;
+
+            const double progress = relativeBeat / clipLengthBeats;
+            const double sourcePos = juce::jlimit (0.0,
+                                                   static_cast<double> (clipSamples - 1),
+                                                   progress * static_cast<double> (clipSamples - 1));
+            const int indexA = juce::jlimit (0, clipSamples - 1, static_cast<int> (sourcePos));
+            const int indexB = juce::jlimit (0, clipSamples - 1, indexA + 1);
+            const float frac = static_cast<float> (sourcePos - static_cast<double> (indexA));
+
+            for (int ch = 0; ch < outChannels; ++ch)
+            {
+                const float* src = clip.buffer.getReadPointer (juce::jmin (ch, clipChannels - 1));
+                const float value = juce::jmap (frac, src[indexA], src[indexB]);
+                buffer.addSample (ch, sample, value);
+            }
+        }
+    }
 }
 
 //==============================================================================

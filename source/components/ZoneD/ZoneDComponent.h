@@ -50,6 +50,11 @@ public:
 
     /** Fired when the ⚙ gear button in the transport strip is clicked. */
     std::function<void()> onSettingsClicked;
+    /** Fired when a clip drag payload is dropped on the cylinder lane surface. */
+    std::function<void(int laneIndex)> onClipDropped;
+    /** Fired when loop length (bars) changes from Zone D transport. */
+    std::function<void(float bars)> onLoopLengthChanged;
+    float loopLengthBars() const noexcept { return m_loopLengthBars; }
 
     //--- Transport control (from PluginEditor / TransportListener) -----------
     void setPlaying   (bool playing);
@@ -60,6 +65,10 @@ public:
     void setStructureBeat (double beat);
     void setStructureFollowState (TransportStrip::StructureFollowState state);
     void seedStructureRails (const StructureState& structure);
+    /** Clear non-scaffold timeline clips while preserving authored scaffold rails. */
+    void clearTimelineClips();
+    /** Append a timeline clip to a lane (used by PluginEditor TIMELINE routing). */
+    void addTimelineClip (int slotIndex, const Clip& clip, const juce::String& moduleType = {});
 
     /** Set vertical zoom for lane rows (0.5..3.0; 1.0 = normal). */
     void setLaneHeightScale (float s) { m_cylinderBand.setLaneScale (s); }
