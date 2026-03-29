@@ -37,6 +37,11 @@ set(BUNDLE_ID "com.2nist.spool")
 # Valid choices: AAX Unity VST VST3 AU AUv3 Standalone
 set(FORMATS VST3 AU CLAP Standalone)
 
+# iOS cannot build desktop formats; switch to AUv3 app-extension + standalone host.
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(FORMATS AUv3 Standalone)
+endif ()
+
 # Force JUCE to work with sccache
 # instruct MSVC to embed debug info (/Z7) instead of emitting a .pdb
 set(CMAKE_POLICY_DEFAULT_CMP0141        NEW      CACHE STRING "" FORCE)
