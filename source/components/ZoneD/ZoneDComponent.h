@@ -52,6 +52,17 @@ public:
     std::function<void()> onSettingsClicked;
     /** Fired when a clip drag payload is dropped on the cylinder lane surface. */
     std::function<void(int laneIndex)> onClipDropped;
+    /** Fired when a timeline clip move/trim is committed in the cylinder view. */
+    std::function<void(int laneIndex,
+                       const juce::String& clipId,
+                       float startBeat,
+                       float lengthBeats)> onTimelineClipEdited;
+    /** Fired when a timeline clip split is requested at current playhead beat. */
+    std::function<void(int laneIndex,
+                       const juce::String& clipId,
+                       float splitBeat)> onTimelineClipSplitRequested;
+    /** Fired when the stopped playhead is scrubbed directly on the cylinder. */
+    std::function<void(float beat)> onScrubBeatChanged;
     /** Fired when loop length (bars) changes from Zone D transport. */
     std::function<void(float bars)> onLoopLengthChanged;
     float loopLengthBars() const noexcept { return m_loopLengthBars; }

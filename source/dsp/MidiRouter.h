@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <atomic>
 
 //==============================================================================
 /**
@@ -13,6 +14,10 @@
          per-slot buffers in PluginProcessor::processBlock().
 
     Real-time safe: no allocation, no locks.
+
+    Activity counters (written audio thread, read UI thread via relaxed atomics):
+      getInputTick()     — increments on every event entering route()
+      getDestTick(slot)  — increments on every event routed to that slot
 */
 class MidiRouter
 {
@@ -34,7 +39,20 @@ public:
                 juce::MidiBuffer*        slotBuffers,
                 int                      numSlots) const noexcept;
 
+    /** UI-thread readable activity counters.  Wraps at UINT32_MAX — compare
+        with != to detect change, not with >. */
+    uint32_t getInputTick()           const noexcept { return m_inputTick.load (std::memory_order_relaxed); }
+    uint32_t getDestTick (int slot)   const noexcept
+    {
+        if (slot < 0 || slot >= kNumSlots) return 0;
+        return m_destTicks[slot].load (std::memory_order_relaxed);
+    }
+
 private:
     int m_focusedSlot                  = 0;
     int m_slotChannels[kNumSlots]      = { -1,-1,-1,-1,-1,-1,-1,-1 };
+
+    // Activity counters — mutable so route() (logically const) can increment them
+    mutable std::atomic<uint32_t> m_inputTick   { 0 };
+    mutable std::atomic<uint32_t> m_destTicks[kNumSlots] {};
 };

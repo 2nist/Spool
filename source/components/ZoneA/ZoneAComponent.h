@@ -61,8 +61,12 @@ public:
     void setOnPanChanged   (std::function<void (float)> cb) { m_outputStrip.onPanChanged   = std::move (cb); }
 
     //--- Routing panel callbacks ----------------------------------------------
-    void setOnRoutingChanged (std::function<void (const RoutingState&)> cb);
-    void setRoutingState     (const RoutingState& state);
+    void setOnRoutingChanged    (std::function<void (const RoutingState&)> cb);
+    void setOnRoutingBusSelected (std::function<void (const juce::String&)> cb);
+    void setRoutingState        (const RoutingState& state);
+    void setMidiRouter          (const MidiRouter* router);
+    void setRoutingModuleNames  (const juce::StringArray& names);
+    void setRoutingAudioTick    (const std::atomic<uint32_t>* tick);
 
     //--- Patch bay ------------------------------------------------------------
     void setPatchModuleNames (const juce::StringArray& names);
@@ -145,6 +149,7 @@ private:
     OutputStrip m_outputStrip;
 
     std::function<void (const RoutingState&)> m_onRoutingChanged;
+    std::function<void (const juce::String&)> m_onRoutingBusSelected;
 
     //--- Helpers --------------------------------------------------------------
     juce::Component* activePanel() const noexcept;

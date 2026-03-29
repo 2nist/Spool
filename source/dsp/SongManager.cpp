@@ -104,9 +104,19 @@ const AutomationState& SongManager::getAutomationState() const
     return m_editData.automation;
 }
 
+const juce::String& SongManager::getZoneCFxStateJson() const
+{
+    return m_editData.zoneCFxStateJson;
+}
+
 const juce::Array<TimelineClipPlacement>& SongManager::getTimelinePlacements() const
 {
     return m_editData.timelinePlacements;
+}
+
+const std::array<bool, SongManager::kTimelineLaneCount>& SongManager::getTimelineLaneArmed() const
+{
+    return m_editData.timelineLaneArmed;
 }
 
 void SongManager::setSongTitle (const juce::String& title)
@@ -187,6 +197,16 @@ void SongManager::replaceAutomationState (const AutomationState& automation)
     publishRtSnapshot();
 }
 
+void SongManager::setZoneCFxStateJson (const juce::String& json)
+{
+    const std::lock_guard<std::mutex> lock (m_editLock);
+    if (m_editData.zoneCFxStateJson == json)
+        return;
+
+    m_editData.zoneCFxStateJson = json;
+    publishRtSnapshot();
+}
+
 void SongManager::addTimelinePlacement (const TimelineClipPlacement& placement)
 {
     const std::lock_guard<std::mutex> lock (m_editLock);
@@ -194,6 +214,11 @@ void SongManager::addTimelinePlacement (const TimelineClipPlacement& placement)
     copy.laneIndex = juce::jlimit (0, 7, copy.laneIndex);
     copy.startBeat = juce::jmax (0.0f, copy.startBeat);
     copy.lengthBeats = juce::jmax (0.25f, copy.lengthBeats);
+    copy.sourceStartBeat = juce::jmax (0.0f, copy.sourceStartBeat);
+    copy.sourceTotalBeats = copy.sourceTotalBeats > 0.0f ? copy.sourceTotalBeats : copy.lengthBeats;
+    copy.sourceTotalBeats = juce::jmax (copy.lengthBeats, copy.sourceTotalBeats);
+    const auto maxSourceStart = juce::jmax (0.0f, copy.sourceTotalBeats - copy.lengthBeats);
+    copy.sourceStartBeat = juce::jlimit (0.0f, maxSourceStart, copy.sourceStartBeat);
     copy.clipId = copy.clipId.trim();
     copy.audioAssetPath = copy.audioAssetPath.trim();
     if (copy.clipName.trim().isEmpty())
@@ -219,12 +244,34 @@ void SongManager::replaceTimelinePlacements (const juce::Array<TimelineClipPlace
         copy.laneIndex = juce::jlimit (0, 7, copy.laneIndex);
         copy.startBeat = juce::jmax (0.0f, copy.startBeat);
         copy.lengthBeats = juce::jmax (0.25f, copy.lengthBeats);
+        copy.sourceStartBeat = juce::jmax (0.0f, copy.sourceStartBeat);
+        copy.sourceTotalBeats = copy.sourceTotalBeats > 0.0f ? copy.sourceTotalBeats : copy.lengthBeats;
+        copy.sourceTotalBeats = juce::jmax (copy.lengthBeats, copy.sourceTotalBeats);
+        const auto maxSourceStart = juce::jmax (0.0f, copy.sourceTotalBeats - copy.lengthBeats);
+        copy.sourceStartBeat = juce::jlimit (0.0f, maxSourceStart, copy.sourceStartBeat);
         copy.clipId = copy.clipId.trim();
         copy.audioAssetPath = copy.audioAssetPath.trim();
         if (copy.clipName.trim().isEmpty())
             copy.clipName = "CAPTURE";
         m_editData.timelinePlacements.add (copy);
     }
+    publishRtSnapshot();
+}
+
+void SongManager::setTimelineLaneArmed (int laneIndex, bool armed)
+{
+    if (laneIndex < 0 || laneIndex >= kTimelineLaneCount)
+        return;
+
+    const std::lock_guard<std::mutex> lock (m_editLock);
+    m_editData.timelineLaneArmed[static_cast<size_t> (laneIndex)] = armed;
+    publishRtSnapshot();
+}
+
+void SongManager::setTimelineLaneArmedStates (const std::array<bool, kTimelineLaneCount>& states)
+{
+    const std::lock_guard<std::mutex> lock (m_editLock);
+    m_editData.timelineLaneArmed = states;
     publishRtSnapshot();
 }
 
@@ -505,6 +552,9 @@ bool SongManager::loadFromFile (const juce::File& file)
         }
     }
 
+    if (auto* fxObj = rootObj->getProperty ("fx").getDynamicObject())
+        next.zoneCFxStateJson = readString (fxObj, "zoneCStateJson");
+
     if (auto* timelineObj = rootObj->getProperty ("timeline").getDynamicObject())
     {
         next.timelinePlacements.clearQuick();
@@ -524,7 +574,25 @@ bool SongManager::loadFromFile (const juce::File& file)
                 placement.audioAssetPath = readString (placementObj, "audioAssetPath");
                 placement.startBeat = static_cast<float> (juce::jmax (0.0, readDouble (placementObj, "startBeat", 0.0)));
                 placement.lengthBeats = static_cast<float> (juce::jmax (0.25, readDouble (placementObj, "lengthBeats", 0.25)));
+                placement.sourceStartBeat = static_cast<float> (juce::jmax (0.0, readDouble (placementObj, "sourceStartBeat", 0.0)));
+                placement.sourceTotalBeats = static_cast<float> (juce::jmax (0.0, readDouble (placementObj, "sourceTotalBeats", placement.lengthBeats)));
+                placement.sourceTotalBeats = juce::jmax (placement.lengthBeats, placement.sourceTotalBeats);
+                placement.sourceStartBeat = juce::jlimit (0.0f,
+                                                          juce::jmax (0.0f, placement.sourceTotalBeats - placement.lengthBeats),
+                                                          placement.sourceStartBeat);
                 next.timelinePlacements.add (placement);
+            }
+        }
+
+        next.timelineLaneArmed.fill (false);
+        if (auto* armedLanes = timelineObj->getProperty ("armedLanes").getArray())
+        {
+            const auto maxLanes = juce::jmin (kTimelineLaneCount, armedLanes->size());
+            for (int lane = 0; lane < maxLanes; ++lane)
+            {
+                const auto value = armedLanes->getReference (lane);
+                next.timelineLaneArmed[static_cast<size_t> (lane)] = value.isBool() ? static_cast<bool> (value)
+                                                                                     : static_cast<int> (value) != 0;
             }
         }
     }
@@ -700,6 +768,10 @@ bool SongManager::saveToFile (const juce::File& file) const
     automationObj->setProperty ("lanes", automationLanes);
     rootObj->setProperty ("automation", juce::var (automationObj.get()));
 
+    juce::DynamicObject::Ptr fxObj = new juce::DynamicObject();
+    fxObj->setProperty ("zoneCStateJson", data.zoneCFxStateJson);
+    rootObj->setProperty ("fx", juce::var (fxObj.get()));
+
     juce::DynamicObject::Ptr timelineObj = new juce::DynamicObject();
     juce::Array<juce::var> timelinePlacements;
     for (const auto& placement : data.timelinePlacements)
@@ -712,9 +784,21 @@ bool SongManager::saveToFile (const juce::File& file) const
         placementObj->setProperty ("audioAssetPath", placement.audioAssetPath);
         placementObj->setProperty ("startBeat", juce::jmax (0.0f, placement.startBeat));
         placementObj->setProperty ("lengthBeats", juce::jmax (0.25f, placement.lengthBeats));
+        const auto sourceTotal = juce::jmax (placement.lengthBeats, placement.sourceTotalBeats);
+        const auto sourceStart = juce::jlimit (0.0f,
+                                               juce::jmax (0.0f, sourceTotal - placement.lengthBeats),
+                                               juce::jmax (0.0f, placement.sourceStartBeat));
+        placementObj->setProperty ("sourceStartBeat", sourceStart);
+        placementObj->setProperty ("sourceTotalBeats", sourceTotal);
         timelinePlacements.add (juce::var (placementObj.get()));
     }
     timelineObj->setProperty ("placements", timelinePlacements);
+
+    juce::Array<juce::var> timelineArmedLanes;
+    for (int lane = 0; lane < kTimelineLaneCount; ++lane)
+        timelineArmedLanes.add (data.timelineLaneArmed[static_cast<size_t> (lane)]);
+    timelineObj->setProperty ("armedLanes", timelineArmedLanes);
+
     rootObj->setProperty ("timeline", juce::var (timelineObj.get()));
 
     juce::DynamicObject::Ptr metaObj = new juce::DynamicObject();

@@ -65,6 +65,7 @@ public:
     void mouseDown          (const juce::MouseEvent&) override;
     void mouseDrag          (const juce::MouseEvent&) override;
     void mouseUp            (const juce::MouseEvent&) override;
+    void mouseDoubleClick   (const juce::MouseEvent&) override;
     juce::MouseCursor getMouseCursor() override;
 
     // Callbacks
@@ -72,6 +73,17 @@ public:
     std::function<void(int slotIndex)>              onAutoArrowClicked;
     /** Fired when an audio-history-clip is dropped onto the tape. laneIndex = -1 if no lane hit. */
     std::function<void(int laneIndex)>              onClipDropped;
+    /** Fired when clip move/trim is committed on mouse-up. */
+    std::function<void(int laneIndex,
+                       const juce::String& clipId,
+                       float startBeat,
+                       float lengthBeats)>          onClipEditCommitted;
+    /** Fired when the user scrubs the stopped transport. */
+    std::function<void(float beat)>                 onScrubBeatChanged;
+    /** Fired when the user splits a clip at the playhead. */
+    std::function<void(int laneIndex,
+                       const juce::String& clipId,
+                       float splitBeat)>            onClipSplitRequested;
 
     //==========================================================================
     // DragAndDropTarget
@@ -95,10 +107,32 @@ private:
     bool  m_mixerOpen        = false;
     bool  m_transportPlaying = false;
 
-    // Scrub drag state
-    bool  m_isDragging     = false;
-    float m_dragStartX     = 0.0f;
-    float m_dragStartBeat  = 0.0f;
+    enum class DragMode
+    {
+        none,
+        scrub,
+        clipMove,
+        clipTrimStart,
+        clipTrimEnd
+    };
+
+    DragMode m_dragMode { DragMode::none };
+    float m_dragStartX    = 0.0f;
+    float m_dragStartBeat = 0.0f;
+    int m_dragClipLane    = -1;
+    int m_dragClipIndex   = -1;
+    float m_dragClipStartBeat   = 0.0f;
+    float m_dragClipLengthBeats = 0.0f;
+    float m_dragClipAxisDir     = -1.0f;
+    bool m_dragClipChanged      = false;
+
+    struct ClipHit
+    {
+        int laneIndex { -1 };
+        int clipIndex { -1 };
+        DragMode mode { DragMode::none };
+        float beatAxisDir { -1.0f };
+    };
 
     LaneLabels  m_laneLabels;
     MixerGutter m_mixerGutter;
@@ -120,6 +154,8 @@ private:
 
     int  totalLaneHeight()  const noexcept;
     int  laneTopY (int laneIndex) const noexcept;
+    ClipHit hitTestEditableClip (juce::Point<float> pos) const;
+    void clearClipSelection();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CylinderBand)
 };

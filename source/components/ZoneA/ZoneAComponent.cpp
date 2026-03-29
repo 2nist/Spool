@@ -198,6 +198,10 @@ void ZoneAComponent::ensurePanelCreated (const juce::String& tabId)
         {
             m_routingPanel->onRoutingStateChanged = [this] (const RoutingState& state) { m_onRoutingChanged (state); };
         }
+        if (m_onRoutingBusSelected)
+        {
+            m_routingPanel->onBusSelected = [this] (const juce::String& busId) { m_onRoutingBusSelected (busId); };
+        }
         addChildComponent (*m_routingPanel);
     }
     else if (tabId == "tracks" && m_tracksPanel == nullptr)
@@ -350,11 +354,39 @@ void ZoneAComponent::setOnRoutingChanged (std::function<void (const RoutingState
         m_routingPanel->onRoutingStateChanged = [this] (const RoutingState& state) { m_onRoutingChanged (state); };
 }
 
+void ZoneAComponent::setOnRoutingBusSelected (std::function<void (const juce::String&)> cb)
+{
+    m_onRoutingBusSelected = std::move (cb);
+    if (m_routingPanel && m_onRoutingBusSelected)
+        m_routingPanel->onBusSelected = [this] (const juce::String& busId) { m_onRoutingBusSelected (busId); };
+}
+
 void ZoneAComponent::setRoutingState (const RoutingState& state)
 {
     ensurePanelCreated ("routing");
     if (m_routingPanel)
         m_routingPanel->setRoutingState (state);
+}
+
+void ZoneAComponent::setMidiRouter (const MidiRouter* router)
+{
+    ensurePanelCreated ("routing");
+    if (m_routingPanel)
+        m_routingPanel->setMidiRouter (router);
+}
+
+void ZoneAComponent::setRoutingModuleNames (const juce::StringArray& names)
+{
+    ensurePanelCreated ("routing");
+    if (m_routingPanel)
+        m_routingPanel->setModuleNames (names);
+}
+
+void ZoneAComponent::setRoutingAudioTick (const std::atomic<uint32_t>* tick)
+{
+    ensurePanelCreated ("routing");
+    if (m_routingPanel)
+        m_routingPanel->setAudioTick (tick);
 }
 
 void ZoneAComponent::setPatchModuleNames (const juce::StringArray& names)

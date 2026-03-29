@@ -1,5 +1,37 @@
 #include "ZoneCComponent.h"
 
+namespace
+{
+using ChainContext = ZoneCComponent::ChainContext;
+
+ChainContext contextFromIndex (int index)
+{
+    switch (index)
+    {
+        case 0:  return ChainContext::insert;
+        case 1:  return ChainContext::busA;
+        case 2:  return ChainContext::busB;
+        case 3:  return ChainContext::busC;
+        case 4:  return ChainContext::busD;
+        default: return ChainContext::master;
+    }
+}
+
+juce::String contextTitle (ChainContext context)
+{
+    switch (context)
+    {
+        case ChainContext::insert: return "INSERT";
+        case ChainContext::busA:   return "BUS A";
+        case ChainContext::busB:   return "BUS B";
+        case ChainContext::busC:   return "BUS C";
+        case ChainContext::busD:   return "BUS D";
+        case ChainContext::master: return "MASTER";
+    }
+    return "INSERT";
+}
+}
+
 //==============================================================================
 ZoneCComponent::ZoneCComponent()
 {
@@ -48,34 +80,68 @@ ZoneCComponent::ZoneCComponent()
     // Show slot 0 chain by default so nodes are visible on launch
     applyDefaultChain (0);
     m_currentSlotIndex = 0;
+    m_chainContext = ChainContext::insert;
     refreshDisplay();
 }
 
 //==============================================================================
 void ZoneCComponent::showChainForSlot (int slotIndex)
 {
-    if (m_isPinned)
+    if (slotIndex < 0 || slotIndex >= 8)
+        return;
+
+    if (isInsertContext() && m_isPinned)
         return;
 
     m_currentSlotIndex = slotIndex;
 
-    if (slotIndex >= 0 && slotIndex < 8 && !m_chains[slotIndex].initialised)
+    if (!m_chains[slotIndex].initialised)
         applyDefaultChain (slotIndex);
 
-    refreshDisplay();
-    resized();
+    if (isInsertContext())
+        refreshDisplay();
+
     repaint();
 }
 
 void ZoneCComponent::showDefault()
 {
-    if (m_isPinned)
+    if (isInsertContext() && m_isPinned)
         return;
 
     m_currentSlotIndex = -1;
+
+    if (isInsertContext())
+        refreshDisplay();
+
+    repaint();
+}
+
+void ZoneCComponent::setChainContext (ChainContext context)
+{
+    if (m_chainContext == context)
+        return;
+
+    m_chainContext = context;
+
+    // Pinning only applies to INSERT chain.
+    if (! isInsertContext())
+    {
+        m_isPinned = false;
+        m_pinnedSlotIndex = -1;
+    }
+
+    ensureCurrentChainInitialised();
     refreshDisplay();
     resized();
     repaint();
+    notifyContextChanged();
+}
+
+void ZoneCComponent::showBusContext (int busIndex)
+{
+    const int clamped = juce::jlimit (0, kNumBusChains - 1, busIndex);
+    setChainContext (contextFromIndex (clamped + 1));
 }
 
 void ZoneCComponent::setCurrentModuleTypeName (const juce::String& name)
@@ -100,6 +166,64 @@ void ZoneCComponent::setMacroStripVisible (bool shouldShow)
     repaint();
 }
 
+ZoneCComponent::ChainBank ZoneCComponent::getChainBank() const
+{
+    ChainBank bank;
+    for (int i = 0; i < 8; ++i)
+        bank.inserts[(size_t) i] = m_chains[i];
+    for (int i = 0; i < kNumBusChains; ++i)
+        bank.buses[(size_t) i] = m_busChains[i];
+    bank.master = m_masterChain;
+    return bank;
+}
+
+void ZoneCComponent::setChainBank (const ChainBank& bank, bool pushToDspCallbacks)
+{
+    for (int i = 0; i < 8; ++i)
+    {
+        m_chains[i] = bank.inserts[(size_t) i];
+        if (m_chains[i].slotIndex < 0)
+            m_chains[i].slotIndex = i;
+    }
+
+    for (int i = 0; i < kNumBusChains; ++i)
+    {
+        m_busChains[i] = bank.buses[(size_t) i];
+        if (m_busChains[i].slotIndex < 0)
+            m_busChains[i].slotIndex = 100 + i;
+    }
+
+    m_masterChain = bank.master;
+    if (m_masterChain.slotIndex < 0)
+        m_masterChain.slotIndex = 200;
+
+    refreshDisplay();
+    resized();
+    repaint();
+
+    if (! pushToDspCallbacks)
+        return;
+
+    for (int slot = 0; slot < 8; ++slot)
+    {
+        if (onChainRebuilt)
+            onChainRebuilt (slot, m_chains[slot]);
+        if (onContextChainRebuilt)
+            onContextChainRebuilt (ChainContext::insert, slot, m_chains[slot]);
+    }
+
+    for (int bus = 0; bus < kNumBusChains; ++bus)
+    {
+        if (onContextChainRebuilt)
+            onContextChainRebuilt (static_cast<ChainContext> (static_cast<int> (ChainContext::busA) + bus),
+                                   bus,
+                                   m_busChains[bus]);
+    }
+
+    if (onContextChainRebuilt)
+        onContextChainRebuilt (ChainContext::master, -1, m_masterChain);
+}
+
 //==============================================================================
 void ZoneCComponent::paint (juce::Graphics& g)
 {
@@ -117,9 +241,10 @@ void ZoneCComponent::paint (juce::Graphics& g)
 
     paintHeader (g);
 
-    if (m_isPinned)
+    if (m_isPinned && isInsertContext())
         paintPinBanner (g);
 
+    paintContextTabs (g);
 }
 
 void ZoneCComponent::resized()
@@ -167,6 +292,19 @@ void ZoneCComponent::mouseDown (const juce::MouseEvent& e)
 {
     const auto pos = e.getPosition();
 
+    // Context tabs
+    if (!m_isCollapsed)
+    {
+        for (int i = 0; i < static_cast<int> (m_contextTabRects.size()); ++i)
+        {
+            if (m_contextTabRects[(size_t) i].contains (pos))
+            {
+                setChainContext (contextFromIndex (i));
+                return;
+            }
+        }
+    }
+
     // Collapse button
     if (m_collapseButtonRect.contains (pos))
     {
@@ -179,14 +317,14 @@ void ZoneCComponent::mouseDown (const juce::MouseEvent& e)
     }
 
     // Pin button (only when expanded)
-    if (!m_isCollapsed && m_pinButtonRect.contains (pos))
+    if (!m_isCollapsed && isInsertContext() && m_pinButtonRect.contains (pos))
     {
         setPinned (!m_isPinned);
         return;
     }
 
     // Unpin link in banner
-    if (!m_isCollapsed && m_isPinned && m_unpinLinkRect.contains (pos))
+    if (!m_isCollapsed && isInsertContext() && m_isPinned && m_unpinLinkRect.contains (pos))
     {
         setPinned (false);
         return;
@@ -200,7 +338,7 @@ void ZoneCComponent::mouseDown (const juce::MouseEvent& e)
 
 int ZoneCComponent::pinBannerHeight() const
 {
-    return m_isPinned ? kPinBannerH : 0;
+    return (m_isPinned && isInsertContext()) ? kPinBannerH : 0;
 }
 
 int ZoneCComponent::tabsHeight() const
@@ -220,12 +358,67 @@ juce::Rectangle<int> ZoneCComponent::chainRect() const
     return { 0, top, w, juce::jmax (0, bottom - top) };
 }
 
+bool ZoneCComponent::isInsertContext() const noexcept
+{
+    return m_chainContext == ChainContext::insert;
+}
+
+int ZoneCComponent::currentContextIndex() const noexcept
+{
+    if (isInsertContext())
+        return m_isPinned ? m_pinnedSlotIndex : m_currentSlotIndex;
+
+    if (m_chainContext == ChainContext::master)
+        return -1;
+
+    return static_cast<int> (m_chainContext) - 1;
+}
+
+ChainState* ZoneCComponent::chainForContext (ChainContext context)
+{
+    if (context == ChainContext::insert)
+    {
+        const int idx = m_isPinned ? m_pinnedSlotIndex : m_currentSlotIndex;
+        if (idx >= 0 && idx < 8)
+            return &m_chains[idx];
+        return nullptr;
+    }
+
+    if (context == ChainContext::master)
+        return &m_masterChain;
+
+    const int busIndex = static_cast<int> (context) - 1;
+    if (busIndex >= 0 && busIndex < kNumBusChains)
+        return &m_busChains[busIndex];
+
+    return nullptr;
+}
+
 ChainState* ZoneCComponent::currentChainPtr()
 {
-    const int idx = m_isPinned ? m_pinnedSlotIndex : m_currentSlotIndex;
-    if (idx >= 0 && idx < 8)
-        return &m_chains[idx];
-    return nullptr;
+    return chainForContext (m_chainContext);
+}
+
+void ZoneCComponent::ensureCurrentChainInitialised()
+{
+    if (m_chainContext == ChainContext::insert)
+    {
+        const int idx = m_isPinned ? m_pinnedSlotIndex : m_currentSlotIndex;
+        if (idx >= 0 && idx < 8 && !m_chains[idx].initialised)
+            applyDefaultChain (idx);
+        return;
+    }
+
+    if (m_chainContext == ChainContext::master)
+    {
+        if (!m_masterChain.initialised)
+            applyDefaultMasterChain();
+        return;
+    }
+
+    const int busIndex = static_cast<int> (m_chainContext) - 1;
+    if (busIndex >= 0 && busIndex < kNumBusChains && !m_busChains[busIndex].initialised)
+        applyDefaultBusChain (busIndex);
 }
 
 void ZoneCComponent::applyDefaultChain (int slotIndex)
@@ -259,14 +452,78 @@ void ZoneCComponent::applyDefaultChain (int slotIndex)
     // else: empty chain
 }
 
+void ZoneCComponent::applyDefaultBusChain (int busIndex)
+{
+    if (busIndex < 0 || busIndex >= kNumBusChains)
+        return;
+
+    auto& c = m_busChains[busIndex];
+    c.slotIndex = 100 + busIndex; // non-slot sentinel
+    c.nodes.clear();
+    c.initialised = true;
+}
+
+void ZoneCComponent::applyDefaultMasterChain()
+{
+    m_masterChain.slotIndex = 200; // non-slot sentinel
+    m_masterChain.nodes.clear();
+    m_masterChain.initialised = true;
+}
+
 void ZoneCComponent::refreshDisplay()
 {
+    ensureCurrentChainInitialised();
+    if (auto* chain = currentChainPtr())
+    {
+        if (chain->nodes.isEmpty())
+            m_focusedNodeIndex = 0;
+        else
+            m_focusedNodeIndex = juce::jlimit (0, chain->nodes.size() - 1, m_focusedNodeIndex);
+    }
+
     m_chainDisplay.refresh (currentChainPtr());
     m_chainDisplay.setFocusedNode (m_focusedNodeIndex);
 }
 
+void ZoneCComponent::notifyContextChanged()
+{
+    if (onContextChanged)
+        onContextChanged (m_chainContext, currentContextIndex());
+}
+
+void ZoneCComponent::notifyChainRebuiltForCurrentContext()
+{
+    auto* chain = currentChainPtr();
+    if (chain == nullptr)
+        return;
+
+    const int contextIndex = currentContextIndex();
+
+    // Legacy insert-only callback path
+    if (isInsertContext() && contextIndex >= 0 && contextIndex < 8 && onChainRebuilt)
+        onChainRebuilt (contextIndex, m_chains[contextIndex]);
+
+    if (onContextChainRebuilt)
+        onContextChainRebuilt (m_chainContext, contextIndex, *chain);
+}
+
+void ZoneCComponent::notifyParamChangedForCurrentContext (int nodeIndex, int paramIndex, float value)
+{
+    const int contextIndex = currentContextIndex();
+
+    // Legacy insert-only callback path
+    if (isInsertContext() && contextIndex >= 0 && contextIndex < 8 && onDspParamChanged)
+        onDspParamChanged (contextIndex, nodeIndex, paramIndex, value);
+
+    if (onContextDspParamChanged)
+        onContextDspParamChanged (m_chainContext, contextIndex, nodeIndex, paramIndex, value);
+}
+
 void ZoneCComponent::setPinned (bool pin)
 {
+    if (! isInsertContext())
+        return;
+
     m_isPinned = pin;
     if (pin)
         m_pinnedSlotIndex = m_currentSlotIndex;
@@ -295,8 +552,10 @@ void ZoneCComponent::setFocusedNode (int nodeIndex)
 
 void ZoneCComponent::showEffectPicker()
 {
-    if (m_currentSlotIndex < 0 && !m_isPinned)
+    if (currentChainPtr() == nullptr)
         return;
+
+    ensureCurrentChainInitialised();
 
     if (m_picker == nullptr)
         m_picker = std::make_unique<EffectPickerOverlay>();
@@ -330,44 +589,43 @@ void ZoneCComponent::dismissPicker()
 
 void ZoneCComponent::addEffect (const juce::String& effectId)
 {
-    const int idx = m_isPinned ? m_pinnedSlotIndex : m_currentSlotIndex;
-    if (idx < 0 || idx >= 8)
+    auto* chain = currentChainPtr();
+    if (chain == nullptr)
         return;
 
-    if (!m_chains[idx].initialised)
-        applyDefaultChain (idx);
+    ensureCurrentChainInitialised();
 
-    m_chains[idx].nodes.add (EffectRegistry::makeDefault (effectId));
-    m_focusedNodeIndex = juce::jmax (0, m_chains[idx].nodes.size() - 1);
+    chain->nodes.add (EffectRegistry::makeDefault (effectId));
+    m_focusedNodeIndex = juce::jmax (0, chain->nodes.size() - 1);
     refreshDisplay();
     resized();
-    if (onChainRebuilt) onChainRebuilt (idx, m_chains[idx]);
+    notifyChainRebuiltForCurrentContext();
 }
 
 void ZoneCComponent::removeNode (int nodeIndex)
 {
-    const int idx = m_isPinned ? m_pinnedSlotIndex : m_currentSlotIndex;
-    if (idx < 0 || idx >= 8)
+    auto* chain = currentChainPtr();
+    if (chain == nullptr)
         return;
 
-    auto& nodes = m_chains[idx].nodes;
+    auto& nodes = chain->nodes;
     if (nodeIndex >= 0 && nodeIndex < nodes.size())
     {
         nodes.remove (nodeIndex);
         m_focusedNodeIndex = juce::jlimit (0, juce::jmax (0, nodes.size() - 1), m_focusedNodeIndex);
         refreshDisplay();
         resized();
-        if (onChainRebuilt) onChainRebuilt (idx, m_chains[idx]);
+        notifyChainRebuiltForCurrentContext();
     }
 }
 
 void ZoneCComponent::moveNode (int fromIndex, int toIndex)
 {
-    const int idx = m_isPinned ? m_pinnedSlotIndex : m_currentSlotIndex;
-    if (idx < 0 || idx >= 8)
+    auto* chain = currentChainPtr();
+    if (chain == nullptr)
         return;
 
-    auto& nodes = m_chains[idx].nodes;
+    auto& nodes = chain->nodes;
     if (fromIndex < 0 || fromIndex >= nodes.size())
         return;
     if (toIndex < 0 || toIndex >= nodes.size())
@@ -380,31 +638,31 @@ void ZoneCComponent::moveNode (int fromIndex, int toIndex)
     nodes.insert (toIndex, node);
     refreshDisplay();
     resized();
-    if (onChainRebuilt) onChainRebuilt (idx, m_chains[idx]);
+    notifyChainRebuiltForCurrentContext();
 }
 
 void ZoneCComponent::updateNodeBypass (int nodeIndex, bool bypassed)
 {
-    const int idx = m_isPinned ? m_pinnedSlotIndex : m_currentSlotIndex;
-    if (idx < 0 || idx >= 8)
+    auto* chain = currentChainPtr();
+    if (chain == nullptr)
         return;
 
-    auto& nodes = m_chains[idx].nodes;
+    auto& nodes = chain->nodes;
     if (nodeIndex >= 0 && nodeIndex < nodes.size())
     {
         nodes.getReference (nodeIndex).bypassed = bypassed;
         repaint();
-        if (onChainRebuilt) onChainRebuilt (idx, m_chains[idx]);
+        notifyChainRebuiltForCurrentContext();
     }
 }
 
 void ZoneCComponent::updateNodeParam (int nodeIndex, int paramIndex, float value)
 {
-    const int idx = m_isPinned ? m_pinnedSlotIndex : m_currentSlotIndex;
-    if (idx < 0 || idx >= 8)
+    auto* chain = currentChainPtr();
+    if (chain == nullptr)
         return;
 
-    auto& nodes = m_chains[idx].nodes;
+    auto& nodes = chain->nodes;
     if (nodeIndex >= 0 && nodeIndex < nodes.size())
     {
         auto& params = nodes.getReference (nodeIndex).params;
@@ -412,10 +670,7 @@ void ZoneCComponent::updateNodeParam (int nodeIndex, int paramIndex, float value
         {
             params.set (paramIndex, value);
             repaint();
-
-            // Fire DSP callback — PluginEditor wires this to the processor
-            if (onDspParamChanged)
-                onDspParamChanged (idx, nodeIndex, paramIndex, value);
+            notifyParamChangedForCurrentContext (nodeIndex, paramIndex, value);
         }
     }
 }
@@ -470,14 +725,24 @@ void ZoneCComponent::paintHeader (juce::Graphics& g)
                         .withWidth (44),
                 juce::Justification::centredLeft, false);
 
-    // Module name centred
-    if (m_currentSlotIndex >= 0 || m_isPinned)
+    // Context title centred
     {
         auto titleArea = headerR.withTrimmedLeft (56).withTrimmedRight (40);
         g.setFont (Theme::Font::label());
         g.setColour (Theme::Colour::inkMuted);
-        const juce::String label = m_moduleTypeName.isNotEmpty()
-                                   ? m_moduleTypeName : "SLOT " + juce::String (m_currentSlotIndex + 1);
+
+        juce::String label = contextTitle (m_chainContext);
+        if (isInsertContext())
+        {
+            const int slotIndex = currentContextIndex();
+            if (m_moduleTypeName.isNotEmpty())
+                label = m_moduleTypeName;
+            else if (slotIndex >= 0)
+                label = "SLOT " + juce::String (slotIndex + 1);
+            else
+                label = "INSERT";
+        }
+
         g.drawText (label,
                     titleArea.removeFromTop (14),
                     juce::Justification::centred, false);
@@ -498,14 +763,21 @@ void ZoneCComponent::paintHeader (juce::Graphics& g)
         }
     }
 
-    // Pin button (16px, right area) — computed directly to avoid mutating const headerR
-    m_pinButtonRect = juce::Rectangle<int> (w - 36, stripeH, 36, kHeaderH).reduced (4, 4);
-    const juce::String pinChar = m_isPinned
-                                 ? juce::CharPointer_UTF8 ("\xe2\x97\x86")
-                                 : juce::CharPointer_UTF8 ("\xe2\x97\x87");
-    g.setFont (Theme::Font::body());
-    g.setColour (m_isPinned ? Theme::Zone::c : Theme::Colour::inkMuted);
-    g.drawText (pinChar, m_pinButtonRect, juce::Justification::centred, false);
+    // Pin button (16px, right area) — only for INSERT chain
+    if (isInsertContext())
+    {
+        m_pinButtonRect = juce::Rectangle<int> (w - 36, stripeH, 36, kHeaderH).reduced (4, 4);
+        const juce::String pinChar = m_isPinned
+                                     ? juce::CharPointer_UTF8 ("\xe2\x97\x86")
+                                     : juce::CharPointer_UTF8 ("\xe2\x97\x87");
+        g.setFont (Theme::Font::body());
+        g.setColour (m_isPinned ? Theme::Zone::c : Theme::Colour::inkMuted);
+        g.drawText (pinChar, m_pinButtonRect, juce::Justification::centred, false);
+    }
+    else
+    {
+        m_pinButtonRect = {};
+    }
 
     // Collapse button (›) — expanded means collapse arrow points right
     m_collapseButtonRect = { w - 16, stripeH, 16, kHeaderH };
@@ -539,5 +811,54 @@ void ZoneCComponent::paintPinBanner (juce::Graphics& g)
     m_unpinLinkRect = juce::Rectangle<int> (w - 44, stripeH + kHeaderH, 44, kPinBannerH).reduced (2, 2);
     g.setColour (Theme::Zone::c);
     g.drawText ("UNPIN", m_unpinLinkRect, juce::Justification::centred, false);
+}
+
+void ZoneCComponent::paintContextTabs (juce::Graphics& g)
+{
+    if (m_isCollapsed || tabsHeight() <= 0)
+        return;
+
+    const int stripeH = static_cast<int> (Theme::Space::zoneStripeHeight);
+    auto tabsArea = juce::Rectangle<int> (0, stripeH + kHeaderH + pinBannerHeight(), getWidth(), tabsHeight());
+
+    g.setColour (Theme::Colour::surface1.withAlpha (0.95f));
+    g.fillRect (tabsArea);
+
+    constexpr const char* labels[kNumContexts] = { "INSERT", "BUS A", "BUS B", "BUS C", "BUS D", "MASTER" };
+    auto remaining = tabsArea;
+    for (int i = 0; i < kNumContexts; ++i)
+    {
+        const int remainingTabs = kNumContexts - i;
+        auto tab = remaining.removeFromLeft (remaining.getWidth() / remainingTabs).reduced (1, 2);
+        m_contextTabRects[(size_t) i] = tab;
+
+        const auto tabContext = contextFromIndex (i);
+        const bool active = (m_chainContext == tabContext);
+        bool emptyContext = false;
+
+        if (tabContext == ChainContext::master)
+            emptyContext = m_masterChain.nodes.isEmpty();
+        else if (tabContext != ChainContext::insert)
+            emptyContext = m_busChains[(size_t) (i - 1)].nodes.isEmpty();
+
+        juce::Colour fill = Theme::Colour::surface2.withAlpha (active ? 0.92f : 0.55f);
+        if (!active && emptyContext)
+            fill = Theme::Colour::surface2.withAlpha (0.28f);
+        g.setColour (fill);
+        g.fillRoundedRectangle (tab.toFloat(), 3.0f);
+
+        juce::Colour edge = active ? Theme::Zone::c.withAlpha (0.9f)
+                                   : Theme::Colour::surfaceEdge.withAlpha (0.45f);
+        g.setColour (edge);
+        g.drawRoundedRectangle (tab.toFloat(), 3.0f, 1.0f);
+
+        g.setFont (Theme::Font::micro());
+        juce::Colour textCol = active ? juce::Colour (Theme::Colour::inkLight)
+                                      : juce::Colour (Theme::Colour::inkGhost);
+        if (!active && emptyContext)
+            textCol = Theme::Colour::inkGhost.withAlpha (0.55f);
+        g.setColour (textCol);
+        g.drawText (labels[i], tab, juce::Justification::centred, false);
+    }
 }
 

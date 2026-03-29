@@ -1,4 +1,5 @@
 #include "ZoomStrip.h"
+#include <cmath>
 
 //==============================================================================
 const juce::Colour ZoomStrip::zoomStripBg     { 0xFFa89870 };
@@ -272,6 +273,27 @@ void ZoomStrip::mouseUp (const juce::MouseEvent&)
     m_draggingZoom   = false;
 }
 
+void ZoomStrip::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    const float wheelDelta = std::abs (wheel.deltaY) > std::abs (wheel.deltaX) ? wheel.deltaY : wheel.deltaX;
+    if (std::abs (wheelDelta) < 0.0001f)
+        return;
+
+    if (m_heightHandleRect.expanded (4, 0).contains (e.getPosition()) || e.mods.isShiftDown())
+    {
+        m_laneHeightScale = juce::jlimit (0.4f, 3.0f, m_laneHeightScale + wheelDelta * 0.25f);
+        if (onLaneHeightChanged)
+            onLaneHeightChanged (m_laneHeightScale);
+        repaint();
+        return;
+    }
+
+    m_pxPerBeat = juce::jlimit (kZoomMin, kZoomMax, m_pxPerBeat + wheelDelta * 8.0f);
+    if (onZoomChanged)
+        onZoomChanged (m_pxPerBeat);
+    repaint();
+}
+
 void ZoomStrip::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (m_heightHandleRect.expanded (4, 0).contains (e.getPosition()))
@@ -279,6 +301,15 @@ void ZoomStrip::mouseDoubleClick (const juce::MouseEvent& e)
         m_laneHeightScale = 1.0f;
         if (onLaneHeightChanged)
             onLaneHeightChanged (m_laneHeightScale);
+        repaint();
+        return;
+    }
+
+    if (m_sliderTrackRect.expanded (8, 8).contains (e.getPosition()))
+    {
+        m_pxPerBeat = kZoomDefault;
+        if (onZoomChanged)
+            onZoomChanged (m_pxPerBeat);
         repaint();
     }
 }

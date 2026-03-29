@@ -173,6 +173,11 @@ private:
     void upsertTimelineClipAudio (const juce::String& clipId, const CapturedAudioClip& clip);
     bool loadTimelineClipAudioFromFile (const TimelineClipPlacement& placement, CapturedAudioClip& outClip);
     bool saveTimelineClipAudioToFile (const CapturedAudioClip& clip, const juce::File& file) const;
+    void applyTimelineLaneArmStateUi();
+    int preferredArmedTimelineLane (const CapturedAudioClip& clip) const;
+    juce::String serialiseZoneCFxStateJson() const;
+    void applyZoneCFxStateJson (const juce::String& json, bool pushToDsp);
+    void persistZoneCFxStateToSong();
 
     juce::Component::SafePointer<juce::CallOutBox> m_settingsCallout;
     juce::Component::SafePointer<juce::DialogWindow> m_themeDesignerWindow;
@@ -190,6 +195,7 @@ private:
     bool m_hasObservedProcessorBeat { false };
     juce::int64 m_lastBackstepWarningMs { 0 };
     bool m_timelineDebugOverlayEnabled { false };
+    std::array<bool, SpoolAudioGraph::kNumSlots> m_timelineLaneArmed {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

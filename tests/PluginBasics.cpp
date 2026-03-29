@@ -178,7 +178,11 @@ TEST_CASE ("SongManager JSON round-trip", "[song][json]")
     placement.audioAssetPath = "spool-media/Test/timeline-clips/clip-abc.wav";
     placement.startBeat = 16.0f;
     placement.lengthBeats = 8.0f;
+    placement.sourceStartBeat = 1.5f;
+    placement.sourceTotalBeats = 16.0f;
     source.addTimelinePlacement (placement);
+    source.setTimelineLaneArmed (2, true);
+    source.setTimelineLaneArmed (6, true);
 
     auto temp = juce::File::getSpecialLocation (juce::File::tempDirectory)
                   .getChildFile ("pamplejuce-songmanager-roundtrip.json");
@@ -204,6 +208,11 @@ TEST_CASE ("SongManager JSON round-trip", "[song][json]")
     CHECK (loaded.getTimelinePlacements().getReference (0).audioAssetPath == "spool-media/Test/timeline-clips/clip-abc.wav");
     CHECK (std::abs (loaded.getTimelinePlacements().getReference (0).startBeat - 16.0f) < 0.001f);
     CHECK (std::abs (loaded.getTimelinePlacements().getReference (0).lengthBeats - 8.0f) < 0.001f);
+    CHECK (std::abs (loaded.getTimelinePlacements().getReference (0).sourceStartBeat - 1.5f) < 0.001f);
+    CHECK (std::abs (loaded.getTimelinePlacements().getReference (0).sourceTotalBeats - 16.0f) < 0.001f);
+    CHECK (loaded.getTimelineLaneArmed()[2]);
+    CHECK (loaded.getTimelineLaneArmed()[6]);
+    CHECK_FALSE (loaded.getTimelineLaneArmed()[0]);
 }
 
 TEST_CASE ("SongManager beat query mapping", "[song][query]")

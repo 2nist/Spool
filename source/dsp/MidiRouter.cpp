@@ -23,6 +23,8 @@ void MidiRouter::route (const juce::MidiBuffer& input,
         const auto msg = meta.getMessage();
         const int  ch  = msg.getChannel();   // 1-16, or 0 for sysex/etc.
 
+        m_inputTick.fetch_add (1, std::memory_order_relaxed);
+
         // Check for a slot with a specific channel match
         int targetSlot = m_focusedSlot;
         for (int s = 0; s < numSlots; ++s)
@@ -36,5 +38,6 @@ void MidiRouter::route (const juce::MidiBuffer& input,
 
         targetSlot = juce::jlimit (0, numSlots - 1, targetSlot);
         slotBuffers[targetSlot].addEvent (msg, meta.samplePosition);
+        m_destTicks[targetSlot].fetch_add (1, std::memory_order_relaxed);
     }
 }

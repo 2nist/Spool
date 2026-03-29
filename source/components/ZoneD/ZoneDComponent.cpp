@@ -68,6 +68,59 @@ ZoneDComponent::ZoneDComponent()
         if (onClipDropped)
             onClipDropped (laneIndex);
     };
+
+    m_cylinderBand.onClipEditCommitted = [this] (int laneIndex,
+                                                 const juce::String& clipId,
+                                                 float startBeat,
+                                                 float lengthBeats)
+    {
+        if (laneIndex >= 0 && laneIndex < static_cast<int> (m_lanes.size()))
+        {
+            auto& lane = m_lanes[static_cast<size_t> (laneIndex)];
+            int fallbackIndex = -1;
+            for (int i = 0; i < lane.clips.size(); ++i)
+            {
+                auto& clip = lane.clips.getReference (i);
+                if (clip.type == ClipType::scaffold)
+                    continue;
+
+                if (fallbackIndex < 0)
+                    fallbackIndex = i;
+
+                if (clipId.isNotEmpty() && clip.clipId == clipId)
+                {
+                    clip.startBeat = startBeat;
+                    clip.lengthBeats = lengthBeats;
+                    fallbackIndex = -1;
+                    break;
+                }
+            }
+
+            if (fallbackIndex >= 0)
+            {
+                auto& clip = lane.clips.getReference (fallbackIndex);
+                clip.startBeat = startBeat;
+                clip.lengthBeats = lengthBeats;
+            }
+        }
+
+        if (onTimelineClipEdited)
+            onTimelineClipEdited (laneIndex, clipId, startBeat, lengthBeats);
+    };
+
+    m_cylinderBand.onScrubBeatChanged = [this] (float beat)
+    {
+        if (onScrubBeatChanged)
+            onScrubBeatChanged (beat);
+    };
+
+    m_cylinderBand.onClipSplitRequested = [this] (int laneIndex,
+                                                  const juce::String& clipId,
+                                                  float splitBeat)
+    {
+        if (onTimelineClipSplitRequested)
+            onTimelineClipSplitRequested (laneIndex, clipId, splitBeat);
+    };
 }
 
 //==============================================================================

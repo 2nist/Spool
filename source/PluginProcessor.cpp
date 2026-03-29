@@ -215,6 +215,258 @@ Chord nextChordForBeat (const StructureState& structure, double beat)
 
     return { "C", "maj" };
 }
+
+juce::String routeSignalTypeToString (RouteSignalType type)
+{
+    switch (type)
+    {
+        case RouteSignalType::midi:  return "midi";
+        case RouteSignalType::audio: return "audio";
+        case RouteSignalType::fx:    return "fx";
+    }
+    return "audio";
+}
+
+RouteSignalType routeSignalTypeFromString (const juce::String& value)
+{
+    if (value == "midi") return RouteSignalType::midi;
+    if (value == "fx")   return RouteSignalType::fx;
+    return RouteSignalType::audio;
+}
+
+bool varToBool (const juce::var& value)
+{
+    if (value.isBool())   return static_cast<bool> (value);
+    if (value.isInt())    return static_cast<int> (value) != 0;
+    if (value.isInt64())  return static_cast<juce::int64> (value) != 0;
+    if (value.isDouble()) return static_cast<double> (value) != 0.0;
+    const auto s = value.toString().trim().toLowerCase();
+    return s == "true" || s == "1" || s == "yes" || s == "on";
+}
+
+float varToFloat (const juce::var& value, float fallback = 0.0f)
+{
+    if (value.isDouble()) return static_cast<float> (static_cast<double> (value));
+    if (value.isInt())    return static_cast<float> (static_cast<int> (value));
+    if (value.isInt64())  return static_cast<float> (static_cast<juce::int64> (value));
+    if (value.isString()) return value.toString().getFloatValue();
+    return fallback;
+}
+
+juce::var routeEntryToVar (const RouteEntry& route)
+{
+    juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+    obj->setProperty ("id", route.id);
+    obj->setProperty ("signalType", routeSignalTypeToString (route.signalType));
+    obj->setProperty ("sourceId", route.sourceId);
+    obj->setProperty ("destinationId", route.destinationId);
+    obj->setProperty ("busContext", route.busContext);
+    obj->setProperty ("orderIndex", route.orderIndex);
+    obj->setProperty ("enabled", route.enabled);
+    obj->setProperty ("level", route.level);
+    return juce::var (obj.get());
+}
+
+bool routeEntryFromVar (const juce::var& value, RouteEntry& out)
+{
+    auto* obj = value.getDynamicObject();
+    if (obj == nullptr)
+        return false;
+
+    out.id = static_cast<int> (obj->getProperty ("id"));
+    out.signalType = routeSignalTypeFromString (obj->getProperty ("signalType").toString().trim().toLowerCase());
+    out.sourceId = obj->getProperty ("sourceId").toString();
+    out.destinationId = obj->getProperty ("destinationId").toString();
+    out.busContext = obj->getProperty ("busContext").toString();
+    out.orderIndex = static_cast<int> (obj->getProperty ("orderIndex"));
+    out.enabled = varToBool (obj->getProperty ("enabled"));
+    out.level = juce::jlimit (0.0f, 1.0f, varToFloat (obj->getProperty ("level"), 1.0f));
+    return true;
+}
+
+juce::var routeListToVar (const std::vector<RouteEntry>& routes)
+{
+    juce::Array<juce::var> items;
+    for (const auto& route : routes)
+        items.add (routeEntryToVar (route));
+    return juce::var (items);
+}
+
+void routeListFromVar (const juce::var& value, std::vector<RouteEntry>& out)
+{
+    out.clear();
+    if (auto* arr = value.getArray())
+    {
+        out.reserve (static_cast<size_t> (arr->size()));
+        for (const auto& entry : *arr)
+        {
+            RouteEntry route;
+            if (routeEntryFromVar (entry, route))
+                out.push_back (route);
+        }
+    }
+}
+
+juce::var fxMatrixToVar (const FXSendMatrix& matrix)
+{
+    juce::Array<juce::var> enabledRows;
+    juce::Array<juce::var> levelRows;
+    for (int slot = 0; slot < kFXSlots; ++slot)
+    {
+        juce::Array<juce::var> enabledRow;
+        juce::Array<juce::var> levelRow;
+        for (int target = 0; target < kFXTargets; ++target)
+        {
+            enabledRow.add (matrix.enabled[slot][target]);
+            levelRow.add (matrix.level[slot][target]);
+        }
+        enabledRows.add (juce::var (enabledRow));
+        levelRows.add (juce::var (levelRow));
+    }
+
+    juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+    obj->setProperty ("enabled", juce::var (enabledRows));
+    obj->setProperty ("level", juce::var (levelRows));
+    return juce::var (obj.get());
+}
+
+void fxMatrixFromVar (const juce::var& value, FXSendMatrix& out)
+{
+    out = FXSendMatrix::makeDefault();
+
+    auto* obj = value.getDynamicObject();
+    if (obj == nullptr)
+        return;
+
+    auto* enabledRows = obj->getProperty ("enabled").getArray();
+    auto* levelRows   = obj->getProperty ("level").getArray();
+    if (enabledRows == nullptr || levelRows == nullptr)
+        return;
+
+    for (int slot = 0; slot < juce::jmin (kFXSlots, enabledRows->size(), levelRows->size()); ++slot)
+    {
+        auto* enabledRow = enabledRows->getReference (slot).getArray();
+        auto* levelRow = levelRows->getReference (slot).getArray();
+        if (enabledRow == nullptr || levelRow == nullptr)
+            continue;
+
+        for (int target = 0; target < juce::jmin (kFXTargets, enabledRow->size(), levelRow->size()); ++target)
+        {
+            out.enabled[slot][target] = varToBool (enabledRow->getReference (target));
+            out.level[slot][target] = juce::jlimit (0.0f, 1.0f, varToFloat (levelRow->getReference (target), 0.0f));
+        }
+    }
+}
+
+juce::String routingStateToJson (const RoutingState& state)
+{
+    juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+    obj->setProperty ("nextId", juce::jmax (1, state.nextId));
+    obj->setProperty ("midiRoutes", routeListToVar (state.midiRoutes));
+    obj->setProperty ("audioRoutes", routeListToVar (state.audioRoutes));
+    obj->setProperty ("fxRoutes", routeListToVar (state.fxRoutes));
+    obj->setProperty ("fxSendMatrix", fxMatrixToVar (state.fxSendMatrix));
+    return juce::JSON::toString (juce::var (obj.get()), false);
+}
+
+bool routingStateFromJson (const juce::String& json, RoutingState& out)
+{
+    const auto parsed = juce::JSON::parse (json);
+    auto* obj = parsed.getDynamicObject();
+    if (obj == nullptr)
+        return false;
+
+    out = RoutingState::makeDefault();
+    out.nextId = juce::jmax (1, static_cast<int> (obj->getProperty ("nextId")));
+
+    routeListFromVar (obj->getProperty ("midiRoutes"), out.midiRoutes);
+    routeListFromVar (obj->getProperty ("audioRoutes"), out.audioRoutes);
+    routeListFromVar (obj->getProperty ("fxRoutes"), out.fxRoutes);
+    fxMatrixFromVar (obj->getProperty ("fxSendMatrix"), out.fxSendMatrix);
+
+    for (const auto& route : out.midiRoutes)  out.nextId = juce::jmax (out.nextId, route.id + 1);
+    for (const auto& route : out.audioRoutes) out.nextId = juce::jmax (out.nextId, route.id + 1);
+    for (const auto& route : out.fxRoutes)    out.nextId = juce::jmax (out.nextId, route.id + 1);
+    return true;
+}
+
+bool effectNodeFromVar (const juce::var& value, EffectNode& out)
+{
+    auto* obj = value.getDynamicObject();
+    if (obj == nullptr)
+        return false;
+
+    out.effectType = obj->getProperty ("effectType").toString();
+    out.effectDomain = obj->getProperty ("effectDomain").toString();
+    out.bypassed = varToBool (obj->getProperty ("bypassed"));
+    out.params.clearQuick();
+
+    if (auto* params = obj->getProperty ("params").getArray())
+        for (const auto& p : *params)
+            out.params.add (varToFloat (p, 0.0f));
+
+    if (out.effectDomain.isEmpty())
+        out.effectDomain = "audio";
+
+    return out.effectType.isNotEmpty();
+}
+
+bool chainStateFromVar (const juce::var& value, ChainState& out)
+{
+    auto* obj = value.getDynamicObject();
+    if (obj == nullptr)
+        return false;
+
+    out.slotIndex = static_cast<int> (obj->getProperty ("slotIndex"));
+    out.initialised = varToBool (obj->getProperty ("initialised"));
+    out.nodes.clearQuick();
+
+    if (auto* nodes = obj->getProperty ("nodes").getArray())
+    {
+        for (const auto& nodeVar : *nodes)
+        {
+            EffectNode node;
+            if (effectNodeFromVar (nodeVar, node))
+                out.nodes.add (node);
+        }
+    }
+
+    if (!out.initialised && !out.nodes.isEmpty())
+        out.initialised = true;
+    return true;
+}
+
+struct ZoneCFxStateParsed
+{
+    std::array<ChainState, SpoolAudioGraph::kNumSlots> insertChains;
+    std::array<ChainState, 4> busChains;
+    ChainState masterChain;
+};
+
+bool zoneCFxStateFromJson (const juce::String& json, ZoneCFxStateParsed& out)
+{
+    const auto parsed = juce::JSON::parse (json);
+    auto* root = parsed.getDynamicObject();
+    if (root == nullptr)
+        return false;
+
+    out = {};
+
+    if (auto* inserts = root->getProperty ("insertChains").getArray())
+    {
+        for (int i = 0; i < juce::jmin (SpoolAudioGraph::kNumSlots, inserts->size()); ++i)
+            chainStateFromVar (inserts->getReference (i), out.insertChains[(size_t) i]);
+    }
+
+    if (auto* buses = root->getProperty ("busChains").getArray())
+    {
+        for (int i = 0; i < juce::jmin (4, buses->size()); ++i)
+            chainStateFromVar (buses->getReference (i), out.busChains[(size_t) i]);
+    }
+
+    chainStateFromVar (root->getProperty ("masterChain"), out.masterChain);
+    return true;
+}
 } // namespace
 
 //==============================================================================
@@ -263,6 +515,11 @@ PluginProcessor::PluginProcessor()
 
     for (auto& mapped : m_midiNoteMap)
         mapped = -1;
+
+    const auto defaultSnapshot = m_routeModel.fxSendMatrix.toSnapshot();
+    m_fxSendSnapshots[0] = defaultSnapshot;
+    m_fxSendSnapshots[1] = defaultSnapshot;
+    m_fxSendReadIndex.store (0, std::memory_order_relaxed);
 
     syncAuthoredSongToRuntime();
 }
@@ -749,6 +1006,13 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     m_samplePos  = 0.0;
 
     m_audioGraph.prepare (sampleRate, samplesPerBlock);
+    for (int bus = 0; bus < kNumFXBuses; ++bus)
+    {
+        m_fxBusChains[bus].prepare (sampleRate, samplesPerBlock);
+        m_fxBusBuffers[bus].setSize (2, samplesPerBlock, false, false, true);
+        m_fxBusBuffers[bus].clear();
+    }
+    m_masterFXChain.prepare (sampleRate, samplesPerBlock);
 
     m_circularBuffer.prepare (sampleRate, 120.0);
     m_circularBuffer.setSource (-1);   // master mix by default
@@ -769,6 +1033,9 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 void PluginProcessor::releaseResources()
 {
     m_audioGraph.reset();
+    for (auto& busChain : m_fxBusChains)
+        busChain.reset();
+    m_masterFXChain.reset();
     clearLooperPreview();
 }
 
@@ -903,7 +1170,82 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
 
     // ── Audio graph ──────────────────────────────────────────────────────────
+    // We run the per-slot graph to populate post-insert slot buffers, then build
+    // the master mix from the FX send matrix (master column + bus returns).
     m_audioGraph.process (buffer, m_slotMidi);
+
+    const int numCh = juce::jmin (getTotalNumOutputChannels(), buffer.getNumChannels());
+    for (auto& busBuffer : m_fxBusBuffers)
+    {
+        jassert (busBuffer.getNumSamples() >= numSamples);
+        busBuffer.clear();
+    }
+    buffer.clear();
+
+    const int snapshotIdx = juce::jlimit (0, 1, m_fxSendReadIndex.load (std::memory_order_acquire));
+    const FXSendSnapshot sendSnapshot = m_fxSendSnapshots[snapshotIdx];
+
+    uint8_t soloMask = 0;
+    for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
+        if (m_audioGraph.isSlotSoloed (slot))
+            soloMask |= static_cast<uint8_t> (1u << slot);
+
+    // Build direct-to-master and slot sends in parallel.
+    for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
+    {
+        if (!m_audioGraph.isSlotActive (slot))
+            continue;
+
+        const uint8_t bit = static_cast<uint8_t> (1u << slot);
+        const bool muted = m_audioGraph.isSlotMuted (slot);
+        const bool blockedBySolo = (soloMask != 0) && ((soloMask & bit) == 0);
+        if (muted || blockedBySolo)
+            continue;
+
+        const auto& slotBuffer = m_audioGraph.getSlotBuffer (slot);
+        const float slotLevel = juce::jlimit (0.0f, 2.0f, m_audioGraph.getSlotLevel (slot));
+
+        auto addSlotToDest = [&] (juce::AudioBuffer<float>& dest, float gain)
+        {
+            if (gain <= 0.0f)
+                return;
+
+            const int chCount = juce::jmin (numCh,
+                                            juce::jmin (dest.getNumChannels(),
+                                                        slotBuffer.getNumChannels()));
+            for (int ch = 0; ch < chCount; ++ch)
+                dest.addFrom (ch, 0, slotBuffer, ch, 0, numSamples, gain);
+        };
+
+        // Column 4 = direct master send.
+        if (sendSnapshot.enabled[slot][4])
+            addSlotToDest (buffer, slotLevel * juce::jlimit (0.0f, 1.0f, sendSnapshot.level[slot][4]));
+
+        // Columns 0..3 = bus sends.
+        for (int bus = 0; bus < kNumFXBuses; ++bus)
+        {
+            if (!sendSnapshot.enabled[slot][bus])
+                continue;
+
+            addSlotToDest (m_fxBusBuffers[bus], slotLevel * juce::jlimit (0.0f, 1.0f, sendSnapshot.level[slot][bus]));
+        }
+    }
+
+    // Process shared FX buses and return them to master.
+    for (int bus = 0; bus < kNumFXBuses; ++bus)
+    {
+        m_fxBusChains[bus].process (m_fxBusBuffers[bus]);
+        const int chCount = juce::jmin (numCh, m_fxBusBuffers[bus].getNumChannels());
+        for (int ch = 0; ch < chCount; ++ch)
+            buffer.addFrom (ch, 0, m_fxBusBuffers[bus], ch, 0, numSamples, 1.0f);
+    }
+
+    // ── Timeline clip playback (pre-master FX/gain so it follows master path) ──
+    if (transportPlaying && beatsPerSample > 0.0)
+        mixTimelineAudio (buffer, numSamples, blockStartBeat, beatsPerSample);
+
+    // ── Master chain (Zone C MASTER context) ─────────────────────────────────
+    m_masterFXChain.process (buffer);
 
     // ── Master gain + pan ────────────────────────────────────────────────────
     const float gain = m_masterGain.load();
@@ -913,13 +1255,12 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const float leftGain   = gain * std::cos (angle);
     const float rightGain  = gain * std::sin (angle);
 
-    const int numCh = juce::jmin (getTotalNumOutputChannels(), buffer.getNumChannels());
     if (numCh > 0) buffer.applyGain (0, 0, numSamples, leftGain);
     if (numCh > 1) buffer.applyGain (1, 0, numSamples, rightGain);
 
-    // ── Timeline clip playback (captured audio routed onto Zone D lanes) ──────
-    if (transportPlaying && beatsPerSample > 0.0)
-        mixTimelineAudio (buffer, numSamples, blockStartBeat, beatsPerSample);
+    // Activity telemetry: increment once per block with audible signal (RT-safe)
+    if (buffer.getMagnitude (0, numSamples) > 1e-4f)
+        m_audioTick.fetch_add (1, std::memory_order_relaxed);
 
     // ── Circular buffer — LAST operation before looper audition ───────────────
     if (m_circularBuffer.isActive())
@@ -1327,6 +1668,29 @@ void PluginProcessor::rebuildFXChain (int slotIndex, const ChainState& chain)
     m_audioGraph.getFXChain (slotIndex).rebuildFromChain (chain);
 }
 
+void PluginProcessor::setFXBusChainParam (int busIndex, int nodeIndex,
+                                          int paramIndex, float value) noexcept
+{
+    if (busIndex < 0 || busIndex >= kNumFXBuses) return;
+    m_fxBusChains[busIndex].setParam (nodeIndex, paramIndex, value);
+}
+
+void PluginProcessor::rebuildFXBusChain (int busIndex, const ChainState& chain)
+{
+    if (busIndex < 0 || busIndex >= kNumFXBuses) return;
+    m_fxBusChains[busIndex].rebuildFromChain (chain);
+}
+
+void PluginProcessor::setMasterFXChainParam (int nodeIndex, int paramIndex, float value) noexcept
+{
+    m_masterFXChain.setParam (nodeIndex, paramIndex, value);
+}
+
+void PluginProcessor::rebuildMasterFXChain (const ChainState& chain)
+{
+    m_masterFXChain.rebuildFromChain (chain);
+}
+
 //==============================================================================
 void  PluginProcessor::setMasterGain (float g) noexcept { m_masterGain.store (juce::jlimit (0.0f, 2.0f, g)); }
 void  PluginProcessor::setMasterPan  (float p) noexcept { m_masterPan.store  (juce::jlimit (-1.0f, 1.0f, p)); }
@@ -1395,7 +1759,9 @@ void PluginProcessor::addTimelineAudioClip (const CapturedAudioClip& clip,
                                              double lengthBeats,
                                              int laneIndex,
                                              const juce::String& moduleType,
-                                             const juce::String& clipName)
+                                             const juce::String& clipName,
+                                             double sourceStartBeat,
+                                             double sourceTotalBeats)
 {
     if (clip.buffer.getNumSamples() <= 0 || clip.buffer.getNumChannels() <= 0)
         return;
@@ -1404,6 +1770,14 @@ void PluginProcessor::addTimelineAudioClip (const CapturedAudioClip& clip,
     timelineClip.buffer.makeCopyOf (clip.buffer);
     timelineClip.startBeat = juce::jmax (0.0, startBeat);
     timelineClip.lengthBeats = juce::jmax (0.25, lengthBeats);
+    timelineClip.sourceStartBeat = juce::jmax (0.0, sourceStartBeat);
+    timelineClip.sourceTotalBeats = sourceTotalBeats > 0.0
+                                        ? sourceTotalBeats
+                                        : timelineClip.lengthBeats;
+    timelineClip.sourceTotalBeats = juce::jmax (timelineClip.lengthBeats, timelineClip.sourceTotalBeats);
+    timelineClip.sourceStartBeat = juce::jlimit (0.0,
+                                                 juce::jmax (0.0, timelineClip.sourceTotalBeats - timelineClip.lengthBeats),
+                                                 timelineClip.sourceStartBeat);
     juce::ignoreUnused (laneIndex, moduleType, clipName);
 
     const juce::SpinLock::ScopedLockType lock (m_timelineAudioLock);
@@ -1440,6 +1814,11 @@ void PluginProcessor::mixTimelineAudio (juce::AudioBuffer<float>& buffer,
 
         const double clipStartLoop = wrapPositive (clip.startBeat, loopBeats);
         const double clipLengthBeats = juce::jlimit (1.0e-6, loopBeats, static_cast<double> (clip.lengthBeats));
+        const double sourceTotalBeats = juce::jmax (clipLengthBeats,
+                                                    static_cast<double> (clip.sourceTotalBeats));
+        const double sourceStartBeat = juce::jlimit (0.0,
+                                                     juce::jmax (0.0, sourceTotalBeats - clipLengthBeats),
+                                                     static_cast<double> (clip.sourceStartBeat));
 
         for (int sample = 0; sample < numSamples; ++sample)
         {
@@ -1451,7 +1830,8 @@ void PluginProcessor::mixTimelineAudio (juce::AudioBuffer<float>& buffer,
             if (relativeBeat >= clipLengthBeats)
                 continue;
 
-            const double progress = relativeBeat / clipLengthBeats;
+            const double sourceBeat = juce::jlimit (0.0, sourceTotalBeats, sourceStartBeat + relativeBeat);
+            const double progress = sourceBeat / sourceTotalBeats;
             const double sourcePos = juce::jlimit (0.0,
                                                    static_cast<double> (clipSamples - 1),
                                                    progress * static_cast<double> (clipSamples - 1));
@@ -1558,14 +1938,25 @@ std::array<uint8_t, 8> PluginProcessor::getRoutingMatrix() const
 
 void PluginProcessor::setRoutingState (const RoutingState& state)
 {
-    std::lock_guard<std::mutex> lock (m_routingLock);
-    m_routeModel = state;
+    {
+        std::lock_guard<std::mutex> lock (m_routingLock);
+        m_routeModel = state;
+    }
+    publishFXSendSnapshot (state);
 }
 
 RoutingState PluginProcessor::getRoutingState() const
 {
     std::lock_guard<std::mutex> lock (m_routingLock);
     return m_routeModel;
+}
+
+void PluginProcessor::publishFXSendSnapshot (const RoutingState& state) noexcept
+{
+    const int current = juce::jlimit (0, 1, m_fxSendReadIndex.load (std::memory_order_relaxed));
+    const int next = 1 - current;
+    m_fxSendSnapshots[next] = state.fxSendMatrix.toSnapshot();
+    m_fxSendReadIndex.store (next, std::memory_order_release);
 }
 
 //==============================================================================
@@ -1575,13 +1966,17 @@ void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setAttribute ("masterGain", static_cast<double> (m_masterGain.load()));
     state.setAttribute ("masterPan",  static_cast<double> (m_masterPan.load()));
     state.setAttribute ("bpm",        static_cast<double> (m_bpm.load()));
+    RoutingState routeCopy;
     {
         std::lock_guard<std::mutex> lock (m_routingLock);
+        routeCopy = m_routeModel;
         juce::String bits;
         for (auto b : m_routingState)
             bits += (b ? '1' : '0');
         state.setAttribute ("routing", bits);
     }
+    state.setAttribute ("routingModelJson", routingStateToJson (routeCopy));
+    state.setAttribute ("zoneCFxStateJson", m_songMgr.getZoneCFxStateJson());
     const juce::String xmlText = state.toString();
     destData.replaceAll (xmlText.toRawUTF8(),
                          static_cast<size_t> (xmlText.getNumBytesAsUTF8()));
@@ -1604,6 +1999,50 @@ void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
         std::lock_guard<std::mutex> lock (m_routingLock);
         for (int i = 0; i < (int) m_routingState.size() && i < bits.length(); ++i)
             m_routingState[i] = (bits[i] == '1') ? 1 : 0;
+    }
+
+    const auto routingModelJson = xml->getStringAttribute ("routingModelJson", {});
+    if (routingModelJson.isNotEmpty())
+    {
+        RoutingState parsed;
+        if (routingStateFromJson (routingModelJson, parsed))
+        {
+            {
+                std::lock_guard<std::mutex> lock (m_routingLock);
+                m_routeModel = parsed;
+            }
+            publishFXSendSnapshot (parsed);
+        }
+    }
+
+    const auto zoneCFxStateJson = xml->getStringAttribute ("zoneCFxStateJson", {});
+    if (zoneCFxStateJson.isNotEmpty())
+    {
+        m_songMgr.setZoneCFxStateJson (zoneCFxStateJson);
+        ZoneCFxStateParsed parsed;
+        if (zoneCFxStateFromJson (zoneCFxStateJson, parsed))
+        {
+            for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
+            {
+                auto chain = parsed.insertChains[(size_t) slot];
+                if (chain.slotIndex < 0)
+                    chain.slotIndex = slot;
+                rebuildFXChain (slot, chain);
+            }
+
+            for (int bus = 0; bus < 4; ++bus)
+            {
+                auto chain = parsed.busChains[(size_t) bus];
+                if (chain.slotIndex < 0)
+                    chain.slotIndex = 100 + bus;
+                rebuildFXBusChain (bus, chain);
+            }
+
+            auto masterChain = parsed.masterChain;
+            if (masterChain.slotIndex < 0)
+                masterChain.slotIndex = 200;
+            rebuildMasterFXChain (masterChain);
+        }
     }
 }
 

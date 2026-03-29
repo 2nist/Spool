@@ -57,11 +57,15 @@ struct TimelineClipPlacement
     juce::String audioAssetPath;
     float        startBeat   = 0.0f;
     float        lengthBeats = 0.0f;
+    float        sourceStartBeat = 0.0f;
+    float        sourceTotalBeats = 0.0f;
 };
 
 class SongManager
 {
 public:
+    static constexpr int kTimelineLaneCount = 8;
+
     SongManager();
 
     const juce::String& getSongTitle() const;
@@ -74,6 +78,8 @@ public:
     const LyricsState& getLyricsState() const;
     const AutomationState& getAutomationState() const;
     const juce::Array<TimelineClipPlacement>& getTimelinePlacements() const;
+    const std::array<bool, kTimelineLaneCount>& getTimelineLaneArmed() const;
+    const juce::String& getZoneCFxStateJson() const;
 
     void setSongTitle (const juce::String& title);
     void setTempo (int bpm);
@@ -86,9 +92,12 @@ public:
     void resetToDefault();
     void replaceLyricsState (const LyricsState& lyrics);
     void replaceAutomationState (const AutomationState& automation);
+    void setZoneCFxStateJson (const juce::String& json);
     void addTimelinePlacement (const TimelineClipPlacement& placement);
     void clearTimelinePlacements();
     void replaceTimelinePlacements (const juce::Array<TimelineClipPlacement>& placements);
+    void setTimelineLaneArmed (int laneIndex, bool armed);
+    void setTimelineLaneArmedStates (const std::array<bool, kTimelineLaneCount>& states);
 
     const StructureState& getStructureState() const;
     StructureState& getStructureStateForEdit();
@@ -129,7 +138,9 @@ private:
         StructureState structure;
         LyricsState lyrics;
         AutomationState automation;
+        juce::String zoneCFxStateJson;
         juce::Array<TimelineClipPlacement> timelinePlacements;
+        std::array<bool, kTimelineLaneCount> timelineLaneArmed {};
         juce::Array<SongPattern> patterns;
         juce::Array<SongSection> sections;
         juce::Array<ChordEvent> chords;

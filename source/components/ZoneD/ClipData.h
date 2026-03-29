@@ -17,6 +17,7 @@ struct Clip
 {
     float        startBeat   = 0.0f;
     float        lengthBeats = 0.0f;
+    juce::String clipId;
     juce::String name;
     ClipType     type        = ClipType::audio;
     bool         selected    = false;

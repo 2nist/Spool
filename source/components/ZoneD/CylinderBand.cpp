@@ -1,10 +1,17 @@
 #include "CylinderBand.h"
+#include "TimelineEditMath.h"
+#include <limits>
 
 namespace
 {
 const ThemeData& tapeTheme() noexcept
 {
     return ThemeManager::get().theme();
+}
+
+float wrapBeat (float beat, float loopBeats) noexcept
+{
+    return TimelineEditMath::wrapBeat (beat, loopBeats);
 }
 }
 
@@ -208,41 +215,273 @@ void CylinderBand::paint (juce::Graphics& g)
     }
 }
 
+void CylinderBand::clearClipSelection()
+{
+    for (auto& lane : m_lanes)
+        for (auto& clip : lane.clips)
+            clip.selected = false;
+}
+
+CylinderBand::ClipHit CylinderBand::hitTestEditableClip (juce::Point<float> pos) const
+{
+    ClipHit best;
+    float bestScore = std::numeric_limits<float>::max();
+
+    if (! m_tapeRect.contains (juce::Point<int> (juce::roundToInt (pos.x), juce::roundToInt (pos.y))))
+        return best;
+
+    const float localX = pos.x - static_cast<float> (m_tapeRect.getX());
+    const float loopPx = loopLengthPx();
+    if (loopPx <= 0.0f)
+        return best;
+
+    static constexpr float handleTol = 6.0f;
+    const float centerX = static_cast<float> (m_tapeRect.getWidth()) * 0.5f;
+
+    for (int laneIndex = 0; laneIndex < m_lanes.size(); ++laneIndex)
+    {
+        const int top = laneTopY (laneIndex);
+        if (pos.y < static_cast<float> (top) || pos.y > static_cast<float> (top + laneH()))
+            continue;
+
+        const auto& lane = m_lanes.getReference (laneIndex);
+        for (int clipIndex = 0; clipIndex < lane.clips.size(); ++clipIndex)
+        {
+            const auto& clip = lane.clips.getReference (clipIndex);
+            if (clip.type == ClipType::scaffold)
+                continue;
+
+            const float clipStartX = timelineXForBeat (clip.startBeat, centerX);
+            const float clipW = clip.lengthBeats * m_pxPerBeat;
+            const float oneBeatLaterX = timelineXForBeat (clip.startBeat + 1.0f, centerX);
+            const float beatAxisDir = (oneBeatLaterX >= clipStartX) ? 1.0f : -1.0f;
+            const float clipEndX = clipStartX + beatAxisDir * clipW;
+            const float clipLeft = juce::jmin (clipStartX, clipEndX);
+            const float clipRight = juce::jmax (clipStartX, clipEndX);
+
+            for (int wrap = -1; wrap <= 1; ++wrap)
+            {
+                const float l = clipLeft + static_cast<float> (wrap) * loopPx;
+                const float r = clipRight + static_cast<float> (wrap) * loopPx;
+
+                if (localX < (l - handleTol) || localX > (r + handleTol))
+                    continue;
+
+                const float startEdge = (beatAxisDir >= 0.0f ? l : r);
+                const float endEdge = (beatAxisDir >= 0.0f ? r : l);
+                const float startDist = std::abs (localX - startEdge);
+                const float endDist = std::abs (localX - endEdge);
+
+                ClipHit candidate;
+                candidate.laneIndex = laneIndex;
+                candidate.clipIndex = clipIndex;
+                candidate.beatAxisDir = beatAxisDir;
+
+                float score = 1000.0f + std::abs (localX - 0.5f * (l + r));
+                if (startDist <= handleTol || endDist <= handleTol)
+                {
+                    if (startDist <= endDist)
+                    {
+                        candidate.mode = DragMode::clipTrimStart;
+                        score = startDist;
+                    }
+                    else
+                    {
+                        candidate.mode = DragMode::clipTrimEnd;
+                        score = endDist;
+                    }
+                }
+                else if (localX >= l && localX <= r)
+                {
+                    candidate.mode = DragMode::clipMove;
+                }
+                else
+                {
+                    continue;
+                }
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    best = candidate;
+                }
+            }
+        }
+    }
+
+    return best;
+}
+
 void CylinderBand::mouseDown (const juce::MouseEvent& e)
 {
-    if (m_transportPlaying)
+    if (m_transportPlaying || ! m_tapeRect.contains (e.getPosition()))
         return;
-    if (!m_tapeRect.contains (e.getPosition()))
+
+    const auto hit = hitTestEditableClip (e.position);
+    if (hit.mode != DragMode::none)
+    {
+        clearClipSelection();
+
+        m_dragMode = hit.mode;
+        m_dragStartX = e.position.x;
+        m_dragClipLane = hit.laneIndex;
+        m_dragClipIndex = hit.clipIndex;
+        m_dragClipAxisDir = (std::abs (hit.beatAxisDir) > 0.01f) ? hit.beatAxisDir : -1.0f;
+        m_dragClipChanged = false;
+
+        if (m_dragClipLane >= 0
+            && m_dragClipLane < m_lanes.size()
+            && m_dragClipIndex >= 0
+            && m_dragClipIndex < m_lanes.getReference (m_dragClipLane).clips.size())
+        {
+            auto& clip = m_lanes.getReference (m_dragClipLane).clips.getReference (m_dragClipIndex);
+            clip.selected = true;
+            m_dragClipStartBeat = clip.startBeat;
+            m_dragClipLengthBeats = clip.lengthBeats;
+        }
+
+        repaint();
+        updateMouseCursor();
         return;
-    m_isDragging   = true;
-    m_dragStartX   = e.position.x;
+    }
+
+    m_dragMode = DragMode::scrub;
+    m_dragStartX = e.position.x;
     m_dragStartBeat = m_currentBeat;
+    updateMouseCursor();
 }
 
 void CylinderBand::mouseDrag (const juce::MouseEvent& e)
 {
-    if (!m_isDragging)
+    if (m_dragMode == DragMode::none)
         return;
-    const float delta   = (e.position.x - m_dragStartX) / m_pxPerBeat;
-    float newBeat       = m_dragStartBeat + delta;
-    const float loopLen = loopLengthBeats();
-    newBeat = std::fmod (newBeat, loopLen);
-    if (newBeat < 0.0f)
-        newBeat += loopLen;
-    m_currentBeat = newBeat;
+
+    const float loopLen = juce::jmax (1.0f, loopLengthBeats());
+    const float snapStep = (m_pxPerBeat >= 48.0f) ? 0.125f : 0.25f;
+    const bool snapEnabled = ! e.mods.isShiftDown();
+
+    if (m_dragMode == DragMode::scrub)
+    {
+        const float delta = (e.position.x - m_dragStartX) / m_pxPerBeat;
+        m_currentBeat = wrapBeat (m_dragStartBeat + delta, loopLen);
+        if (onScrubBeatChanged)
+            onScrubBeatChanged (m_currentBeat);
+        repaint();
+        return;
+    }
+
+    if (m_dragClipLane < 0 || m_dragClipLane >= m_lanes.size())
+        return;
+
+    auto& lane = m_lanes.getReference (m_dragClipLane);
+    if (m_dragClipIndex < 0 || m_dragClipIndex >= lane.clips.size())
+        return;
+
+    auto& clip = lane.clips.getReference (m_dragClipIndex);
+    if (clip.type == ClipType::scaffold)
+        return;
+
+    const float axis = (std::abs (m_dragClipAxisDir) > 0.01f) ? m_dragClipAxisDir : -1.0f;
+    const float deltaBeats = (e.position.x - m_dragStartX) / (axis * m_pxPerBeat);
+    TimelineEditMath::EditMode editMode = TimelineEditMath::EditMode::move;
+    if (m_dragMode == DragMode::clipTrimStart)
+        editMode = TimelineEditMath::EditMode::trimStart;
+    else if (m_dragMode == DragMode::clipTrimEnd)
+        editMode = TimelineEditMath::EditMode::trimEnd;
+
+    TimelineEditMath::ClipSegment originalSegment;
+    originalSegment.startBeat = m_dragClipStartBeat;
+    originalSegment.lengthBeats = m_dragClipLengthBeats;
+
+    TimelineEditMath::EditRequest request;
+    request.mode = editMode;
+    request.deltaBeats = deltaBeats;
+    request.loopBeats = loopLen;
+    request.minLengthBeats = 0.25f;
+    request.snapStep = snapStep;
+    request.snapEnabled = snapEnabled;
+
+    const auto editedSegment = TimelineEditMath::applyEdit (originalSegment, request);
+    const float newStart = editedSegment.startBeat;
+    const float newLength = editedSegment.lengthBeats;
+
+    if (std::abs (clip.startBeat - newStart) > 0.0001f
+        || std::abs (clip.lengthBeats - newLength) > 0.0001f)
+    {
+        clip.startBeat = newStart;
+        clip.lengthBeats = newLength;
+        m_dragClipChanged = true;
+    }
+
     repaint();
 }
 
 void CylinderBand::mouseUp (const juce::MouseEvent&)
 {
-    m_isDragging = false;
+    if ((m_dragMode == DragMode::clipMove
+         || m_dragMode == DragMode::clipTrimStart
+         || m_dragMode == DragMode::clipTrimEnd)
+        && m_dragClipChanged
+        && m_dragClipLane >= 0
+        && m_dragClipLane < m_lanes.size()
+        && m_dragClipIndex >= 0
+        && m_dragClipIndex < m_lanes.getReference (m_dragClipLane).clips.size())
+    {
+        const auto& lane = m_lanes.getReference (m_dragClipLane);
+        const auto& clip = lane.clips.getReference (m_dragClipIndex);
+        if (onClipEditCommitted)
+            onClipEditCommitted (lane.slotIndex, clip.clipId, clip.startBeat, clip.lengthBeats);
+    }
+
+    m_dragMode = DragMode::none;
+    m_dragClipLane = -1;
+    m_dragClipIndex = -1;
+    m_dragClipChanged = false;
+    updateMouseCursor();
+}
+
+void CylinderBand::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (m_transportPlaying || ! m_tapeRect.contains (e.getPosition()))
+        return;
+
+    const auto hit = hitTestEditableClip (e.position);
+    if (hit.mode == DragMode::none
+        || hit.laneIndex < 0
+        || hit.laneIndex >= m_lanes.size())
+        return;
+
+    const auto& lane = m_lanes.getReference (hit.laneIndex);
+    if (hit.clipIndex < 0 || hit.clipIndex >= lane.clips.size())
+        return;
+
+    const auto& clip = lane.clips.getReference (hit.clipIndex);
+    if (clip.type == ClipType::scaffold)
+        return;
+
+    if (onClipSplitRequested)
+        onClipSplitRequested (lane.slotIndex, clip.clipId, m_currentBeat);
 }
 
 juce::MouseCursor CylinderBand::getMouseCursor()
 {
     return m_transportPlaying
                ? juce::MouseCursor::NormalCursor
-               : juce::MouseCursor::LeftRightResizeCursor;
+               : [&]
+               {
+                   if (m_dragMode == DragMode::clipMove)
+                       return juce::MouseCursor::DraggingHandCursor;
+                   if (m_dragMode == DragMode::clipTrimStart || m_dragMode == DragMode::clipTrimEnd)
+                       return juce::MouseCursor::LeftRightResizeCursor;
+
+                   const auto mousePos = getMouseXYRelative().toFloat();
+                   const auto hit = hitTestEditableClip (mousePos);
+                   if (hit.mode == DragMode::clipTrimStart || hit.mode == DragMode::clipTrimEnd)
+                       return juce::MouseCursor::LeftRightResizeCursor;
+                   if (hit.mode == DragMode::clipMove)
+                       return juce::MouseCursor::PointingHandCursor;
+                   return juce::MouseCursor::LeftRightResizeCursor;
+               }();
 }
 
 //==============================================================================
@@ -421,8 +660,9 @@ void CylinderBand::paintClips (juce::Graphics& g,
     const float clipTop = static_cast<float> (laneTopYVal + 3);
     const float clipH   = static_cast<float> (laneH - 6);
 
-    for (const auto& clip : lane.clips)
+    for (int clipIndex = 0; clipIndex < lane.clips.size(); ++clipIndex)
     {
+        const auto& clip = lane.clips.getReference (clipIndex);
         const float clipStartX = timelineXForBeat (clip.startBeat, centerX);
         const float clipW = clip.lengthBeats * m_pxPerBeat;
         const float oneBeatLaterX = timelineXForBeat (clip.startBeat + 1.0f, centerX);
@@ -430,30 +670,77 @@ void CylinderBand::paintClips (juce::Graphics& g,
         const float clipEndX = clipStartX + beatAxisDir * clipW;
         const float clipLeft = juce::jmin (clipStartX, clipEndX);
         const float clipRight = juce::jmax (clipStartX, clipEndX);
+        const float startEdgeBase = (beatAxisDir >= 0.0f ? clipLeft : clipRight);
+        const float endEdgeBase = (beatAxisDir >= 0.0f ? clipRight : clipLeft);
 
-        auto drawClipAt = [&] (float left, float right)
+        const bool isDraggingThisClip = (m_dragMode == DragMode::clipMove
+                                         || m_dragMode == DragMode::clipTrimStart
+                                         || m_dragMode == DragMode::clipTrimEnd)
+                                        && laneIndex == m_dragClipLane
+                                        && clipIndex == m_dragClipIndex;
+
+        auto drawGhostAt = [&] (float left, float right)
+        {
+            const float tW = static_cast<float> (m_tapeRect.getWidth());
+            const float l = juce::jmax (left, 4.0f);
+            const float r = juce::jmin (right, tW - 4.0f);
+            if (r <= l)
+                return;
+
+            g.setColour (Theme::Colour::inkLight.withAlpha (0.35f));
+            g.drawRoundedRectangle ({ l, clipTop, r - l, clipH }, Theme::Radius::xs, 1.0f);
+        };
+
+        auto drawClipAt = [&] (float left, float right, float startEdge, float endEdge)
         {
             // Clamp to tape surface
             const float tW = static_cast<float> (m_tapeRect.getWidth());
             const float l  = juce::jmax (left, 4.0f);
             const float r  = juce::jmin (right, tW - 4.0f);
             if (r > l)
+            {
                 ClipCard::paint (g, { l, clipTop, r - l, clipH }, clip,
                                  loopLengthBeats(), m_pxPerBeat);
+
+                if (clip.selected && clip.type != ClipType::scaffold)
+                {
+                    const auto handleColour = Theme::Zone::d.withAlpha (0.95f);
+                    g.setColour (handleColour);
+
+                    if (startEdge >= l && startEdge <= r)
+                        g.fillRoundedRectangle ({ startEdge - 1.0f, clipTop + 1.0f, 2.0f, juce::jmax (4.0f, clipH - 2.0f) },
+                                                1.0f);
+                    if (endEdge >= l && endEdge <= r)
+                        g.fillRoundedRectangle ({ endEdge - 1.0f, clipTop + 1.0f, 2.0f, juce::jmax (4.0f, clipH - 2.0f) },
+                                                1.0f);
+                }
+            }
         };
+
+        if (isDraggingThisClip)
+        {
+            const float ghostStartX = timelineXForBeat (m_dragClipStartBeat, centerX);
+            const float ghostW = m_dragClipLengthBeats * m_pxPerBeat;
+            const float ghostEndX = ghostStartX + beatAxisDir * ghostW;
+            const float ghostLeft = juce::jmin (ghostStartX, ghostEndX);
+            const float ghostRight = juce::jmax (ghostStartX, ghostEndX);
+            drawGhostAt (ghostLeft, ghostRight);
+            drawGhostAt (ghostLeft - loopPx, ghostRight - loopPx);
+            drawGhostAt (ghostLeft + loopPx, ghostRight + loopPx);
+        }
 
         if (clipW < loopPx)
         {
             // Draw the canonical visible segment plus wrapped neighbours so a
             // clip remains continuous as it crosses the loop seam.
-            drawClipAt (clipLeft, clipRight);
-            drawClipAt (clipLeft - loopPx, clipRight - loopPx);
-            drawClipAt (clipLeft + loopPx, clipRight + loopPx);
+            drawClipAt (clipLeft, clipRight, startEdgeBase, endEdgeBase);
+            drawClipAt (clipLeft - loopPx, clipRight - loopPx, startEdgeBase - loopPx, endEdgeBase - loopPx);
+            drawClipAt (clipLeft + loopPx, clipRight + loopPx, startEdgeBase + loopPx, endEdgeBase + loopPx);
         }
         else
         {
             // Full-loop clip — just draw it
-            drawClipAt (clipLeft, clipLeft + clipW);
+            drawClipAt (clipLeft, clipLeft + clipW, startEdgeBase, endEdgeBase);
         }
     }
 }

@@ -133,6 +133,10 @@ public:
     //--- FX chain (called from UI thread) ------------------------------------
     void setFXChainParam (int slotIndex, int nodeIndex, int paramIndex, float value) noexcept;
     void rebuildFXChain  (int slotIndex, const ChainState& chain);
+    void setFXBusChainParam (int busIndex, int nodeIndex, int paramIndex, float value) noexcept;
+    void rebuildFXBusChain  (int busIndex, const ChainState& chain);
+    void setMasterFXChainParam (int nodeIndex, int paramIndex, float value) noexcept;
+    void rebuildMasterFXChain  (const ChainState& chain);
 
     //--- Master output (thread-safe via atomics) -----------------------------
     void  setMasterGain (float g) noexcept;
@@ -160,7 +164,9 @@ public:
                                double lengthBeats,
                                int laneIndex,
                                const juce::String& moduleType,
-                               const juce::String& clipName);
+                               const juce::String& clipName,
+                               double sourceStartBeat = 0.0,
+                               double sourceTotalBeats = 0.0);
     void clearTimelineAudioClips();
 
     bool hasGrabbedClip() const noexcept { return m_hasGrabbedClip; }
@@ -180,6 +186,12 @@ public:
     std::array<uint8_t, 8> getRoutingMatrix() const;
     void setRoutingState (const RoutingState& state);
     RoutingState getRoutingState() const;
+    const MidiRouter& getMidiRouter() const noexcept { return m_midiRouter; }
+
+    /** UI-thread readable audio activity counter.  Incremented each processBlock
+        where the master output has signal above a noise threshold.
+        UI polls via !=; no locks needed. */
+    const std::atomic<uint32_t>& getAudioTick() const noexcept { return m_audioTick; }
 
     //--- Step-advance notification (message thread) --------------------------
     /** Fired on the message thread after each sequencer step advance.
@@ -212,6 +224,8 @@ private:
         juce::AudioBuffer<float> buffer;
         double startBeat { 0.0 };
         double lengthBeats { 4.0 };
+        double sourceStartBeat { 0.0 };
+        double sourceTotalBeats { 4.0 };
     };
     juce::SpinLock m_timelineAudioLock;
     juce::Array<TimelineAudioClip> m_timelineAudioClips;
@@ -305,6 +319,10 @@ private:
     //--- Master --------------------------------------------------------------
     std::atomic<float> m_masterGain { 1.0f };
     std::atomic<float> m_masterPan  { 0.0f };
+    static constexpr int kNumFXBuses = 4;
+    FXChainProcessor m_fxBusChains[kNumFXBuses];
+    FXChainProcessor m_masterFXChain;
+    juce::AudioBuffer<float> m_fxBusBuffers[kNumFXBuses];
 
     //--- Drum machine per-voice step state -----------------------------------
     struct DrumVoiceStepState
@@ -331,7 +349,12 @@ private:
     //--- Legacy routing matrix -----------------------------------------------
     mutable std::mutex      m_routingLock;
     std::array<uint8_t, 8>  m_routingState { 0 };
+
+    //--- Audio activity telemetry (RT-safe, UI-readable) ---------------------
+    mutable std::atomic<uint32_t> m_audioTick { 0 };
     RoutingState            m_routeModel { RoutingState::makeDefault() };
+    FXSendSnapshot          m_fxSendSnapshots[2] {};
+    std::atomic<int>        m_fxSendReadIndex { 0 };
     static constexpr int    kRoutingSources = 4;
     static constexpr int    kRoutingOutputs = 2;
 
@@ -364,6 +387,7 @@ private:
                            int numSamples,
                            double blockStartBeat,
                            double beatsPerSample) noexcept;
+    void publishFXSendSnapshot (const RoutingState& state) noexcept;
     
     std::atomic<double> m_currentSongBeat { 0.0 };
     

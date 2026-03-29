@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "components/ZoneD/TimelineEditMath.h"
 #include "instruments/drum/DrumModuleState.h"
 #include "theme/ThemeEditorPanel.h"
 #include <cmath>
@@ -147,6 +148,120 @@ std::vector<juce::String> parseLyricImportLines (const juce::String& text)
     }
 
     return lines;
+}
+
+juce::var effectNodeToVar (const EffectNode& node)
+{
+    juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+    obj->setProperty ("effectType", node.effectType);
+    obj->setProperty ("effectDomain", node.effectDomain);
+    obj->setProperty ("bypassed", node.bypassed);
+
+    juce::Array<juce::var> params;
+    for (const auto p : node.params)
+        params.add (p);
+    obj->setProperty ("params", juce::var (params));
+    return juce::var (obj.get());
+}
+
+bool effectNodeFromVar (const juce::var& value, EffectNode& out)
+{
+    auto* obj = value.getDynamicObject();
+    if (obj == nullptr)
+        return false;
+
+    out.effectType = obj->getProperty ("effectType").toString();
+    out.effectDomain = obj->getProperty ("effectDomain").toString();
+    out.bypassed = static_cast<bool> (obj->getProperty ("bypassed"));
+    out.params.clearQuick();
+
+    if (auto* params = obj->getProperty ("params").getArray())
+        for (const auto& param : *params)
+            out.params.add (static_cast<float> (static_cast<double> (param)));
+
+    if (out.effectDomain.isEmpty())
+        out.effectDomain = "audio";
+    return out.effectType.isNotEmpty();
+}
+
+juce::var chainStateToVar (const ChainState& chain)
+{
+    juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+    obj->setProperty ("slotIndex", chain.slotIndex);
+    obj->setProperty ("initialised", chain.initialised);
+
+    juce::Array<juce::var> nodes;
+    for (const auto& node : chain.nodes)
+        nodes.add (effectNodeToVar (node));
+    obj->setProperty ("nodes", juce::var (nodes));
+    return juce::var (obj.get());
+}
+
+bool chainStateFromVar (const juce::var& value, ChainState& out)
+{
+    auto* obj = value.getDynamicObject();
+    if (obj == nullptr)
+        return false;
+
+    out.slotIndex = static_cast<int> (obj->getProperty ("slotIndex"));
+    out.initialised = static_cast<bool> (obj->getProperty ("initialised"));
+    out.nodes.clearQuick();
+
+    if (auto* nodes = obj->getProperty ("nodes").getArray())
+    {
+        for (const auto& nodeVar : *nodes)
+        {
+            EffectNode node;
+            if (effectNodeFromVar (nodeVar, node))
+                out.nodes.add (node);
+        }
+    }
+
+    if (! out.initialised && ! out.nodes.isEmpty())
+        out.initialised = true;
+    return true;
+}
+
+juce::String zoneCFxStateToJson (const ZoneCComponent::ChainBank& bank)
+{
+    juce::DynamicObject::Ptr root = new juce::DynamicObject();
+    juce::Array<juce::var> insertChains;
+    juce::Array<juce::var> busChains;
+
+    for (const auto& chain : bank.inserts)
+        insertChains.add (chainStateToVar (chain));
+    for (const auto& chain : bank.buses)
+        busChains.add (chainStateToVar (chain));
+
+    root->setProperty ("insertChains", juce::var (insertChains));
+    root->setProperty ("busChains", juce::var (busChains));
+    root->setProperty ("masterChain", chainStateToVar (bank.master));
+    return juce::JSON::toString (juce::var (root.get()), false);
+}
+
+bool zoneCFxStateFromJson (const juce::String& json, ZoneCComponent::ChainBank& out)
+{
+    const auto parsed = juce::JSON::parse (json);
+    auto* root = parsed.getDynamicObject();
+    if (root == nullptr)
+        return false;
+
+    out = {};
+
+    if (auto* inserts = root->getProperty ("insertChains").getArray())
+    {
+        for (int i = 0; i < juce::jmin (8, inserts->size()); ++i)
+            chainStateFromVar (inserts->getReference (i), out.inserts[(size_t) i]);
+    }
+
+    if (auto* buses = root->getProperty ("busChains").getArray())
+    {
+        for (int i = 0; i < juce::jmin (ZoneCComponent::kNumBusChains, buses->size()); ++i)
+            chainStateFromVar (buses->getReference (i), out.buses[(size_t) i]);
+    }
+
+    chainStateFromVar (root->getProperty ("masterChain"), out.master);
+    return true;
 }
 
 class ThemeEditorModalContent final : public juce::Component
@@ -375,16 +490,28 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     {
         processorRef.setRoutingState (state);
     });
+    zoneA.setOnRoutingBusSelected ([this] (const juce::String& busId)
+    {
+        if (busId == FXBusID::busA)   { zoneC.showBusContext (0); return; }
+        if (busId == FXBusID::busB)   { zoneC.showBusContext (1); return; }
+        if (busId == FXBusID::busC)   { zoneC.showBusContext (2); return; }
+        if (busId == FXBusID::busD)   { zoneC.showBusContext (3); return; }
+        zoneC.showMasterContext();
+    });
     zoneA.setRoutingState (processorRef.getRoutingState());
+    zoneA.setMidiRouter (&processorRef.getMidiRouter());
+    zoneA.setRoutingAudioTick (&processorRef.getAudioTick());
 
     // Wire Zone B module list changes to patch bay, instrument browser, and mixer
     zoneB.onModuleListChanged = [this] (const juce::StringArray& names)
     {
         m_lastModuleNames = names;
-        zoneA.setPatchModuleNames   (names);
-        zoneA.setInstrumentSlots    (names);
-        zoneA.setMixerSlots         (names);
+        zoneA.setPatchModuleNames     (names);
+        zoneA.setInstrumentSlots      (names);
+        zoneA.setMixerSlots           (names);
+        zoneA.setRoutingModuleNames   (names);
         zoneA.setTrackLanes         (names);
+        applyTimelineLaneArmStateUi();
         syncAllSlotRuntimeFromModuleList();
         refreshTimelinePlacementsUi();
     };
@@ -458,7 +585,11 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                 zoneD.setPlaying (false);
                 zoneD.setStructureBeat (0.0);
             };
-            tp->onRecord = [this] { zoneD.setRecording (true);  };
+            tp->onRecord = [this]
+            {
+                const bool newState = ! processorRef.getAppState().transport.isRecording;
+                zoneD.setRecording (newState);
+            };
             tp->onBpmChanged = [this] (float bpm)
             {
                 processorRef.getSongManager().setTempo (juce::roundToInt (bpm));
@@ -476,8 +607,21 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             };
             tp->onArmChanged = [this] (int lane, bool armed)
             {
-                juce::ignoreUnused (lane, armed);
+                if (lane < 0 || lane >= SpoolAudioGraph::kNumSlots)
+                    return;
+
+                m_timelineLaneArmed[static_cast<size_t> (lane)] = armed;
+                processorRef.getSongManager().setTimelineLaneArmed (lane, armed);
+                zoneD.armLane (lane, armed);
+                if (auto* tracks = zoneA.getTracksPanel())
+                    tracks->setLaneArmed (lane, armed);
+
+                systemFeed.addMessage (juce::String ("Lane ")
+                                       + juce::String (lane + 1).paddedLeft ('0', 2)
+                                       + (armed ? " armed" : " disarmed"));
             };
+
+            applyTimelineLaneArmStateUi();
         }
     };
 
@@ -598,14 +742,50 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             zoneA.setTrackLanes (m_lastModuleNames);
     };
 
-    // Wire Zone C param changes to the DSP layer
-    zoneC.onDspParamChanged = [this] (int slotIdx, int nodeIdx, int paramIdx, float value)
+    // Wire Zone C context-aware DSP callbacks (insert, bus, and master chains).
+    zoneC.onContextDspParamChanged = [this] (ZoneCComponent::ChainContext context,
+                                             int contextIndex,
+                                             int nodeIdx,
+                                             int paramIdx,
+                                             float value)
     {
-        processorRef.setFXChainParam (slotIdx, nodeIdx, paramIdx, value);
+        switch (context)
+        {
+            case ZoneCComponent::ChainContext::insert:
+                processorRef.setFXChainParam (contextIndex, nodeIdx, paramIdx, value);
+                break;
+            case ZoneCComponent::ChainContext::busA:
+            case ZoneCComponent::ChainContext::busB:
+            case ZoneCComponent::ChainContext::busC:
+            case ZoneCComponent::ChainContext::busD:
+                processorRef.setFXBusChainParam (contextIndex, nodeIdx, paramIdx, value);
+                break;
+            case ZoneCComponent::ChainContext::master:
+                processorRef.setMasterFXChainParam (nodeIdx, paramIdx, value);
+                break;
+        }
+        persistZoneCFxStateToSong();
     };
-    zoneC.onChainRebuilt = [this] (int slotIdx, const ChainState& chain)
+    zoneC.onContextChainRebuilt = [this] (ZoneCComponent::ChainContext context,
+                                          int contextIndex,
+                                          const ChainState& chain)
     {
-        processorRef.rebuildFXChain (slotIdx, chain);
+        switch (context)
+        {
+            case ZoneCComponent::ChainContext::insert:
+                processorRef.rebuildFXChain (contextIndex, chain);
+                break;
+            case ZoneCComponent::ChainContext::busA:
+            case ZoneCComponent::ChainContext::busB:
+            case ZoneCComponent::ChainContext::busC:
+            case ZoneCComponent::ChainContext::busD:
+                processorRef.rebuildFXBusChain (contextIndex, chain);
+                break;
+            case ZoneCComponent::ChainContext::master:
+                processorRef.rebuildMasterFXChain (chain);
+                break;
+        }
+        persistZoneCFxStateToSong();
     };
 
     // Wire Zone B step-pattern edits to the processor
@@ -866,6 +1046,206 @@ PluginEditor::PluginEditor (PluginProcessor& p)
                                                 : ((m_focusedSlotIndex >= 0) ? m_focusedSlotIndex : 0);
         routeClipToTimeline (*m_dragClip, targetSlot);
         m_dragClip.reset();
+    };
+    zoneD.onTimelineClipEdited = [this] (int laneIndex,
+                                         const juce::String& clipId,
+                                         float startBeat,
+                                         float lengthBeats)
+    {
+        auto placements = processorRef.getSongManager().getTimelinePlacements();
+        bool changed = false;
+        const auto loopBeats = static_cast<float> (juce::jmax (1.0,
+                                                                zoneD.loopLengthBars()
+                                                                * juce::jmax (1.0, processorRef.getBeatsPerBar())));
+        static constexpr float kMinLen = 0.25f;
+
+        if (clipId.isNotEmpty())
+        {
+            for (auto& placement : placements)
+            {
+                if (placement.clipId == clipId)
+                {
+                    const auto oldStart = placement.startBeat;
+                    const auto oldLen = placement.lengthBeats;
+                    placement.laneIndex = juce::jlimit (0, SpoolAudioGraph::kNumSlots - 1, laneIndex);
+                    placement.startBeat = TimelineEditMath::wrapBeat (startBeat, loopBeats);
+                    placement.lengthBeats = juce::jmax (kMinLen, lengthBeats);
+                    placement.sourceTotalBeats = placement.sourceTotalBeats > 0.0f
+                                                     ? placement.sourceTotalBeats
+                                                     : juce::jmax (kMinLen, oldLen);
+                    placement.sourceTotalBeats = juce::jmax (placement.sourceTotalBeats, placement.lengthBeats);
+                    placement.sourceStartBeat = juce::jmax (0.0f, placement.sourceStartBeat);
+
+                    const bool lengthChanged = std::abs (placement.lengthBeats - oldLen) > 0.0001f;
+                    const bool startChanged = std::abs (placement.startBeat - oldStart) > 0.0001f;
+                    if (lengthChanged && startChanged)
+                    {
+                        float delta = placement.startBeat - oldStart;
+                        if (delta < -loopBeats * 0.5f)
+                            delta += loopBeats;
+                        else if (delta > loopBeats * 0.5f)
+                            delta -= loopBeats;
+                        placement.sourceStartBeat = juce::jmax (0.0f, placement.sourceStartBeat + delta);
+                    }
+
+                    placement.sourceStartBeat = juce::jlimit (0.0f,
+                                                              juce::jmax (0.0f, placement.sourceTotalBeats - placement.lengthBeats),
+                                                              placement.sourceStartBeat);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        else if (laneIndex >= 0 && laneIndex < SpoolAudioGraph::kNumSlots)
+        {
+            int unresolvedLanePlacements = 0;
+            int unresolvedPlacementIndex = -1;
+            for (int i = 0; i < placements.size(); ++i)
+            {
+                const auto& placement = placements.getReference (i);
+                if (placement.laneIndex == laneIndex && placement.clipId.trim().isEmpty())
+                {
+                    ++unresolvedLanePlacements;
+                    unresolvedPlacementIndex = i;
+                }
+            }
+
+            if (unresolvedLanePlacements == 1 && unresolvedPlacementIndex >= 0)
+            {
+                auto& placement = placements.getReference (unresolvedPlacementIndex);
+                const auto oldStart = placement.startBeat;
+                const auto oldLen = placement.lengthBeats;
+                placement.startBeat = TimelineEditMath::wrapBeat (startBeat, loopBeats);
+                placement.lengthBeats = juce::jmax (kMinLen, lengthBeats);
+                placement.sourceTotalBeats = placement.sourceTotalBeats > 0.0f
+                                                 ? placement.sourceTotalBeats
+                                                 : juce::jmax (kMinLen, oldLen);
+                placement.sourceTotalBeats = juce::jmax (placement.sourceTotalBeats, placement.lengthBeats);
+                placement.sourceStartBeat = juce::jmax (0.0f, placement.sourceStartBeat);
+
+                const bool lengthChanged = std::abs (placement.lengthBeats - oldLen) > 0.0001f;
+                const bool startChanged = std::abs (placement.startBeat - oldStart) > 0.0001f;
+                if (lengthChanged && startChanged)
+                {
+                    float delta = placement.startBeat - oldStart;
+                    if (delta < -loopBeats * 0.5f)
+                        delta += loopBeats;
+                    else if (delta > loopBeats * 0.5f)
+                        delta -= loopBeats;
+                    placement.sourceStartBeat = juce::jmax (0.0f, placement.sourceStartBeat + delta);
+                }
+
+                placement.sourceStartBeat = juce::jlimit (0.0f,
+                                                          juce::jmax (0.0f, placement.sourceTotalBeats - placement.lengthBeats),
+                                                          placement.sourceStartBeat);
+                changed = true;
+            }
+        }
+
+        if (! changed)
+        {
+            systemFeed.addMessage ("Timeline edit skipped: clip id not resolved.");
+            return;
+        }
+
+        processorRef.getSongManager().replaceTimelinePlacements (placements);
+        refreshTimelinePlacementsUi();
+        applyTimelineLaneArmStateUi();
+    };
+    zoneD.onTimelineClipSplitRequested = [this] (int laneIndex,
+                                                 const juce::String& clipId,
+                                                 float splitBeat)
+    {
+        auto placements = processorRef.getSongManager().getTimelinePlacements();
+        const auto loopBeats = static_cast<float> (juce::jmax (1.0,
+                                                                zoneD.loopLengthBars()
+                                                                * juce::jmax (1.0, processorRef.getBeatsPerBar())));
+        static constexpr float kMinLen = 0.25f;
+        int splitIndex = -1;
+
+        if (clipId.isNotEmpty())
+        {
+            for (int i = 0; i < placements.size(); ++i)
+            {
+                if (placements.getReference (i).clipId == clipId)
+                {
+                    splitIndex = i;
+                    break;
+                }
+            }
+        }
+        else if (laneIndex >= 0 && laneIndex < SpoolAudioGraph::kNumSlots)
+        {
+            int unresolvedOnLane = 0;
+            for (int i = 0; i < placements.size(); ++i)
+            {
+                const auto& placement = placements.getReference (i);
+                if (placement.laneIndex == laneIndex && placement.clipId.trim().isEmpty())
+                {
+                    ++unresolvedOnLane;
+                    splitIndex = i;
+                }
+            }
+            if (unresolvedOnLane != 1)
+                splitIndex = -1;
+        }
+
+        if (splitIndex < 0 || splitIndex >= placements.size())
+        {
+            systemFeed.addMessage ("Split skipped: clip id not resolved.");
+            return;
+        }
+
+        auto original = placements.getReference (splitIndex);
+        float splitOffset = 0.0f;
+        if (! TimelineEditMath::splitOffsetWithinClip (original.startBeat,
+                                                       original.lengthBeats,
+                                                       splitBeat,
+                                                       loopBeats,
+                                                       kMinLen,
+                                                       splitOffset))
+        {
+            systemFeed.addMessage ("Split skipped: playhead not inside clip body.");
+            return;
+        }
+
+        auto first = original;
+        auto second = original;
+        first.lengthBeats = splitOffset;
+        second.startBeat = TimelineEditMath::wrapBeat (original.startBeat + splitOffset, loopBeats);
+        second.lengthBeats = juce::jmax (kMinLen, original.lengthBeats - splitOffset);
+        second.clipId = makeTimelineClipId();
+
+        const float sourceTotal = original.sourceTotalBeats > 0.0f
+                                      ? original.sourceTotalBeats
+                                      : juce::jmax (kMinLen, original.lengthBeats);
+        const float sourceStart = juce::jmax (0.0f, original.sourceStartBeat);
+        first.sourceTotalBeats = sourceTotal;
+        second.sourceTotalBeats = sourceTotal;
+        first.sourceStartBeat = juce::jlimit (0.0f,
+                                              juce::jmax (0.0f, sourceTotal - first.lengthBeats),
+                                              sourceStart);
+        second.sourceStartBeat = juce::jlimit (0.0f,
+                                               juce::jmax (0.0f, sourceTotal - second.lengthBeats),
+                                               sourceStart + splitOffset);
+
+        placements.set (splitIndex, first);
+        placements.insert (splitIndex + 1, second);
+
+        if (clipId.isNotEmpty())
+        {
+            if (const auto* clipAudio = findTimelineClipAudio (clipId))
+                upsertTimelineClipAudio (second.clipId, *clipAudio);
+        }
+
+        processorRef.getSongManager().replaceTimelinePlacements (placements);
+        refreshTimelinePlacementsUi();
+        applyTimelineLaneArmStateUi();
+        systemFeed.addMessage ("Split clip at beat " + juce::String (splitBeat, 2));
+    };
+    zoneD.onScrubBeatChanged = [this] (float beat)
+    {
+        positionChanged (beat);
     };
     zoneD.onLoopLengthChanged = [this] (float bars)
     {
@@ -1457,9 +1837,7 @@ void PluginEditor::routeClipToTimeline (const CapturedAudioClip& clip, std::opti
                                : 0.0;
     const int preferredSlot = targetSlotOverride.has_value()
                                   ? *targetSlotOverride
-                                  : (routedClip.sourceSlot >= 0
-                                         ? routedClip.sourceSlot
-                                         : (m_focusedSlotIndex >= 0 ? m_focusedSlotIndex : 0));
+                                  : preferredArmedTimelineLane (routedClip);
     const auto targetSlot = juce::jlimit (0, SpoolAudioGraph::kNumSlots - 1, preferredSlot);
 
     auto lengthBeats = 0.0;
@@ -1488,6 +1866,7 @@ void PluginEditor::routeClipToTimeline (const CapturedAudioClip& clip, std::opti
     placementModel.moduleType = moduleType;
     placementModel.clipName = timelineClip.name;
     placementModel.clipId = makeTimelineClipId();
+    timelineClip.clipId = placementModel.clipId;
     if (m_currentSongFile.existsAsFile())
     {
         const auto assetFile = timelineAssetFileFor (m_currentSongFile, placementModel.clipId);
@@ -1495,6 +1874,8 @@ void PluginEditor::routeClipToTimeline (const CapturedAudioClip& clip, std::opti
     }
     placementModel.startBeat = timelineClip.startBeat;
     placementModel.lengthBeats = timelineClip.lengthBeats;
+    placementModel.sourceStartBeat = 0.0f;
+    placementModel.sourceTotalBeats = placementModel.lengthBeats;
     processorRef.getSongManager().addTimelinePlacement (placementModel);
     upsertTimelineClipAudio (placementModel.clipId, routedClip);
     processorRef.addTimelineAudioClip (routedClip,
@@ -1502,7 +1883,9 @@ void PluginEditor::routeClipToTimeline (const CapturedAudioClip& clip, std::opti
                                        lengthBeats,
                                        targetSlot,
                                        moduleType,
-                                       timelineClip.name);
+                                       timelineClip.name,
+                                       placementModel.sourceStartBeat,
+                                       placementModel.sourceTotalBeats);
 
     m_contentPanelOpen = true;
     m_tabStrip.setActiveTab ("tracks");
@@ -1607,6 +1990,7 @@ void PluginEditor::refreshTimelinePlacementsUi()
         Clip clip;
         clip.startBeat = juce::jmax (0.0f, placement.startBeat);
         clip.lengthBeats = juce::jmax (0.25f, placement.lengthBeats);
+        clip.clipId = placement.clipId;
         clip.name = placement.clipName.isNotEmpty() ? placement.clipName : "CAPTURE";
         clip.type = ClipType::audio;
         clip.tint = Theme::Signal::audio.withAlpha (0.92f);
@@ -1640,7 +2024,9 @@ void PluginEditor::refreshTimelinePlacementsUi()
                                                placement.lengthBeats,
                                                slotIndex,
                                                moduleType,
-                                               clip.name);
+                                               clip.name,
+                                               placement.sourceStartBeat,
+                                               placement.sourceTotalBeats);
         }
 
         zoneD.setLaneInfo (slotIndex, true, moduleType);
@@ -1657,6 +2043,43 @@ void PluginEditor::refreshTimelinePlacementsUi()
             tracks->addTimelinePlacement (placementUi);
         }
     }
+}
+
+void PluginEditor::applyTimelineLaneArmStateUi()
+{
+    for (int lane = 0; lane < SpoolAudioGraph::kNumSlots; ++lane)
+    {
+        const bool armed = m_timelineLaneArmed[static_cast<size_t> (lane)];
+        zoneD.armLane (lane, armed);
+        if (auto* tracks = zoneA.getTracksPanel())
+            tracks->setLaneArmed (lane, armed);
+    }
+}
+
+int PluginEditor::preferredArmedTimelineLane (const CapturedAudioClip& clip) const
+{
+    auto isArmed = [this] (int lane) -> bool
+    {
+        return lane >= 0
+               && lane < SpoolAudioGraph::kNumSlots
+               && m_timelineLaneArmed[static_cast<size_t> (lane)];
+    };
+
+    if (isArmed (clip.sourceSlot))
+        return clip.sourceSlot;
+
+    if (isArmed (m_focusedSlotIndex))
+        return m_focusedSlotIndex;
+
+    for (int lane = 0; lane < SpoolAudioGraph::kNumSlots; ++lane)
+        if (isArmed (lane))
+            return lane;
+
+    if (clip.sourceSlot >= 0)
+        return clip.sourceSlot;
+    if (m_focusedSlotIndex >= 0)
+        return m_focusedSlotIndex;
+    return 0;
 }
 
 juce::String PluginEditor::ensureTimelineClipId (TimelineClipPlacement& placement)
@@ -2136,6 +2559,7 @@ void PluginEditor::newSong()
     processorRef.getSongManager().resetToDefault();
     processorRef.getStructureEngine().rebuild();
     processorRef.syncAuthoredSongToRuntime();
+    m_timelineLaneArmed = processorRef.getSongManager().getTimelineLaneArmed();
     m_timelineClipAudioCache.clearQuick();
     m_currentSongFile = {};
     applyAuthoredSongToUi();
@@ -2162,6 +2586,7 @@ void PluginEditor::openSong()
 
                               processorRef.getStructureEngine().rebuild();
                               processorRef.syncAuthoredSongToRuntime();
+                              m_timelineLaneArmed = processorRef.getSongManager().getTimelineLaneArmed();
                               m_timelineClipAudioCache.clearQuick();
                               m_currentSongFile = file;
                               applyAuthoredSongToUi();
@@ -2311,6 +2736,9 @@ void PluginEditor::exportThemeFile()
 
 void PluginEditor::applyAuthoredSongToUi()
 {
+    m_timelineLaneArmed = processorRef.getSongManager().getTimelineLaneArmed();
+    const auto zoneCFxStateJson = processorRef.getSongManager().getZoneCFxStateJson();
+
     const auto& authoredStructure = processorRef.getSongManager().getStructureState();
 
     songHeader.setCompactMode (AppPreferences::get().getCompactSongHeader());
@@ -2347,14 +2775,42 @@ void PluginEditor::applyAuthoredSongToUi()
                                    &processorRef.getSongManager().getAutomationState());
     zoneD.seedStructureRails (authoredStructure);
     refreshTimelinePlacementsUi();
+    applyTimelineLaneArmStateUi();
     zoneD.setStructureBeat (processorRef.getCurrentSongBeat());
     zoneD.setStructureFollowState (computeFollowState (processorRef.isStructureFollowForTracksEnabled(),
                                                        structureHasScaffold (authoredStructure)));
     processorRef.setTimelineLoopLengthBeats (static_cast<double> (zoneD.loopLengthBars())
                                              * juce::jmax (1.0, processorRef.getBeatsPerBar()));
+    if (zoneCFxStateJson.isNotEmpty())
+        applyZoneCFxStateJson (zoneCFxStateJson, true);
+    else
+        persistZoneCFxStateToSong();
+
     updateSequencerStructureContext (processorRef.getCurrentSongBeat());
     resized();
     repaint();
+}
+
+juce::String PluginEditor::serialiseZoneCFxStateJson() const
+{
+    return zoneCFxStateToJson (zoneC.getChainBank());
+}
+
+void PluginEditor::applyZoneCFxStateJson (const juce::String& json, bool pushToDsp)
+{
+    if (json.trim().isEmpty())
+        return;
+
+    ZoneCComponent::ChainBank bank;
+    if (! zoneCFxStateFromJson (json, bank))
+        return;
+
+    zoneC.setChainBank (bank, pushToDsp);
+}
+
+void PluginEditor::persistZoneCFxStateToSong()
+{
+    processorRef.getSongManager().setZoneCFxStateJson (serialiseZoneCFxStateJson());
 }
 
 void PluginEditor::openSettingsPanel (juce::Rectangle<int> anchorBounds)

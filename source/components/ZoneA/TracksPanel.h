@@ -42,6 +42,7 @@ public:
     void setRecording  (bool recording);
     void setBpm        (float bpm);
     void setPosition   (float beat);
+    void setLaneArmed  (int laneIndex, bool armed);
     struct TimelinePlacement
     {
         int          laneIndex   { 0 };

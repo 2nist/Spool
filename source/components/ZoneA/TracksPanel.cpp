@@ -41,6 +41,19 @@ void TracksPanel::setPosition (float beat)
     repaint();
 }
 
+void TracksPanel::setLaneArmed (int laneIndex, bool armed)
+{
+    if (laneIndex < 0 || laneIndex >= m_lanes.size())
+        return;
+
+    auto& lane = m_lanes.getReference (laneIndex);
+    if (lane.armed == armed)
+        return;
+
+    lane.armed = armed;
+    repaint();
+}
+
 void TracksPanel::addTimelinePlacement (const TimelinePlacement& placement)
 {
     m_timelinePlacements.add (placement);
