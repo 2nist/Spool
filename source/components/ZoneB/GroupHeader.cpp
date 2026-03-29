@@ -7,6 +7,25 @@ GroupHeader::GroupHeader (ModuleGroup& group)
     : m_group (group)
 {
     setInterceptsMouseClicks (true, true);
+
+    ZoneAControlStyle::styleTextButton (m_addSlotBtn, Theme::Zone::b.withAlpha (0.8f));
+    ZoneAControlStyle::styleTextButton (m_collapseBtn, Theme::Colour::surfaceEdge.withAlpha (0.7f));
+    ZoneAControlStyle::styleTextButton (m_menuBtn, Theme::Colour::surfaceEdge.withAlpha (0.7f));
+
+    m_addSlotBtn.onClick = [this]
+    {
+        if (onAddSlot)
+            onAddSlot();
+    };
+
+    m_collapseBtn.onClick = [this] { toggleCollapsed(); };
+    m_menuBtn.onClick = [this] { showContextMenu(); };
+
+    addAndMakeVisible (m_addSlotBtn);
+    addAndMakeVisible (m_collapseBtn);
+    addAndMakeVisible (m_menuBtn);
+
+    syncButtonState();
 }
 
 GroupHeader::~GroupHeader()
@@ -21,13 +40,17 @@ GroupHeader::~GroupHeader()
 
 juce::Rectangle<int> GroupHeader::nameRect() const noexcept
 {
-    // Full bar minus left stripe and a small right margin for collapse indicator
-    return { kStripeW + 4, 0, getWidth() - kStripeW - 20, kHeight };
+    const int rightEdge = slotCountRect().getX() - 4;
+    const int leftEdge = kStripeW + 6;
+    return { leftEdge, 0, juce::jmax (0, rightEdge - leftEdge), kHeight };
 }
 
-juce::Rectangle<int> GroupHeader::collapseRect() const noexcept
+juce::Rectangle<int> GroupHeader::slotCountRect() const noexcept
 {
-    return { getWidth() - 16, 0, 16, kHeight };
+    constexpr int buttonW = 22;
+    constexpr int rightPad = 2;
+    const int x = getWidth() - rightPad - buttonW * 3 - 42;
+    return { x, 0, 40, kHeight };
 }
 
 //==============================================================================
@@ -50,14 +73,14 @@ void GroupHeader::paint (juce::Graphics& g)
         g.setFont   (Theme::Font::micro());
         g.setColour (m_group.color.brighter (0.15f));
         g.drawText  (m_group.name.toUpperCase(), nameRect(),
-                     juce::Justification::centred, true);
-    }
+                     juce::Justification::centredLeft, true);
 
-    // Collapse indicator
-    g.setFont   (Theme::Font::micro());
-    g.setColour (Theme::Colour::inkGhost);
-    g.drawText  (m_group.collapsed ? "\xe2\x96\xb6" : "\xe2\x96\xbd",
-                 collapseRect(), juce::Justification::centred, false);
+        g.setColour (Theme::Colour::inkGhost.withAlpha (0.8f));
+        g.drawText  (juce::String (m_group.slots.size()) + " slot" + (m_group.slots.size() == 1 ? "" : "s"),
+                     slotCountRect(),
+                     juce::Justification::centredRight,
+                     true);
+    }
 }
 
 //==============================================================================
@@ -68,55 +91,9 @@ void GroupHeader::mouseDown (const juce::MouseEvent& e)
 {
     if (e.mods.isRightButtonDown())
     {
-        juce::PopupMenu menu;
-        menu.addItem (1, "Add Slot");
-        menu.addItem (2, "Rename");
-        menu.addItem (3, "Change Color");
-        menu.addSeparator();
-        menu.addItem (4, m_group.collapsed ? "Expand" : "Collapse");
-        menu.addSeparator();
-        menu.addItem (5, "Delete Group");
-
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-            [this] (int result)
-            {
-                switch (result)
-                {
-                    case 1:
-                        if (onAddSlot) onAddSlot();
-                        break;
-                    case 2:
-                        startRename();
-                        break;
-                    case 3:
-                        openColorPicker();
-                        break;
-                    case 4:
-                        m_group.collapsed = !m_group.collapsed;
-                        if (onToggleCollapse) onToggleCollapse();
-                        repaint();
-                        break;
-                    case 5:
-                        juce::AlertWindow::showOkCancelBox (
-                            juce::MessageBoxIconType::WarningIcon,
-                            "Delete Group",
-                            "Delete group \"" + m_group.name + "\" and all its slots?",
-                            "Delete", "Cancel", nullptr,
-                            juce::ModalCallbackFunction::create ([this] (int r)
-                            {
-                                if (r == 1 && onDelete) onDelete();
-                            }));
-                        break;
-                    default: break;
-                }
-            });
+        showContextMenu();
         return;
     }
-
-    // Left click = toggle collapse
-    m_group.collapsed = !m_group.collapsed;
-    if (onToggleCollapse) onToggleCollapse();
-    repaint();
 }
 
 void GroupHeader::mouseDoubleClick (const juce::MouseEvent&)
@@ -151,6 +128,7 @@ void GroupHeader::changeListenerCallback (juce::ChangeBroadcaster* source)
     if (auto* sel = dynamic_cast<juce::ColourSelector*> (source))
     {
         m_group.color = sel->getCurrentColour();
+        ZoneAControlStyle::styleTextButton (m_addSlotBtn, m_group.color.withAlpha (0.8f));
         repaint();
         if (onColorChanged) onColorChanged (m_group.color);
         m_selectorPtr = nullptr;   // CallOutBox owns the lifetime; we just clear the ptr
@@ -177,8 +155,10 @@ void GroupHeader::startRename()
     m_nameEditor->onFocusLost = [this] { commitRename(); };
 
     addAndMakeVisible (*m_nameEditor);
-    // Place editor as a 20px overlay starting at the header top (extends below)
-    m_nameEditor->setBounds (kStripeW + 4, 0, juce::jmax (120, getWidth() - kStripeW - 8), 20);
+    // Keep inline editor constrained to the name field.
+    auto r = nameRect().reduced (0, 1);
+    r.setWidth (juce::jmax (120, r.getWidth()));
+    m_nameEditor->setBounds (r);
     m_nameEditor->grabKeyboardFocus();
     m_nameEditor->selectAll();
     repaint();
@@ -197,4 +177,77 @@ void GroupHeader::commitRename()
         if (onNameChanged) onNameChanged (newName);
     }
     repaint();
+}
+
+void GroupHeader::resized()
+{
+    constexpr int buttonW = 22;
+    const int buttonH = juce::jmax (14, kHeight - 4);
+    int x = getWidth() - 2;
+
+    x -= buttonW;
+    m_menuBtn.setBounds (x, (kHeight - buttonH) / 2, buttonW, buttonH);
+    x -= buttonW;
+    m_collapseBtn.setBounds (x, (kHeight - buttonH) / 2, buttonW, buttonH);
+    x -= buttonW;
+    m_addSlotBtn.setBounds (x, (kHeight - buttonH) / 2, buttonW, buttonH);
+}
+
+void GroupHeader::showContextMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem (1, "Add Slot");
+    menu.addItem (2, "Rename");
+    menu.addItem (3, "Change Color");
+    menu.addSeparator();
+    menu.addItem (4, m_group.collapsed ? "Expand" : "Collapse");
+    menu.addSeparator();
+    menu.addItem (5, "Delete Group");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                        [this] (int result)
+                        {
+                            switch (result)
+                            {
+                                case 1:
+                                    if (onAddSlot) onAddSlot();
+                                    break;
+                                case 2:
+                                    startRename();
+                                    break;
+                                case 3:
+                                    openColorPicker();
+                                    break;
+                                case 4:
+                                    toggleCollapsed();
+                                    break;
+                                case 5:
+                                    juce::AlertWindow::showOkCancelBox (
+                                        juce::MessageBoxIconType::WarningIcon,
+                                        "Delete Group",
+                                        "Delete group \"" + m_group.name + "\" and all its slots?",
+                                        "Delete", "Cancel", nullptr,
+                                        juce::ModalCallbackFunction::create ([this] (int r)
+                                        {
+                                            if (r == 1 && onDelete) onDelete();
+                                        }));
+                                    break;
+                                default:
+                                    break;
+                            }
+                        });
+}
+
+void GroupHeader::toggleCollapsed()
+{
+    m_group.collapsed = !m_group.collapsed;
+    syncButtonState();
+    if (onToggleCollapse)
+        onToggleCollapse();
+    repaint();
+}
+
+void GroupHeader::syncButtonState()
+{
+    m_collapseBtn.setButtonText (m_group.collapsed ? "\xe2\x96\xb6" : "\xe2\x96\xbd");
 }

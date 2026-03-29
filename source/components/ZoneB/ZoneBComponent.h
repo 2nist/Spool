@@ -63,6 +63,7 @@ public:
                               const juce::String& transitionIntent,
                               bool followingStructure,
                               bool locallyOverriding);
+    void setFocusedPatternFollowStructure (bool enabled, bool activeOnly = true);
     void seedPatternForSlot (int flatSlotIndex, int stepCount, const std::initializer_list<int>& activeSteps);
 
     /** Fired when the module list changes — passes flat "<Group>:<Type>" list. */
@@ -153,6 +154,8 @@ private:
     SplitHandle m_splitHandle;
     int         m_splitY          { -1 };  // -1 = uninitialized
     int         m_splitDragStartY {  0 };
+    int         m_splitBeforeSequencerFocus { -1 };
+    bool        m_sequencerFocusMode { false };
 
     //==========================================================================
     // Load dialog
@@ -197,10 +200,11 @@ private:
     //==========================================================================
     // Group / row management
 
-    void addGroup           (const juce::String& name, juce::Colour color);
+    void addGroup           (const juce::String& name, juce::Colour color, bool addInitialEmptySlot = true);
     void addSlotToGroup     (int groupIndex, ModuleRow::ModuleType type = ModuleRow::ModuleType::Empty);
     void removeGroup        (int groupIndex);
     void connectGroupHeader (int groupIndex);
+    int findGroupIndexForRow (const ModuleRow* row) const noexcept;
 
     //==========================================================================
     // Layout
@@ -208,6 +212,7 @@ private:
     int  calculateRowsContentH () const noexcept;
     void layoutRowsContent     ();
     void updateSourceNames     ();
+    void toggleSequencerFocusMode ();
 
     //==========================================================================
     // Focus

@@ -25,16 +25,24 @@ public:
 
         const bool isVertical = (style == juce::Slider::LinearBarVertical || style == juce::Slider::LinearVertical);
         const auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height).reduced (0.5f);
+        const auto& theme = ThemeManager::get().theme();
 
-        const float corner = Theme::Radius::sm;
-        const float trackThickness = 6.0f;
+        const float corner = juce::jlimit (0.0f, 12.0f, theme.sliderCornerRadius);
+        const float trackThickness = juce::jlimit (2.0f, 16.0f, theme.sliderTrackThickness);
         const auto track = isVertical ? bounds.withSizeKeepingCentre (juce::jmin (trackThickness, bounds.getWidth()), bounds.getHeight())
                                       : bounds.withSizeKeepingCentre (bounds.getWidth(), juce::jmin (trackThickness, bounds.getHeight()));
 
         const auto tintProp = slider.getProperties()["tint"];
-        const auto fill = tintProp.isVoid() ? (juce::Colour) Theme::Colour::accent
-                                             : juce::Colour::fromString (tintProp.toString());
-        const auto bg = Theme::Colour::surface2.withAlpha (0.95f);
+        const auto tint = tintProp.isVoid() ? juce::Colour() : juce::Colour::fromString (tintProp.toString());
+        auto fill = juce::Colour (theme.sliderTrack);
+        if (!tintProp.isVoid())
+            fill = fill.interpolatedWith (tint, 0.55f);
+
+        auto thumb = juce::Colour (theme.sliderThumb);
+        if (!tintProp.isVoid())
+            thumb = thumb.interpolatedWith (tint, 0.35f);
+
+        const auto bg = juce::Colour (theme.controlBg).withMultipliedBrightness (0.9f).withAlpha (0.95f);
 
         g.setColour (bg);
         g.fillRoundedRectangle (track, corner);
@@ -63,6 +71,21 @@ public:
 
         g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.85f));
         g.drawRoundedRectangle (track, corner, Theme::Stroke::normal);
+
+        if (classicStyle)
+        {
+            const float thumbSize = juce::jlimit (4.0f, 20.0f, theme.sliderThumbSize);
+            juce::Rectangle<float> thumbBounds;
+            if (isVertical)
+                thumbBounds = { track.getCentreX() - thumbSize * 0.5f, juce::jlimit (track.getY(), track.getBottom() - thumbSize, sliderPos - thumbSize * 0.5f), thumbSize, thumbSize };
+            else
+                thumbBounds = { juce::jlimit (track.getX(), track.getRight() - thumbSize, sliderPos - thumbSize * 0.5f), track.getCentreY() - thumbSize * 0.5f, thumbSize, thumbSize };
+
+            g.setColour (thumb.withAlpha (0.95f));
+            g.fillEllipse (thumbBounds);
+            g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.8f));
+            g.drawEllipse (thumbBounds, Theme::Stroke::subtle);
+        }
 
         const auto label = slider.getName();
         if (label.isEmpty())
@@ -93,14 +116,21 @@ public:
         auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height).reduced (0.5f);
         bounds = bounds.withSizeKeepingCentre (juce::jmin (bounds.getWidth(), bounds.getHeight()),
                                                juce::jmin (bounds.getWidth(), bounds.getHeight()));
+        const auto& theme = ThemeManager::get().theme();
 
         const auto tintProp = slider.getProperties()["tint"];
-        const auto accent = tintProp.isVoid() ? (juce::Colour) Theme::Colour::accent
-                                              : juce::Colour::fromString (tintProp.toString());
+        const auto tint = tintProp.isVoid() ? juce::Colour() : juce::Colour::fromString (tintProp.toString());
+        auto accent = juce::Colour (theme.sliderTrack);
+        if (!tintProp.isVoid())
+            accent = accent.interpolatedWith (tint, 0.55f);
+
         const bool isAssigned = (bool) slider.getProperties().getWithDefault ("slotAssigned", true);
         const float assignAlpha = isAssigned ? 1.0f : 0.6f;
+        const float ringThickness = juce::jlimit (1.0f, 6.0f, theme.knobRingThickness);
+        const float capScale = juce::jlimit (0.35f, 0.9f, theme.knobCapSize);
+        const float dotRadius = juce::jlimit (1.0f, 5.0f, theme.knobDotSize * 0.5f);
 
-        g.setColour (Theme::Colour::surface2.withAlpha (0.95f));
+        g.setColour (juce::Colour (theme.controlBg).withAlpha (0.95f));
         g.fillEllipse (bounds);
         g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.85f));
         g.drawEllipse (bounds, Theme::Stroke::subtle);
@@ -108,7 +138,6 @@ public:
         const auto centre = bounds.getCentre();
         const float radius = bounds.getWidth() * 0.5f;
         const float ringRadius = juce::jmax (1.0f, radius - 3.0f);
-        constexpr float ringThickness = 2.0f;
 
         juce::Path trackArc;
         trackArc.addCentredArc (centre.x, centre.y, ringRadius, ringRadius, 0.0f, rotaryStartAngle, rotaryEndAngle, true);
@@ -121,17 +150,16 @@ public:
         g.setColour (accent.withAlpha (0.95f * assignAlpha));
         g.strokePath (fillArc, juce::PathStrokeType (ringThickness));
 
-        const float capRadius = juce::jmax (2.0f, radius * 0.35f);
-        g.setColour (Theme::Colour::surface3.withAlpha (0.95f));
+        const float capRadius = juce::jmax (2.0f, radius * capScale);
+        g.setColour (juce::Colour (theme.controlOnBg).withAlpha (0.95f));
         g.fillEllipse (centre.x - capRadius, centre.y - capRadius, capRadius * 2.0f, capRadius * 2.0f);
         g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.9f));
         g.drawEllipse (centre.x - capRadius, centre.y - capRadius, capRadius * 2.0f, capRadius * 2.0f, Theme::Stroke::subtle);
 
-        const float dotRadius = 2.0f;
         const float dotOrbit = juce::jmax (1.0f, ringRadius - ringThickness * 0.5f);
         const float dotX = centre.x + dotOrbit * std::cos (toAngle);
         const float dotY = centre.y + dotOrbit * std::sin (toAngle);
-        g.setColour (Theme::Colour::inkLight.withAlpha (0.95f * assignAlpha));
+        g.setColour (juce::Colour (theme.sliderThumb).withAlpha (0.95f * assignAlpha));
         g.fillEllipse (dotX - dotRadius, dotY - dotRadius, dotRadius * 2.0f, dotRadius * 2.0f);
     }
 
@@ -146,9 +174,14 @@ public:
                                bool isHighlighted,
                                bool isDown) override
     {
+        const auto& theme = ThemeManager::get().theme();
         const auto bounds = button.getLocalBounds().toFloat().reduced (0.5f);
-        juce::Colour fill = button.getToggleState() ? (juce::Colour) Theme::Colour::surface3
-                                                     : (juce::Colour) Theme::Colour::surface2;
+        juce::Colour fill = button.getToggleState() ? juce::Colour (theme.controlOnBg)
+                                                     : juce::Colour (theme.controlBg);
+        fill = fill.withAlpha (juce::jlimit (0.08f, 1.0f, theme.btnFillStrength));
+
+        if (button.getToggleState())
+            fill = juce::Colour (theme.controlBg).interpolatedWith (fill, juce::jlimit (0.0f, 1.0f, theme.btnOnFillStrength));
 
         if (isDown)
             fill = fill.brighter (0.08f);
@@ -156,10 +189,14 @@ public:
             fill = fill.brighter (0.05f);
 
         g.setColour (fill);
-        g.fillRoundedRectangle (bounds, Theme::Radius::sm);
+        g.fillRoundedRectangle (bounds, juce::jlimit (0.0f, 12.0f, theme.btnCornerRadius));
 
-        g.setColour (button.findColour (juce::TextButton::buttonOnColourId).withAlpha (0.45f));
-        g.drawRoundedRectangle (bounds, Theme::Radius::sm, Theme::Stroke::normal);
+        juce::Colour border = button.findColour (juce::TextButton::buttonOnColourId);
+        if (border.isTransparent())
+            border = theme.surfaceEdge;
+        border = border.withAlpha (juce::jlimit (0.0f, 1.0f, theme.btnBorderStrength));
+        g.setColour (border);
+        g.drawRoundedRectangle (bounds, juce::jlimit (0.0f, 12.0f, theme.btnCornerRadius), Theme::Stroke::normal);
     }
 
     void drawButtonText (juce::Graphics& g,
@@ -167,9 +204,10 @@ public:
                          bool /*isHighlighted*/,
                          bool /*isDown*/) override
     {
+        const auto& theme = ThemeManager::get().theme();
         g.setFont (getTextButtonFont (button, button.getHeight()));
-        g.setColour (button.getToggleState() ? (juce::Colour) Theme::Colour::inkLight
-                                             : (juce::Colour) Theme::Colour::inkMid);
+        g.setColour (button.getToggleState() ? juce::Colour (theme.controlTextOn)
+                                             : juce::Colour (theme.controlText));
         g.drawFittedText (button.getButtonText(), button.getLocalBounds().reduced (4, 2), juce::Justification::centred, 1, 1.0f);
     }
 
@@ -182,11 +220,12 @@ public:
                        int /*buttonW*/, int /*buttonH*/,
                        juce::ComboBox& box) override
     {
+        const auto& theme = ThemeManager::get().theme();
         const auto bounds = juce::Rectangle<float> (0.0f, 0.0f, (float) width, (float) height).reduced (0.5f);
-        g.setColour (Theme::Colour::surface2);
-        g.fillRoundedRectangle (bounds, Theme::Radius::sm);
-        g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.65f));
-        g.drawRoundedRectangle (bounds, Theme::Radius::sm, Theme::Stroke::subtle);
+        g.setColour (juce::Colour (theme.controlBg));
+        g.fillRoundedRectangle (bounds, juce::jlimit (0.0f, 12.0f, theme.btnCornerRadius));
+        g.setColour (juce::Colour (theme.surfaceEdge).withAlpha (0.65f));
+        g.drawRoundedRectangle (bounds, juce::jlimit (0.0f, 12.0f, theme.btnCornerRadius), Theme::Stroke::subtle);
 
         const float arrowX = (float) width - 14.0f;
         const float arrowY = (float) height * 0.5f;

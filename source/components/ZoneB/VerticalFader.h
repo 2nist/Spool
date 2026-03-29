@@ -19,7 +19,9 @@ public:
     void  setValueFromProcessor  (float normalized);
 
     using FormatFn = std::function<juce::String (float)>;
+    using ParseFn  = std::function<float (const juce::String&, float)>;
     void setValueFormatter (FormatFn fn) { m_formatter = std::move (fn); updateTooltip(); }
+    void setValueParser    (ParseFn fn)  { m_valueParser = std::move (fn); }
 
     enum class Status
     {
@@ -46,6 +48,7 @@ public:
     int getPreferredWidth () const;
 
     static constexpr int kPreferredHeight = 90;
+    static constexpr int kValueChipH = 14;
 
     void paint   (juce::Graphics& g) override;
     void resized () override;
@@ -62,6 +65,7 @@ private:
     juce::String m_statusDetail;
     bool m_internalSetValue { false };
     std::unique_ptr<juce::TextEditor> m_textEditor;
+    ParseFn m_valueParser;
 
     struct SlotSlider : public juce::Slider
     {

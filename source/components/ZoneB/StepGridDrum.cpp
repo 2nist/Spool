@@ -51,7 +51,7 @@ void StepGridDrum::mouseMove (const juce::MouseEvent&)
 
 void StepGridDrum::resized()
 {
-    const int viewH = juce::jmax (0, getHeight() - kAddH);
+    const int viewH = juce::jmax (0, getHeight() - kInspectorH - kAddH);
     m_viewport.setBounds (0, 0, getWidth(), viewH);
 
     if (m_voiceContent != nullptr)
@@ -117,6 +117,11 @@ juce::Rectangle<int> StepGridDrum::addVoiceRect() const noexcept
     return { 2, getHeight() - kAddH, getWidth() - 4, kAddH };
 }
 
+juce::Rectangle<int> StepGridDrum::inspectorRect() const noexcept
+{
+    return { 2, getHeight() - kAddH - kInspectorH, getWidth() - 4, kInspectorH };
+}
+
 int StepGridDrum::voiceAtY (int y) const noexcept
 {
     if (m_data == nullptr) return -1;
@@ -156,7 +161,38 @@ void StepGridDrum::paint (juce::Graphics& g)
                      juce::Justification::centred, false);
     }
 
-    // ADD VOICE row (below viewport)
+    // Inspector row (details for selected voice/step)
+    const auto inspector = inspectorRect();
+    g.setColour (Theme::Colour::surface0.withAlpha (0.9f));
+    g.fillRect (inspector);
+    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.55f));
+    g.drawRect  (inspector, 1);
+    g.setFont   (Theme::Font::micro());
+    g.setColour (Theme::Colour::inkMid);
+
+    if (m_data != nullptr
+        && juce::isPositiveAndBelow (m_data->focusedVoiceIndex, (int) m_data->voices.size()))
+    {
+        const auto& voice = m_data->voices[(size_t) m_data->focusedVoiceIndex];
+        const int step = juce::jlimit (0, juce::jmax (0, voice.stepCount - 1), m_data->focusedStepIndex);
+        const auto velPct = juce::roundToInt (voice.stepVelocity (step) * 100.0f);
+        const juce::String line = "VOICE " + juce::String (m_data->focusedVoiceIndex + 1)
+                                + "  STEP " + juce::String (step + 1)
+                                + "  VEL " + juce::String (velPct) + "%"
+                                + "  RAT " + juce::String (voice.stepRatchetCount (step))
+                                + "  DIV /" + juce::String (voice.stepRepeatDivision (step))
+                                + "  (edit with right-click menu)";
+        g.drawText (line, inspector.reduced (4, 0), juce::Justification::centredLeft, false);
+    }
+    else
+    {
+        g.drawText ("Select a drum voice step to inspect velocity/repeat settings",
+                    inspector.reduced (4, 0),
+                    juce::Justification::centredLeft,
+                    false);
+    }
+
+    // ADD VOICE row (below inspector)
     const auto addR = addVoiceRect();
     g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.5f));
     g.drawRect  (addR, 1);
@@ -256,7 +292,7 @@ void StepGridDrum::paintVoiceRow (juce::Graphics& g, int vi) const
             const bool hoveredStep = (vi == m_hoverVoice && s == m_hoverStep);
             auto fill = (active ? juce::Colour (voice.colorArgb) : (juce::Colour) Theme::Colour::surface3).withAlpha (alpha);
             if (active)
-                fill = fill.interpolatedWith (juce::Colours::white, 1.0f - voice.stepVelocity (s));
+                fill = fill.interpolatedWith (juce::Colour (Theme::Colour::inkLight), 1.0f - voice.stepVelocity (s));
             if (hoveredStep && ! selectedStep)
                 fill = fill.brighter (0.08f);
 
@@ -266,33 +302,6 @@ void StepGridDrum::paintVoiceRow (juce::Graphics& g, int vi) const
                                       : hoveredStep ? juce::Colour (voice.colorArgb).brighter (0.4f)
                                                     : Theme::Colour::surfaceEdge.withAlpha (0.45f));
             g.drawRoundedRectangle (cr.toFloat(), Theme::Radius::xs, selectedStep ? 1.7f : Theme::Stroke::subtle);
-
-            if (active)
-            {
-                const int velBars = juce::jlimit (1, 4, juce::roundToInt (voice.stepVelocity (s) * 4.0f));
-                g.setColour (Theme::Colour::inkDark.withAlpha (0.85f));
-                for (int bar = 0; bar < velBars; ++bar)
-                    g.fillRect (cr.getX() + 2 + bar * 2, cr.getBottom() - 4, 1, 2);
-
-                const int ratchets = voice.stepRatchetCount (s);
-                if (ratchets > 1)
-                {
-                    g.setColour (Theme::Colour::inkLight.withAlpha (0.85f));
-                    for (int r = 0; r < ratchets && r < 4; ++r)
-                        g.fillEllipse ((float) (cr.getRight() - 3 - r * 3), (float) (cr.getY() + 2), 2.0f, 2.0f);
-                }
-
-                const int division = voice.stepRepeatDivision (s);
-                if (division > 1)
-                {
-                    g.setColour (Theme::Colour::inkGhost.withAlpha (0.8f));
-                    g.setFont (Theme::Font::micro());
-                    g.drawText ("/" + juce::String (division),
-                                cr.reduced (2, 1),
-                                juce::Justification::centredRight,
-                                false);
-                }
-            }
         }
 
         // Beat-group dividers every 4 steps
@@ -310,7 +319,7 @@ void StepGridDrum::paintVoiceRow (juce::Graphics& g, int vi) const
             const auto cr = stepCellRect (vi, m_playhead % nSteps);
             if (! cr.isEmpty())
             {
-                g.setColour (juce::Colours::white.withAlpha (0.14f));
+                g.setColour (Theme::Colour::inkLight.withAlpha (0.14f));
                 g.fillRect  (cr);
             }
         }
@@ -485,10 +494,16 @@ void StepGridDrum::addNewVoice()
 {
     if (m_data == nullptr) return;
 
-    static const juce::uint32 voiceColors[] =
+    const juce::Colour voiceColors[] =
     {
-        0xFFDB8E4B, 0xFF4B9EDB, 0xFF9EDB4B, 0xFFDB4B9E,
-        0xFF4BDBB3, 0xFFB34BDB, 0xFFDBDB4B, 0xFF4B6BDB
+        Theme::Colour::accentWarm,
+        Theme::Signal::audio,
+        Theme::Signal::cv,
+        Theme::Signal::midi,
+        Theme::Zone::c,
+        Theme::Zone::d,
+        Theme::Colour::accent.brighter (0.20f),
+        Theme::Colour::accentDim.brighter (0.35f)
     };
 
     static constexpr DrumVoiceRole roleCycle[] =
@@ -503,7 +518,7 @@ void StepGridDrum::addNewVoice()
 
     const int idx = static_cast<int> (m_data->voices.size());
     auto voice = DrumModuleState::makeVoiceForRole (roleCycle[idx % static_cast<int> (std::size (roleCycle))],
-                                                    voiceColors[idx % 8]);
+                                                    voiceColors[idx % 8].getARGB());
     voice.name = (juce::String (DrumVoiceParams::defaultName (voice.params.role))
                   + " " + juce::String (idx + 1)).toStdString();
     m_data->voices.push_back (voice);

@@ -236,7 +236,7 @@ private:
 
     //--- Transport -----------------------------------------------------------
     std::atomic<bool>  m_playing     { false };
-    std::atomic<bool>  m_useStructureForTracks { true };
+    std::atomic<bool>  m_useStructureForTracks { false };
     std::atomic<float> m_bpm         { 120.0f };
     std::atomic<int>   m_currentStep { 0 };
     std::atomic<int>   m_focusedSlotIndex { 0 };
@@ -259,12 +259,14 @@ private:
     {
         int startTick  { 0 };
         int lengthTicks { 1 };
+        int targetSlot { -1 };
         int pitchValue { SlotPattern::kUseSlotBasePitch };
         int anchorValue { SlotPattern::kUseSlotBasePitch };
         int stepIndex { 0 };
         int eventOrdinalInStep { 0 };
         int eventsInStep { 1 };
         uint8_t velocity { 100 };
+        bool followStructure { true };
         SlotPattern::NoteMode noteMode { SlotPattern::NoteMode::absolute };
         SlotPattern::StepRole role { SlotPattern::StepRole::lead };
         SlotPattern::HarmonicSource harmonicSource { SlotPattern::HarmonicSource::key };
@@ -360,7 +362,7 @@ private:
 
     //--- Song helpers
     void advanceSequencerTick (int sampleOffset);
-    static RuntimeSlotPattern compileRuntimePattern (const SlotPattern& pattern);
+    static RuntimeSlotPattern compileRuntimePattern (const SlotPattern& pattern, int sourceSlot);
     int realizeRuntimePitch (int slot,
                              const RuntimeMicroEvent& event,
                              int baseNote,

@@ -24,6 +24,7 @@ public:
 
     void setLevel (float value) noexcept;
     void setPan (float value) noexcept;
+    void setBuildStamp (juce::String stamp);
     float getLevel() const noexcept { return m_level; }
     float getPan() const noexcept { return m_pan; }
 
@@ -52,6 +53,10 @@ private:
 
     juce::Array<MenuItem> m_items;
     juce::String m_hoveredItemId;
+    juce::Image m_logo;
+    juce::Rectangle<float> m_logoBounds;
+    juce::String m_buildStamp;
+    juce::Rectangle<float> m_buildStampBounds;
     juce::Rectangle<float> m_levelRect;
     juce::Rectangle<float> m_panRect;
     float m_level { 1.0f };

@@ -461,6 +461,18 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     setWantsKeyboardFocus (true);
     m_audioFormatManager.registerBasicFormats();
 
+#if defined (VERSION)
+    const juce::String buildVersion = juce::String (VERSION);
+#else
+    const juce::String buildVersion = "dev";
+#endif
+#if defined (CMAKE_BUILD_TYPE)
+    const juce::String buildType = juce::String (CMAKE_BUILD_TYPE);
+#else
+    const juce::String buildType = "Release";
+#endif
+    menuBar.setBuildStamp ("v" + buildVersion + "  " + buildType + "  " + juce::String (__DATE__) + " " + juce::String (__TIME__));
+
     // Load last in-editor state if it exists, otherwise fall back to the named preset.
     if (!ThemeManager::get().loadFromFile (ThemeManager::get().getCurrentThemeFile()))
         ThemeManager::get().applyTheme (ThemePresets::presetByName (AppPreferences::get().getThemePresetName()));
@@ -696,8 +708,13 @@ PluginEditor::PluginEditor (PluginProcessor& p)
             {
                 const bool hasStructure = structureHasScaffold (processorRef.getSongManager().getStructureState());
                 zoneD.setStructureFollowState (computeFollowState (enabled, hasStructure));
+                if (enabled)
+                    zoneB.setFocusedPatternFollowStructure (true, true);
                 updateSequencerStructureContext (processorRef.getCurrentSongBeat());
-                systemFeed.addMessage (enabled ? "Structure follow enabled" : "Structure follow disabled");
+                if (enabled && ! hasStructure)
+                    systemFeed.addMessage ("Structure follow armed (add sections to drive transposition)");
+                else
+                    systemFeed.addMessage (enabled ? "Structure follow enabled" : "Structure follow disabled");
             };
 
             sp->onStructureApplied = [this]
@@ -1284,59 +1301,12 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         };
     }
 
-    // Seed the default standalone synth slots into an actually audible init.
-    // This keeps the groovebox startup state from coming up visually loaded but silent.
-    auto applyAudibleSynthInit = [this] (int slotIndex, int midiNote, bool mono,
-                                         std::initializer_list<int> activeSteps)
-    {
-        zoneB.seedPatternForSlot (slotIndex, 16, activeSteps);
-        processorRef.setStepCount (slotIndex, 16);
-        for (int step = 0; step < SlotPattern::MAX_STEPS; ++step)
-            processorRef.setStepActive (slotIndex, step, false);
-        for (const auto step : activeSteps)
-            if (step >= 0 && step < 16)
-                processorRef.setStepActive (slotIndex, step, true);
-
-        processorRef.setSlotNote (slotIndex, midiNote);
-
-        auto& synth = processorRef.getAudioGraph().getPolySynth (slotIndex);
-        synth.setParam ("osc1.shape",   0.0f);
-        synth.setParam ("osc2.shape",   0.0f);
-        synth.setParam ("osc1.detune",  0.0f);
-        synth.setParam ("osc2.detune",  7.0f);
-        synth.setParam ("osc2.octave",  mono ? -1.0f : 0.0f);
-        synth.setParam ("osc2.level",   mono ? 0.38f : 0.62f);
-        synth.setParam ("filter.cutoff", mono ? 1400.0f : 5200.0f);
-        synth.setParam ("filter.res",   mono ? 0.22f : 0.18f);
-        synth.setParam ("filter.env_amt", mono ? 0.58f : 0.36f);
-        synth.setParam ("amp.attack",   0.005f);
-        synth.setParam ("amp.decay",    mono ? 0.18f : 0.28f);
-        synth.setParam ("amp.sustain",  mono ? 0.58f : 0.82f);
-        synth.setParam ("amp.release",  mono ? 0.10f : 0.22f);
-        synth.setParam ("filt.attack",  0.005f);
-        synth.setParam ("filt.decay",   mono ? 0.20f : 0.24f);
-        synth.setParam ("filt.sustain", mono ? 0.16f : 0.28f);
-        synth.setParam ("filt.release", 0.12f);
-        synth.setParam ("lfo.rate",     0.35f);
-        synth.setParam ("lfo.depth",    mono ? 0.00f : 0.03f);
-        synth.setParam ("lfo.target",   1.0f);
-        synth.setParam ("voice.mono",   mono ? 1.0f : 0.0f);
-        synth.setParam ("char.asym",    mono ? 0.10f : 0.16f);
-        synth.setParam ("char.drive",   mono ? 0.28f : 0.18f);
-        synth.setParam ("char.drift",   0.08f);
-    };
-
-    applyAudibleSynthInit (0, 48, true,  { 0, 4, 8, 12 });
-    applyAudibleSynthInit (1, 55, false, { 0, 5, 10, 13 });
-    applyAudibleSynthInit (2, 60, false, { 2, 6, 10, 14 });
-
-    // Standalone default: start in an audible groovebox state.
-    processorRef.setFocusedSlot (0);
-    processorRef.setPlaying (true);
-    zoneD.setPlaying (true);
+    // Startup baseline: begin empty (no seeded module patterns, transport stopped).
+    processorRef.setPlaying (false);
+    zoneD.setPlaying (false);
     if (auto* tp = zoneA.getTracksPanel())
-        tp->setPlaying (true);
-    systemFeed.addMessage ("Startup: transport running on synth slot 01");
+        tp->setPlaying (false);
+    systemFeed.addMessage ("Startup: empty project");
 
     zoneC.onCollapseChanged = [this] (bool) { resized(); };
     zoneD.onHeightChanged   = [this] (int)  { resized(); };
@@ -1404,11 +1374,30 @@ PluginEditor::PluginEditor (PluginProcessor& p)
     processorRef.syncAuthoredSongToRuntime();
     applyAuthoredSongToUi();
 
+    if (juce::JUCEApplicationBase::isStandaloneApp())
+    {
+        m_splash = std::make_unique<SplashComponent>();
+        m_splash->onFinished = [this]
+        {
+            if (m_splash == nullptr)
+                return;
+
+            removeChildComponent (m_splash.get());
+            m_splash.reset();
+        };
+        addAndMakeVisible (*m_splash);
+        m_splash->setBounds (getLocalBounds());
+        m_splash->toFront (false);
+    }
+
     m_inspector = std::make_unique<melatonin::Inspector> (*this, false);
 }
 
 PluginEditor::~PluginEditor()
 {
+    if (m_splash != nullptr)
+        m_splash->onFinished = {};
+
     setLookAndFeel (nullptr);
     zoneB.removeListener (this);
     zoneD.removeTransportListener (this);
@@ -1557,6 +1546,12 @@ void PluginEditor::resized()
 
     // Vertical resizer B/C | D
     m_resizerBD.setBounds (0, h - zoneDH - kResizerH / 2, w, kResizerH);
+
+    if (m_splash != nullptr)
+    {
+        m_splash->setBounds (getLocalBounds());
+        m_splash->toFront (false);
+    }
 }
 
 void PluginEditor::slotSelected (int slotIndex, const juce::String& moduleType)

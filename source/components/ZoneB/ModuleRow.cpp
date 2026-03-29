@@ -243,47 +243,47 @@ juce::Colour ModuleRow::paramColorForLabel (const juce::String& label)
         || l == "FREQ" || l == "DETUNE" || l == "SHAPE" || l == "WAVE"
         || l == "PW"   || l == "PHASE"  || l == "PITCH"
         || l == "START" || l == "END"   || l == "LOOP")
-        return juce::Colour (0xFF4a9eff);
+        return Theme::Signal::audio;
 
     // Oscillator mix / octave (warm blue-teal)
     if (l == "MIX2")
-        return juce::Colour (0xFFd4c9b0);   // output warm — it's a blend control
+        return Theme::Colour::inkMid;   // output warm — it's a blend control
     if (l == "OCT2")
-        return juce::Colour (0xFFee7c4a);   // MIDI orange — pitch offset
+        return Theme::Signal::midi;   // MIDI orange — pitch offset
 
     // Filter (orange)
     if (l == "CUT"  || l == "CUTOFF" || l == "RES" || l == "DRIVE"
         || l == "ENVA" || l.startsWith ("FILT"))
-        return juce::Colour (0xFFc4822a);
+        return Theme::Colour::accent;
 
     // Amp envelope (sky blue)
     if (l == "ATK" || l == "DEC" || l == "SUS" || l == "REL"
         || l == "ATTACK" || l == "DECAY" || l == "SUSTAIN" || l == "RELEASE"
         || l == "GATE")
-        return juce::Colour (0xFF4a9eff);
+        return Theme::Signal::audio;
 
     // Filter envelope (amber)
     if (l == "FATK" || l == "FDEC" || l == "FSUS" || l == "FREL")
-        return juce::Colour (0xFFc4822a);
+        return Theme::Colour::accent;
 
     // LFO (purple)
     if (l == "LFRT" || l == "LFDP" || l == "RATE" || l == "DEPTH")
-        return juce::Colour (0xFFee4aee);
+        return Theme::Signal::cv;
 
     // Output / mix (warm white)
     if (l == "LEVEL" || l == "GAIN" || l == "PAN" || l == "MIX"
         || l == "VOL"  || l == "BYPASS")
-        return juce::Colour (0xFFd4c9b0);
+        return Theme::Colour::inkMid;
 
     // MIDI / sequencer (orange)
     if (l == "VEL" || l == "OCT" || l == "NOTE")
-        return juce::Colour (0xFFee7c4a);
+        return Theme::Signal::midi;
 
     // Noise
     if (l == "NOISE")
-        return juce::Colour (0xFFeec44a);
+        return Theme::Signal::gate;
 
-    return juce::Colour (0xFF4a9eff);  // default: osc blue
+    return Theme::Signal::audio;  // default: osc blue
 }
 
 VerticalFader::FormatFn ModuleRow::makeFormatter (const InlineEditor::Param& p)
@@ -386,7 +386,8 @@ void ModuleRow::initFaders()
                 QuickFaceplateDefaults::synthKnobs(),
                 QuickFaceplateDefaults::synthButtons(),
                 QuickFaceplateDefaults::synthAvailable(),
-                "FILTER \xc2\xb7 OSC \xc2\xb7 ENV \xc2\xb7 LFO");
+                "FILTER \xc2\xb7 OSC \xc2\xb7 ENV \xc2\xb7 LFO",
+                false);
         }
         else // DrumMachine
         {
@@ -395,7 +396,8 @@ void ModuleRow::initFaders()
                 QuickFaceplateDefaults::drumKnobs(),
                 QuickFaceplateDefaults::drumButtons(),
                 QuickFaceplateDefaults::drumAvailable(),
-                "KICK \xc2\xb7 SNARE \xc2\xb7 HAT \xc2\xb7 PERC");
+                "KICK \xc2\xb7 SNARE \xc2\xb7 HAT \xc2\xb7 PERC",
+                true);
         }
 
         m_faceplate->onControlChanged = [this] (const juce::String& paramId, float value)

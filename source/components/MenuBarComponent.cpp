@@ -56,6 +56,8 @@ void drawCompactShellSlider (juce::Graphics& g,
 
 MenuBarComponent::MenuBarComponent()
 {
+    m_logo = juce::ImageCache::getFromMemory (BinaryData::spoollogo_png, BinaryData::spoollogo_pngSize);
+
     m_items.add ({ "file", "FILE", {}, true });
     m_items.add ({ "edit", "EDIT", {}, true });
     m_items.add ({ "view", "VIEW", {}, true });
@@ -71,6 +73,17 @@ void MenuBarComponent::setLevel (float value) noexcept
 void MenuBarComponent::setPan (float value) noexcept
 {
     m_pan = juce::jlimit (-1.0f, 1.0f, value);
+    repaint();
+}
+
+void MenuBarComponent::setBuildStamp (juce::String stamp)
+{
+    stamp = stamp.trim();
+    if (m_buildStamp == stamp)
+        return;
+
+    m_buildStamp = std::move (stamp);
+    rebuildItemLayout();
     repaint();
 }
 
@@ -94,6 +107,24 @@ void MenuBarComponent::paint (juce::Graphics& g)
     g.fillRect (0.0f, h - Theme::Stroke::subtle, w, Theme::Stroke::subtle);
 
     rebuildItemLayout();
+
+    // ── Branding mark ─────────────────────────────────────────────────────────
+    if (m_logo.isValid())
+    {
+        const float targetH = juce::jlimit (12.0f, 22.0f, h - 8.0f);
+        const float logoW = targetH * ((float) m_logo.getWidth() / juce::jmax (1.0f, (float) m_logo.getHeight()));
+        const float logoX = Theme::Space::sm;
+        const float logoY = (h - targetH) * 0.5f;
+        m_logoBounds = { logoX, logoY, logoW, targetH };
+
+        g.setOpacity (0.96f);
+        g.drawImage (m_logo, m_logoBounds);
+        g.setOpacity (1.0f);
+    }
+    else
+    {
+        m_logoBounds = {};
+    }
 
     // ── Left side: menu items ─────────────────────────────────────────────────
     const auto labelFont = Theme::Font::label();
@@ -122,6 +153,13 @@ void MenuBarComponent::paint (juce::Graphics& g)
                     item.bounds,
                     juce::Justification::centredLeft,
                     false);
+    }
+
+    if (m_buildStamp.isNotEmpty() && ! m_buildStampBounds.isEmpty())
+    {
+        g.setFont (Theme::Font::micro());
+        g.setColour (Theme::Colour::inkGhost.withAlpha (0.88f));
+        g.drawText (m_buildStamp, m_buildStampBounds, juce::Justification::centredLeft, true);
     }
 
     // ── Right side: status indicators (right → left) ──────────────────────────
@@ -343,12 +381,24 @@ void MenuBarComponent::rebuildItemLayout()
     float lx = Theme::Space::lg;
     const auto h = static_cast<float> (getHeight());
 
+    if (m_logo.isValid())
+    {
+        const float targetH = juce::jlimit (12.0f, 22.0f, h - 8.0f);
+        const float logoW = targetH * ((float) m_logo.getWidth() / juce::jmax (1.0f, (float) m_logo.getHeight()));
+        lx = Theme::Space::sm + logoW + Theme::Space::sm;
+    }
+
     for (auto& item : m_items)
     {
         const float itemW = juce::GlyphArrangement::getStringWidth (labelFont, item.label);
         item.bounds = { lx, 0.0f, itemW, h };
         lx += itemW + Theme::Space::lg;
     }
+
+    const float rightReserve = 340.0f;
+    const float left = lx + 4.0f;
+    const float width = juce::jmax (0.0f, (float) getWidth() - rightReserve - left);
+    m_buildStampBounds = { left, 0.0f, width, h };
 }
 
 MenuBarComponent::MenuItem* MenuBarComponent::itemAt (juce::Point<float> pos) noexcept

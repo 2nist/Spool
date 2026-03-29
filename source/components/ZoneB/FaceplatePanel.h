@@ -8,17 +8,17 @@
     FaceplatePanel — Zone B module quick-control surface.
 
     Renders a family-specific faceplate with:
-      8 assignable slider slots  (VerticalFader, left column)
-      4 assignable knob slots    (compact rotary juce::Slider, single row in bar)
+      8 assignable slider slots  (VerticalFader)
+      2 assignable knob slots    (compact rotary juce::Slider, single row in bar)
       4 assignable button slots  (juce::TextButton, compact vertical column on the right)
 
     All slots can be reassigned at runtime via right-click context menus.
     Default assignments per family are provided by QuickFaceplateDefaults.
 
     Layout (component-local y, component fills ModuleRow::paramAreaRect()):
-      y = 0..kSectionH               : section label strip
-      y = kSectionH..kBarY-kBarSep   : 8 vertical faders (left) | 4 buttons (right column)
-      y = kBarY..kBarY+kBarH         : 4 knobs in a single centred row
+      y = 0..kSectionH                 : section label strip
+      y = kSectionH..(barY-kBarSep)    : 8 vertical faders | 4 buttons (right column)
+      y = barY..(barY+kBarH)           : 2 knobs in a centred row
 */
 class FaceplatePanel : public juce::Component
 {
@@ -28,10 +28,8 @@ public:
     static constexpr int kNumButtons = QuickFaceplateDefaults::kNumButtons;   // 4
 
     static constexpr int kSectionH   = 10;
-    static constexpr int kFaderH     = VerticalFader::kPreferredHeight;       // 90
     static constexpr int kFaderGap   = 8;
     static constexpr int kBarSep     = 6;
-    static constexpr int kBarY       = kSectionH + kFaderH + kBarSep;        // 106
     static constexpr int kBarLabelH  = 10;
     static constexpr int kKnobSize   = 36;
     static constexpr int kButtonH    = 14;
@@ -49,7 +47,8 @@ public:
                    const std::array<QuickControlSlot, kNumKnobs>&   knobs,
                    const std::array<QuickControlSlot, kNumButtons>& buttons,
                    const juce::Array<QuickControlSlot>&             available,
-                   const juce::String&                              label = {});
+                   const juce::String&                              label = {},
+                   bool                                             splitSliderBanks = false);
 
     /** Pass the parent row's group colour so the left stripe is continuous. */
     void setGroupColor (juce::Colour c) { m_groupColor = c; repaint(); }
@@ -121,9 +120,12 @@ private:
     static constexpr int kBtnColW    = 48;  // button column width (touch-safe)
     static constexpr int kBtnColMgn  = 4;   // gap between faders and button column
     static constexpr int kBtnVGap    = 4;   // vertical gap between stacked buttons
+    static constexpr int kSliderBankGap = 12;
     static constexpr int kMenuBase   = 300; // first ID for extra context-menu items
     static constexpr int kMenuReset  = kMenuBase - 2;   // 298
     static constexpr int kMenuClear  = kMenuBase - 1;   // 299
+
+    bool m_splitSliderBanks { false };
 
     //==========================================================================
     void rebuildWidgets();

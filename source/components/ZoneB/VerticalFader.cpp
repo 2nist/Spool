@@ -8,6 +8,15 @@ void VerticalFader::SlotSlider::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    if (e.mods.isLeftButtonDown())
+    {
+        if (e.position.y <= (float) VerticalFader::kValueChipH || e.getNumberOfClicks() >= 2)
+        {
+            owner.showValueEditor();
+            return;
+        }
+    }
+
     juce::Slider::mouseDown (e);
 }
 
@@ -90,19 +99,28 @@ int VerticalFader::getPreferredWidth() const
 
 void VerticalFader::paint (juce::Graphics& g)
 {
+    const auto chip = getLocalBounds().removeFromTop (kValueChipH).reduced (1, 1);
+    g.setColour (Theme::Colour::surface1.withAlpha (0.94f));
+    g.fillRoundedRectangle (chip.toFloat(), Theme::Radius::xs);
+    g.setColour (m_paramColor.withAlpha (0.55f));
+    g.drawRoundedRectangle (chip.toFloat(), Theme::Radius::xs, Theme::Stroke::subtle);
+    g.setFont (Theme::Font::micro());
+    g.setColour (Theme::Colour::inkLight.withAlpha (0.95f));
+    g.drawText (formatValue (m_value), chip, juce::Justification::centred, false);
+
     if (m_status == Status::none)
         return;
 
     juce::Colour dot = Theme::Colour::inkGhost;
     switch (m_status)
     {
-        case Status::macroMapped:  dot = juce::Colour (0xFF4aee8a); break;
-        case Status::midiLearn:    dot = juce::Colour (0xFFee4a4a); break;
-        case Status::midiAssigned: dot = juce::Colour (0xFF4a9eff); break;
-        case Status::modulated:    dot = juce::Colour (0xFFeec44a); break;
-        case Status::automated:    dot = juce::Colour (0xFFee7c4a); break;
-        case Status::follower:     dot = juce::Colour (0xFF6a5a8a); break;
-        case Status::bypassed:     dot = juce::Colour (0xFF3a2e1e); break;
+        case Status::macroMapped:  dot = Theme::Signal::cv; break;
+        case Status::midiLearn:    dot = Theme::Colour::error; break;
+        case Status::midiAssigned: dot = Theme::Signal::midi; break;
+        case Status::modulated:    dot = Theme::Signal::gate; break;
+        case Status::automated:    dot = Theme::Colour::accentWarm; break;
+        case Status::follower:     dot = Theme::Zone::c; break;
+        case Status::bypassed:     dot = Theme::Colour::inactive; break;
         case Status::none: break;
     }
 
@@ -220,10 +238,12 @@ void VerticalFader::showValueEditor ()
     m_textEditor->setColour (juce::TextEditor::backgroundColourId, Theme::Colour::surface1);
     m_textEditor->setColour (juce::TextEditor::textColourId, Theme::Colour::inkLight);
     m_textEditor->setColour (juce::TextEditor::outlineColourId, m_paramColor);
-    m_textEditor->setText (juce::String (m_value, 3), false);
+    const auto editText = m_valueParser ? formatValue (m_value)
+                                        : juce::String (m_value, 3);
+    m_textEditor->setText (editText, false);
     m_textEditor->setSelectAllWhenFocused (true);
 
-    auto editorBounds = getLocalBounds().removeFromTop (14).reduced (1, 0);
+    auto editorBounds = getLocalBounds().removeFromTop (kValueChipH).reduced (1, 0);
     editorBounds = editorBounds.withWidth (juce::jmax (24, editorBounds.getWidth()));
     m_textEditor->setBounds (editorBounds);
 
@@ -232,8 +252,10 @@ void VerticalFader::showValueEditor ()
 
     m_textEditor->onReturnKey = [this]
     {
-        const float entered = m_textEditor->getText().getFloatValue();
-        setValue (juce::jlimit (0.0f, 1.0f, entered), true);
+        float enteredNorm = m_textEditor->getText().getFloatValue();
+        if (m_valueParser)
+            enteredNorm = m_valueParser (m_textEditor->getText(), m_value);
+        setValue (juce::jlimit (0.0f, 1.0f, enteredNorm), true);
         m_textEditor.reset();
         repaint();
     };

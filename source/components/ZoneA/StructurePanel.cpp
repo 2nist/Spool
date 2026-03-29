@@ -94,10 +94,10 @@ StructurePanel::StructurePanel (PluginProcessor& p) : processorRef (p)
     ZoneAControlStyle::styleTextEditor (nameEditor); ZoneAControlStyle::styleTextEditor (inlineSectionNameEditor); inlineSectionNameEditor.setVisible (false); arrangementHint.setInterceptsMouseClicks (false, false); for (auto* c : { &beatsPerBarBox, &transitionIntentBox, &keyRootBox, &modeBox, &harmonicCenterBox, &chordRootBox, &chordTypeBox }) styleCombo (*c, accent);
     for (auto* b : { &addSectionButton, &duplicateSectionButton, &moveSectionUpButton, &moveSectionDownButton, &addArrangementButton, &duplicateArrangementButton, &moveArrangementUpButton, &moveArrangementDownButton, &addChordCellButton, &progressionPresetButton, &cadenceButton, &removeChordCellButton, &seedRailsButton }) ZoneAControlStyle::styleTextButton (*b, accent);
     ZoneAControlStyle::initBarSlider (barsSlider, "BARS"); barsSlider.setRange (1, 32, 1); ZoneAControlStyle::tintBarSlider (barsSlider, accent); ZoneAControlStyle::initBarSlider (repeatsSlider, "REPEATS"); repeatsSlider.setRange (1, 8, 1); ZoneAControlStyle::tintBarSlider (repeatsSlider, accent);
-    moveSectionUpButton.setVisible (false);
-    moveSectionDownButton.setVisible (false);
-    moveArrangementUpButton.setVisible (false);
-    moveArrangementDownButton.setVisible (false);
+    moveSectionUpButton.setVisible (true);
+    moveSectionDownButton.setVisible (true);
+    moveArrangementUpButton.setVisible (true);
+    moveArrangementDownButton.setVisible (true);
     sectionList.setColour (juce::ListBox::backgroundColourId, Theme::Colour::surface2); sectionList.setRowHeight (22); arrangementList.setColour (juce::ListBox::backgroundColourId, Theme::Colour::surface2); arrangementList.setRowHeight (22);
     for (auto r : kRoots) { keyRootBox.addItem (r, keyRootBox.getNumItems() + 1); chordRootBox.addItem (r, chordRootBox.getNumItems() + 1); } for (auto m : kModes) modeBox.addItem (m, modeBox.getNumItems() + 1); for (auto d : kDegrees) harmonicCenterBox.addItem (d, harmonicCenterBox.getNumItems() + 1); for (auto t : kTypes) chordTypeBox.addItem (t, chordTypeBox.getNumItems() + 1); for (auto i : kTransitions) transitionIntentBox.addItem (i, transitionIntentBox.getNumItems() + 1); for (auto beats : { 3, 4, 5, 6, 7 }) beatsPerBarBox.addItem (juce::String (beats) + "/4", beats);
     ZoneAControlStyle::styleToggleButton (structureFollowToggle, accent);
@@ -105,8 +105,8 @@ StructurePanel::StructurePanel (PluginProcessor& p) : processorRef (p)
     structureFollowToggle.setToggleState (processorRef.isStructureFollowForTracksEnabled(), juce::dontSendNotification); structureFollowToggle.onClick = [this] { const bool enabled = structureFollowToggle.getToggleState(); processorRef.setStructureFollowForTracks (enabled); if (onStructureFollowModeChanged) onStructureFollowModeChanged (enabled); };
     seedRailsButton.onClick = [this] { if (onRailsSeeded) { juce::Array<int> slots; slots.add (0); onRailsSeeded (slots); } };
     seedRailsButton.setVisible (false);
-    sectionListHint.setText ("Reusable loops and identities", juce::dontSendNotification);
-    arrangementFlowHint.setText ("Song order: drop sections here", juce::dontSendNotification);
+    sectionListHint.setText ("Reusable loops (double-click row to rename, drag to reorder)", juce::dontSendNotification);
+    arrangementFlowHint.setText ("Song order (drag sections in, drag rows to reorder)", juce::dontSendNotification);
     arrangementHint.setText ("Drop a section here to start the song form", juce::dontSendNotification);
     addSectionButton.setButtonText ("New");
     addArrangementButton.setButtonText ("Place");
@@ -343,7 +343,7 @@ void StructurePanel::TrashDropZone::itemDropped (const SourceDetails& dragSource
 void StructurePanel::resized()
 {
     viewport.setBounds (getLocalBounds());
-    const int contentHeight = 860;
+    const int contentHeight = 1120;
     content.setSize (juce::jmax (viewport.getWidth() - 10, 200), contentHeight);
     layoutContent (content.getLocalBounds());
 }
@@ -355,8 +355,16 @@ void StructurePanel::paintContent (juce::Graphics& g)
     const int headerH = ZoneAStyle::compactHeaderHeight();
     const int cardPad = ZoneAControlStyle::compactGap() + 2;
     ZoneAStyle::drawHeader (g, { 0, 0, content.getWidth(), headerH }, "STRUCTURE", accent);
-    ZoneAStyle::drawCard (g, sectionListHint.getBounds().getUnion (sectionList.getBounds()).expanded (cardPad, headerH + 6), accent);
-    ZoneAStyle::drawCard (g, arrangementFlowHint.getBounds().getUnion (arrangementList.getBounds()).expanded (cardPad, headerH + 6), Theme::Colour::accentWarm);
+    const auto sectionCard = sectionListTitle.getBounds()
+                               .getUnion (sectionList.getBounds())
+                               .getUnion (addSectionButton.getBounds())
+                               .getUnion (moveSectionDownButton.getBounds());
+    const auto arrangementCard = arrangementTitle.getBounds()
+                                   .getUnion (arrangementList.getBounds())
+                                   .getUnion (addArrangementButton.getBounds())
+                                   .getUnion (moveArrangementDownButton.getBounds());
+    ZoneAStyle::drawCard (g, sectionCard.expanded (cardPad, headerH + 6), accent);
+    ZoneAStyle::drawCard (g, arrangementCard.expanded (cardPad, headerH + 6), Theme::Colour::accentWarm);
     ZoneAStyle::drawCard (g, editorHeader.getBounds().getUnion (harmonicCenterBox.getBounds()).expanded (cardPad, headerH), accent);
     ZoneAStyle::drawCard (g, progressionHeader.getBounds().getUnion (progressionStrip.getBounds()).expanded (cardPad, headerH + 8), Theme::Colour::accentWarm);
     ZoneAStyle::drawCard (g, summaryHeader.getBounds().getUnion (summaryDuration.getBounds()).expanded (cardPad, headerH), accent);
@@ -367,7 +375,7 @@ void StructurePanel::layoutContent (juce::Rectangle<int> bounds)
     const int gap = ZoneAControlStyle::compactGap();
     const int labelH = ZoneAControlStyle::sectionHeaderHeight() - 2;
     const int rowH = ZoneAControlStyle::controlHeight();
-    const int barH = ZoneAControlStyle::controlBarHeight();
+    juce::ignoreUnused (ZoneAControlStyle::controlBarHeight());
     const int headerH = ZoneAStyle::compactHeaderHeight();
     const int groupHeaderH = ZoneAStyle::compactGroupHeaderHeight();
 
@@ -381,45 +389,159 @@ void StructurePanel::layoutContent (juce::Rectangle<int> bounds)
 
     bounds.removeFromTop (gap + 1);
 
-    auto libraryRow = bounds.removeFromTop (160);
-    auto sectionCard = libraryRow.removeFromLeft ((libraryRow.getWidth() - (gap + 6)) / 2);
-    libraryRow.removeFromLeft (gap + 6);
-    auto arrangementCard = libraryRow;
+    const auto layoutThreeButtons = [gap] (juce::Rectangle<int> area,
+                                           juce::Component& b1,
+                                           juce::Component& b2,
+                                           juce::Component& b3)
+    {
+        const int usableW = area.getWidth() - gap * 2;
+        const int btnW = juce::jmax (20, usableW / 3);
+        b1.setBounds (area.removeFromLeft (btnW));
+        area.removeFromLeft (gap);
+        b2.setBounds (area.removeFromLeft (btnW));
+        area.removeFromLeft (gap);
+        b3.setBounds (area.removeFromLeft (btnW));
+    };
 
-    sectionListTitle.setBounds (sectionCard.removeFromTop (groupHeaderH));
-    sectionListHint.setBounds (sectionCard.removeFromTop (labelH));
-    auto sbtn = sectionCard.removeFromTop (rowH);
-    addSectionButton.setBounds (sbtn.removeFromLeft (38));
-    sbtn.removeFromLeft (gap);
-    duplicateSectionButton.setBounds (sbtn.removeFromLeft (62));
-    sbtn.removeFromLeft (gap);
-    deleteSectionButton.setBounds (sbtn.removeFromLeft (52));
-    moveSectionUpButton.setBounds ({});
-    moveSectionDownButton.setBounds ({});
-    sectionCard.removeFromTop (gap);
-    sectionList.setBounds (sectionCard);
-    arrangementTitle.setBounds (arrangementCard.removeFromTop (groupHeaderH));
-    arrangementFlowHint.setBounds (arrangementCard.removeFromTop (labelH));
-    auto abtn = arrangementCard.removeFromTop (rowH);
-    addArrangementButton.setBounds (abtn.removeFromLeft (48));
-    abtn.removeFromLeft (gap);
-    duplicateArrangementButton.setBounds (abtn.removeFromLeft (62));
-    abtn.removeFromLeft (gap);
-    deleteArrangementButton.setBounds (abtn.removeFromLeft (52));
-    moveArrangementUpButton.setBounds ({});
-    moveArrangementDownButton.setBounds ({});
-    arrangementCard.removeFromTop (gap);
-    arrangementList.setBounds (arrangementCard);
-    arrangementHint.setBounds (arrangementCard.reduced (10, 10));
+    const auto layoutTwoButtons = [gap] (juce::Rectangle<int> area,
+                                         juce::Component& b1,
+                                         juce::Component& b2)
+    {
+        const int usableW = area.getWidth() - gap;
+        const int btnW = juce::jmax (20, usableW / 2);
+        b1.setBounds (area.removeFromLeft (btnW));
+        area.removeFromLeft (gap);
+        b2.setBounds (area.removeFromLeft (btnW));
+    };
+
+    const auto layoutLibraryCard = [&] (juce::Rectangle<int> card,
+                                        juce::Label& titleLabel,
+                                        juce::Label& hintLabel,
+                                        StructureListBox& list,
+                                        juce::Component* emptyHint,
+                                        juce::Component& addButton,
+                                        juce::Component& duplicateButton,
+                                        juce::Component& deleteButton,
+                                        juce::Component& moveUpButton,
+                                        juce::Component& moveDownButton)
+    {
+        titleLabel.setBounds (card.removeFromTop (groupHeaderH));
+        hintLabel.setBounds (card.removeFromTop (labelH));
+        card.removeFromTop (juce::jmax (1, gap / 2));
+
+        auto topButtons = card.removeFromTop (rowH);
+        layoutThreeButtons (topButtons, addButton, duplicateButton, deleteButton);
+
+        card.removeFromTop (juce::jmax (1, gap / 2));
+
+        auto lowerButtons = card.removeFromTop (rowH);
+        layoutTwoButtons (lowerButtons, moveUpButton, moveDownButton);
+
+        card.removeFromTop (gap);
+        list.setBounds (card);
+
+        if (emptyHint != nullptr)
+            emptyHint->setBounds (list.getBounds().reduced (10, 8));
+    };
+
+    const int libraryCardH = 196;
+    const bool stackLibraryCards = bounds.getWidth() < 560;
+
+    if (stackLibraryCards)
+    {
+        auto sectionCard = bounds.removeFromTop (libraryCardH);
+        layoutLibraryCard (sectionCard,
+                           sectionListTitle,
+                           sectionListHint,
+                           sectionList,
+                           nullptr,
+                           addSectionButton,
+                           duplicateSectionButton,
+                           deleteSectionButton,
+                           moveSectionUpButton,
+                           moveSectionDownButton);
+
+        bounds.removeFromTop (gap + 2);
+
+        auto arrangementCard = bounds.removeFromTop (libraryCardH);
+        layoutLibraryCard (arrangementCard,
+                           arrangementTitle,
+                           arrangementFlowHint,
+                           arrangementList,
+                           &arrangementHint,
+                           addArrangementButton,
+                           duplicateArrangementButton,
+                           deleteArrangementButton,
+                           moveArrangementUpButton,
+                           moveArrangementDownButton);
+    }
+    else
+    {
+        auto libraryBand = bounds.removeFromTop (libraryCardH);
+        const int leftW = juce::jmax (180, (libraryBand.getWidth() - gap) / 2);
+        auto sectionCard = libraryBand.removeFromLeft (leftW);
+        libraryBand.removeFromLeft (gap);
+        auto arrangementCard = libraryBand;
+
+        layoutLibraryCard (sectionCard,
+                           sectionListTitle,
+                           sectionListHint,
+                           sectionList,
+                           nullptr,
+                           addSectionButton,
+                           duplicateSectionButton,
+                           deleteSectionButton,
+                           moveSectionUpButton,
+                           moveSectionDownButton);
+
+        layoutLibraryCard (arrangementCard,
+                           arrangementTitle,
+                           arrangementFlowHint,
+                           arrangementList,
+                           &arrangementHint,
+                           addArrangementButton,
+                           duplicateArrangementButton,
+                           deleteArrangementButton,
+                           moveArrangementUpButton,
+                           moveArrangementDownButton);
+    }
+
+    if (inlineRenameRow >= 0)
+    {
+        auto rowBounds = sectionList.getRowPosition (inlineRenameRow, true).reduced (2, 1);
+        rowBounds = rowBounds.translated (sectionList.getX(), sectionList.getY());
+        inlineSectionNameEditor.setBounds (rowBounds.constrainedWithin (content.getLocalBounds().reduced (4)));
+        inlineSectionNameEditor.toFront (false);
+    }
 
     bounds.removeFromTop (gap + 3);
 
     editorHeader.setBounds (bounds.removeFromTop (groupHeaderH));
     editorHint.setBounds (bounds.removeFromTop (labelH));
-    nameLabel.setBounds ({});
-    nameEditor.setBounds ({});
+    auto nameRow = bounds.removeFromTop (rowH);
+    nameLabel.setText ("Name", juce::dontSendNotification);
+    nameLabel.setBounds (nameRow.removeFromLeft (42));
+    nameEditor.setBounds (nameRow);
     barsLabel.setBounds ({});
     barsSlider.setBounds ({});
+    bounds.removeFromTop (gap);
+
+    auto timingLabels = bounds.removeFromTop (labelH);
+    const int timingGap = gap + 2;
+    const int timingW = juce::jmax (58, (timingLabels.getWidth() - timingGap * 2) / 3);
+    repeatsLabel.setBounds (timingLabels.removeFromLeft (timingW));
+    timingLabels.removeFromLeft (timingGap);
+    transitionLabel.setBounds (timingLabels.removeFromLeft (timingW));
+    timingLabels.removeFromLeft (timingGap);
+    beatsLabel.setBounds (timingLabels);
+
+    auto timingRow = bounds.removeFromTop (rowH);
+    repeatsSlider.setBounds (timingRow.removeFromLeft (timingW));
+    timingRow.removeFromLeft (timingGap);
+    transitionIntentBox.setBounds (timingRow.removeFromLeft (timingW));
+    timingRow.removeFromLeft (timingGap);
+    beatsPerBarBox.setBounds (timingRow);
+
     bounds.removeFromTop (gap);
 
     auto tonalLabels1 = bounds.removeFromTop (labelH);
@@ -453,22 +575,26 @@ void StructurePanel::layoutContent (juce::Rectangle<int> bounds)
     progressionStrip.setBounds (gridArea);
     bounds.removeFromTop (gap + 2);
 
-    auto prow = bounds.removeFromTop (rowH);
-    juce::ignoreUnused (prow, barH);
-    addChordCellButton.setBounds ({});
-    removeChordCellButton.setBounds ({});
-    progressionPresetButton.setBounds ({});
-    cadenceButton.setBounds ({});
-    chordRootLabel.setBounds ({});
-    chordTypeLabel.setBounds ({});
-    chordRootBox.setBounds ({});
-    chordTypeBox.setBounds ({});
-    repeatsLabel.setBounds ({});
-    repeatsSlider.setBounds ({});
-    transitionLabel.setBounds ({});
-    transitionIntentBox.setBounds ({});
-    beatsLabel.setBounds ({});
-    beatsPerBarBox.setBounds ({});
+    auto actionRow = bounds.removeFromTop (rowH);
+    const int actionGap = gap;
+    const int actionW = juce::jmax (42, (actionRow.getWidth() - actionGap * 3) / 4);
+    addChordCellButton.setBounds (actionRow.removeFromLeft (actionW));
+    actionRow.removeFromLeft (actionGap);
+    removeChordCellButton.setBounds (actionRow.removeFromLeft (actionW));
+    actionRow.removeFromLeft (actionGap);
+    progressionPresetButton.setBounds (actionRow.removeFromLeft (actionW));
+    actionRow.removeFromLeft (actionGap);
+    cadenceButton.setBounds (actionRow.removeFromLeft (actionW));
+
+    bounds.removeFromTop (gap);
+    auto chordLabelsRow = bounds.removeFromTop (labelH);
+    chordRootLabel.setBounds (chordLabelsRow.removeFromLeft (juce::jmax (56, chordLabelsRow.getWidth() / 2 - gap / 2)));
+    chordLabelsRow.removeFromLeft (gap);
+    chordTypeLabel.setBounds (chordLabelsRow);
+    auto chordRow = bounds.removeFromTop (rowH);
+    chordRootBox.setBounds (chordRow.removeFromLeft (juce::jmax (56, chordRow.getWidth() / 2 - gap / 2)));
+    chordRow.removeFromLeft (gap);
+    chordTypeBox.setBounds (chordRow);
 
     bounds.removeFromTop (gap + 4);
     summaryHeader.setBounds (bounds.removeFromTop (groupHeaderH));
@@ -477,14 +603,13 @@ void StructurePanel::layoutContent (juce::Rectangle<int> bounds)
     summaryMode.setBounds (bounds.removeFromTop (groupHeaderH));
     summaryBars.setBounds (bounds.removeFromTop (groupHeaderH));
     summaryDuration.setBounds (bounds.removeFromTop (groupHeaderH));
-    progressionPresetButton.setBounds ({});
-    cadenceButton.setBounds ({});
 }
 
 void StructurePanel::setIntentKeyMode (const juce::String& keyRoot, const juce::String& mode) { processorRef.getSongManager().setKeyRoot (keyRoot); processorRef.getSongManager().setKeyScale (mode); processorRef.syncAuthoredSongToRuntime(); refreshSummary(); }
 int StructurePanel::SectionListModel::getNumRows() { return static_cast<int> (owner.processorRef.getSongManager().getStructureState().sections.size()); }
 void StructurePanel::SectionListModel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) { const auto& sections = owner.processorRef.getSongManager().getStructureState().sections; if (row < 0 || row >= static_cast<int> (sections.size())) return; const auto& s = sections[(size_t) row]; const auto accent = sectionColourForIndex (row); ZoneAStyle::drawRowBackground (g, { 0, 0, w, h }, false, selected, accent); auto area = juce::Rectangle<int> (0, 0, w, h).reduced (8, 3); auto badge = area.removeFromLeft (24).reduced (0, 3); ZoneAStyle::drawBadge (g, badge, "S" + juce::String (row + 1), accent); area.removeFromLeft (6); auto stats = area.removeFromRight (66); g.setColour (Theme::Colour::inkLight); g.setFont (Theme::Font::label()); g.drawText (s.name, area.removeFromTop (15), juce::Justification::centredLeft, true); g.setColour (Theme::Colour::inkGhost.withAlpha (0.92f)); g.setFont (Theme::Font::micro()); g.drawText (juce::String (juce::jmax (1, s.bars)) + " bars  |  " + juce::String ((int) s.progression.size()) + " cells", area, juce::Justification::centredLeft, true); g.setColour (accent.withAlpha (0.9f)); g.setFont (Theme::Font::micro()); g.drawText ("drag", stats.removeFromTop (10), juce::Justification::centredRight, false); g.setColour (Theme::Colour::inkGhost); g.drawText (s.keyRoot + " " + s.mode, stats, juce::Justification::centredRight, true); }
 void StructurePanel::SectionListModel::selectedRowsChanged (int row) { owner.selectSection (row); }
+void StructurePanel::SectionListModel::listBoxItemDoubleClicked (int row, const juce::MouseEvent&) { owner.beginInlineSectionRename (row); }
 int StructurePanel::ArrangementListModel::getNumRows() { return static_cast<int> (buildResolvedStructure (owner.processorRef.getSongManager().getStructureState()).size()); }
 void StructurePanel::ArrangementListModel::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) { const auto resolved = buildResolvedStructure (owner.processorRef.getSongManager().getStructureState()); if (row < 0 || row >= static_cast<int> (resolved.size()) || resolved[(size_t) row].section == nullptr) return; const auto& r = resolved[(size_t) row]; const auto accent = sectionColourForIndex (row); ZoneAStyle::drawRowBackground (g, { 0, 0, w, h }, false, selected, accent); auto area = juce::Rectangle<int> (0, 0, w, h).reduced (8, 3); auto orderBox = area.removeFromLeft (30).reduced (0, 3); g.setColour (accent.withAlpha (selected ? 0.92f : 0.72f)); g.fillRoundedRectangle (orderBox.toFloat(), Theme::Radius::sm); g.setColour (Theme::Helper::inkFor (accent)); g.setFont (Theme::Font::microMedium()); g.drawText (juce::String (row + 1), orderBox, juce::Justification::centred, false); area.removeFromLeft (6); auto rightMeta = area.removeFromRight (86); g.setColour (Theme::Colour::inkLight); g.setFont (Theme::Font::label()); g.drawText (r.section->name, area.removeFromTop (15), juce::Justification::centredLeft, true); g.setColour (Theme::Colour::inkGhost.withAlpha (0.92f)); g.setFont (Theme::Font::micro()); g.drawText ("instance  |  " + juce::String (juce::jmax (1, r.totalBars)) + " bars", area, juce::Justification::centredLeft, true); g.setColour (accent.withAlpha (0.95f)); g.drawText ("from " + r.section->name.substring (0, juce::jmin (4, r.section->name.length())).toUpperCase(), rightMeta.removeFromTop (10), juce::Justification::centredRight, true); g.setColour (Theme::Colour::inkGhost); g.drawText (r.transitionIntent.isNotEmpty() ? r.transitionIntent : "None", rightMeta, juce::Justification::centredRight, true); }
 void StructurePanel::ArrangementListModel::selectedRowsChanged (int row) { owner.selectArrangementBlock (row); }
@@ -1166,9 +1291,25 @@ void StructurePanel::clearSelection() { finishInlineSectionRename (true); select
 
 void StructurePanel::beginInlineSectionRename (int index)
 {
-    juce::ignoreUnused (index);
-    // Stabilization pass: disable inline row editor so it cannot intercept section drag gestures.
+    if (index < 0)
+        return;
+
     finishInlineSectionRename (true);
+
+    auto& sections = processorRef.getSongManager().getStructureStateForEdit().sections;
+    if (index >= static_cast<int> (sections.size()))
+        return;
+
+    sectionList.selectRow (index, false, true);
+    inlineRenameRow = index;
+    inlineSectionNameEditor.setText (sections[(size_t) index].name, juce::dontSendNotification);
+    auto rowBounds = sectionList.getRowPosition (index, true).reduced (2, 1);
+    rowBounds = rowBounds.translated (sectionList.getX(), sectionList.getY());
+    inlineSectionNameEditor.setBounds (rowBounds.constrainedWithin (content.getLocalBounds().reduced (4)));
+    inlineSectionNameEditor.setVisible (true);
+    inlineSectionNameEditor.toFront (false);
+    inlineSectionNameEditor.grabKeyboardFocus();
+    inlineSectionNameEditor.selectAll();
 }
 
 void StructurePanel::finishInlineSectionRename (bool commit)
@@ -1210,7 +1351,7 @@ int StructurePanel::progressionBeatAtPoint (juce::Point<int> position) const { c
 juce::Rectangle<float> StructurePanel::progressionGridBounds() const { auto area = progressionStrip.getLocalBounds().reduced (18, 18).toFloat(); const float side = juce::jmax (120.0f, juce::jmin (area.getWidth(), area.getHeight())); return juce::Rectangle<float> (area.getCentreX() - side * 0.5f, area.getCentreY() - side * 0.5f, side, side); }
 juce::Rectangle<int> StructurePanel::chordCellBounds (int index) const { return progressionChipBounds (index).toNearestInt(); }
 juce::Rectangle<float> StructurePanel::progressionChipBounds (int index) const { if (index < 0 || index >= kProgressionGridSteps) return {}; const auto grid = progressionGridBounds(); const float cellW = grid.getWidth() / (float) kProgressionGridColumns; const float cellH = grid.getHeight() / (float) kProgressionGridRows; const int row = index / kProgressionGridColumns; const int column = index % kProgressionGridColumns; return { grid.getX() + cellW * (float) column + 1.5f, grid.getY() + cellH * (float) row + 1.5f, cellW - 3.0f, cellH - 3.0f }; }
-void StructurePanel::refreshLists() { suppressListCallbacks = true; sectionList.updateContent(); arrangementList.updateContent(); if (selectionTarget == SelectionTarget::section && selectedSectionIndex >= 0) sectionList.selectRow (selectedSectionIndex, false, false); if (selectionTarget == SelectionTarget::arrangementBlock && selectedArrangementIndex >= 0) arrangementList.selectRow (selectedArrangementIndex, false, false); suppressListCallbacks = false; arrangementHint.setVisible (arrangementListModel.getNumRows() == 0); arrangementHint.toFront (false); arrangementFlowHint.setText (arrangementListModel.getNumRows() == 0 ? "Song order: drop sections here" : "Song order built from section instances", juce::dontSendNotification); }
+void StructurePanel::refreshLists() { suppressListCallbacks = true; sectionList.updateContent(); arrangementList.updateContent(); if (selectionTarget == SelectionTarget::section && selectedSectionIndex >= 0) sectionList.selectRow (selectedSectionIndex, false, false); if (selectionTarget == SelectionTarget::arrangementBlock && selectedArrangementIndex >= 0) arrangementList.selectRow (selectedArrangementIndex, false, false); suppressListCallbacks = false; arrangementHint.setVisible (arrangementListModel.getNumRows() == 0); arrangementHint.toFront (false); arrangementFlowHint.setText (arrangementListModel.getNumRows() == 0 ? "Song order: drop sections here" : "Song order built from section instances (drag rows to reorder)", juce::dontSendNotification); }
 void StructurePanel::refreshEditor()
 {
     const auto* s = getSelectedSection();
@@ -1232,17 +1373,17 @@ void StructurePanel::refreshEditor()
                              juce::dontSendNotification);
 
     suppressControlCallbacks = true;
-    nameEditor.setEnabled (false);
+    nameEditor.setEnabled (has);
     barsSlider.setEnabled (false);
-    repeatsSlider.setEnabled (false);
-    beatsPerBarBox.setEnabled (false);
-    transitionIntentBox.setEnabled (false);
+    repeatsSlider.setEnabled (has);
+    beatsPerBarBox.setEnabled (has);
+    transitionIntentBox.setEnabled (has);
     keyRootBox.setEnabled (has);
     modeBox.setEnabled (has);
     harmonicCenterBox.setEnabled (has);
-    addChordCellButton.setEnabled (false);
-    progressionPresetButton.setEnabled (false);
-    cadenceButton.setEnabled (false);
+    addChordCellButton.setEnabled (has);
+    progressionPresetButton.setEnabled (has);
+    cadenceButton.setEnabled (has);
 
     if (! has)
     {
@@ -1280,9 +1421,17 @@ void StructurePanel::refreshEditor()
     if (selectedChordIndex >= static_cast<int> (s->progression.size()))
         selectedChordIndex = static_cast<int> (s->progression.size()) - 1;
 
-    removeChordCellButton.setEnabled (false);
-    chordRootBox.setEnabled (false);
-    chordTypeBox.setEnabled (false);
+    const bool hasSelectedChord = selectedChordIndex >= 0
+                               && selectedChordIndex < static_cast<int> (s->progression.size());
+    removeChordCellButton.setEnabled (hasSelectedChord);
+    chordRootBox.setEnabled (hasSelectedChord);
+    chordTypeBox.setEnabled (hasSelectedChord);
+    if (hasSelectedChord)
+    {
+        const auto& selected = s->progression[(size_t) selectedChordIndex];
+        chordRootBox.setText (selected.root, juce::dontSendNotification);
+        chordTypeBox.setText (selected.type, juce::dontSendNotification);
+    }
 
     suppressControlCallbacks = false;
     progressionStrip.repaint();

@@ -54,6 +54,7 @@ private:
         int getNumRows() override;
         void paintListBoxItem (int rowNumber, juce::Graphics&, int width, int height, bool selected) override;
         void selectedRowsChanged (int lastRowSelected) override;
+        void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override;
     private:
         StructurePanel& owner;
     };

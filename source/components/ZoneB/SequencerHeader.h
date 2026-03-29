@@ -38,7 +38,10 @@ public:
     std::function<void()>    onCopy;
     std::function<void()>    onPaste;
     std::function<void()>    onClear;
+    std::function<void()>    onToggleSequencerFocus;
     std::function<void(int)> onPatternChanged;
+
+    void setSequencerFocusMode (bool enabled);
 
     static constexpr int kHeight = 28;
 
@@ -69,11 +72,15 @@ private:
     juce::Rectangle<int> copyRect()    const noexcept;
     juce::Rectangle<int> pasteRect()   const noexcept;
     juce::Rectangle<int> clearRect()   const noexcept;
+    juce::Rectangle<int> focusRect()   const noexcept;
 
     static constexpr int kPad    = 6;
     static constexpr int kBtnW   = 24;
+    static constexpr int kFocusW = 40;
     static constexpr int kPatW   = 48;   // width of full PAT selector group
     static constexpr int kArrowW = 10;
+
+    bool m_sequencerFocusMode { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SequencerHeader)
 };

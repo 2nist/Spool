@@ -42,7 +42,8 @@ public:
     static constexpr int kRowH    = 16;
     static constexpr int kLabelW  = 48;
     static constexpr int kBtnW    = 14;
-    static constexpr int kAddH    = 14;
+    static constexpr int kInspectorH = 18;
+    static constexpr int kAddH       = 14;
 
 private:
     DrumMachineData* m_data       { nullptr };
@@ -86,6 +87,7 @@ private:
     juce::Rectangle<int> decBtnRect      (int vi) const noexcept;
     juce::Rectangle<int> incBtnRect      (int vi) const noexcept;
     juce::Rectangle<int> stepCellRect    (int vi, int step) const noexcept;
+    juce::Rectangle<int> inspectorRect   () const noexcept;
     juce::Rectangle<int> addVoiceRect    () const noexcept;
 
     int  voiceAtY (int y) const noexcept;

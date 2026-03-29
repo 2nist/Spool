@@ -33,13 +33,37 @@ set(COMPANY_NAME "2nist")
 # Change me! Used for the MacOS bundle identifier (and signing)
 set(BUNDLE_ID "com.2nist.spool")
 
-# Change me! Set the plugin formats you want built
-# Valid choices: AAX Unity VST VST3 AU AUv3 Standalone
-set(FORMATS VST3 AU CLAP Standalone)
+# Local dev convenience: build only Standalone by default for faster iteration.
+# Turn OFF for release/cross-format builds.
+option(SPOOL_DEV_STANDALONE_ONLY "Build only Standalone format for faster local dev builds" ON)
 
-# iOS cannot build desktop formats; switch to AUv3 app-extension + standalone host.
+# Build-speed controls
+set(SPOOL_ENABLE_UNITY_BUILD OFF CACHE BOOL
+    "Enable CMake unity builds (faster clean builds, potentially slower tiny incremental edits)")
+set(SPOOL_UNITY_BATCH_SIZE 12 CACHE STRING
+    "Unity batch size used when SPOOL_ENABLE_UNITY_BUILD=ON")
+
+set(_spool_lto_default OFF)
+if (NOT SPOOL_DEV_STANDALONE_ONLY)
+    set(_spool_lto_default ON)
+endif ()
+set(SPOOL_ENABLE_LTO ${_spool_lto_default} CACHE BOOL
+    "Enable JUCE recommended link-time optimization flags")
+
+set(CMAKE_UNITY_BUILD ${SPOOL_ENABLE_UNITY_BUILD})
+if (SPOOL_ENABLE_UNITY_BUILD)
+    set(CMAKE_UNITY_BUILD_BATCH_SIZE ${SPOOL_UNITY_BATCH_SIZE})
+endif ()
+
+# Set plugin formats
+# Valid choices: AAX Unity VST VST3 AU AUv3 CLAP Standalone
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # iOS cannot build desktop formats; use AUv3 app-extension + standalone host.
     set(FORMATS AUv3 Standalone)
+elseif (SPOOL_DEV_STANDALONE_ONLY)
+    set(FORMATS Standalone)
+else ()
+    set(FORMATS VST3 AU CLAP Standalone)
 endif ()
 
 # Force JUCE to work with sccache
@@ -182,8 +206,11 @@ target_link_libraries(SharedCode
     juce_gui_basics
     juce_gui_extra
     juce::juce_recommended_config_flags
-    juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+
+if (SPOOL_ENABLE_LTO)
+    target_link_libraries(SharedCode INTERFACE juce::juce_recommended_lto_flags)
+endif ()
 
 if (TARGET Bach)
     target_link_libraries(SharedCode INTERFACE Bach)

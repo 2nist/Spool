@@ -82,6 +82,19 @@ int rootToPitchClass (const juce::String& root)
     return 0;
 }
 
+juce::String tonicChordTypeForScale (const juce::String& scale)
+{
+    const auto mode = scale.trim().toLowerCase();
+    if (mode == "minor"
+        || mode == "aeolian"
+        || mode == "dorian"
+        || mode == "phrygian"
+        || mode == "locrian")
+        return "min";
+
+    return "maj";
+}
+
 int nearestNoteForPitchClass (int aroundNote, int targetPc)
 {
     return snapToNearestPitchClass ({ (targetPc % 12 + 12) % 12 }, aroundNote);
@@ -495,7 +508,7 @@ PluginProcessor::PluginProcessor()
         m_slotNote [s].store (60);  // Default: middle C
         m_drumVoiceCount[s].store (0);
         m_lastNotePlayed[s] = 60;
-        m_runtimePatterns[s] = compileRuntimePattern (SlotPattern {});
+        m_runtimePatterns[s] = compileRuntimePattern (SlotPattern {}, s);
         resetPhraseMemory (s);
 
         auto& slotState = m_appState.slots[(size_t) s];
@@ -585,7 +598,7 @@ void PluginProcessor::updatePhraseMemory (int slot, int realizedNote, SlotPatter
         memory.previousChordTopNote = juce::jmax (memory.previousChordTopNote, realizedNote);
 }
 
-PluginProcessor::RuntimeSlotPattern PluginProcessor::compileRuntimePattern (const SlotPattern& pattern)
+PluginProcessor::RuntimeSlotPattern PluginProcessor::compileRuntimePattern (const SlotPattern& pattern, int sourceSlot)
 {
     RuntimeSlotPattern compiled;
     compiled.laneContext = pattern.current().laneContext;
@@ -613,12 +626,18 @@ PluginProcessor::RuntimeSlotPattern PluginProcessor::compileRuntimePattern (cons
                                           compiled.patternLengthTicks - 1,
                                           stepStartTick + juce::roundToInt (src.timeOffset * (float) stepLengthTicks));
             dst.lengthTicks = juce::jmax (1, juce::roundToInt (src.length * (float) stepLengthTicks));
+            const int routeRow = pattern.routeRowForUnit (step->start);
+            const int routedSlot = pattern.getRowTargetSlot (routeRow);
+            dst.targetSlot = routedSlot == SlotPattern::kRouteSelf
+                           ? sourceSlot
+                           : juce::jlimit (0, SpoolAudioGraph::kNumSlots - 1, routedSlot);
             dst.pitchValue = juce::jlimit (SlotPattern::kMinTheoryValue, SlotPattern::kMaxTheoryValue, src.pitchValue);
             dst.anchorValue = juce::jlimit (SlotPattern::kUseSlotBasePitch, SlotPattern::kMaxTheoryValue, step->anchorValue);
             dst.stepIndex = stepIndex;
             dst.eventOrdinalInStep = eventIndex;
             dst.eventsInStep = step->microEventCount;
             dst.velocity = static_cast<uint8_t> (juce::jlimit (1, 127, (int) src.velocity));
+            dst.followStructure = step->followStructure;
             dst.noteMode = step->noteMode;
             dst.role = step->role;
             dst.harmonicSource = step->harmonicSource;
@@ -904,7 +923,11 @@ int PluginProcessor::realizeRuntimePitch (int slot,
         case SlotPattern::NoteMode::interval:
         default:
         {
-            int semitoneOffset = event.pitchValue < 0 ? 0 : event.pitchValue;
+            int semitoneOffset = (event.pitchValue == SlotPattern::kUseSlotBasePitch)
+                                   ? 0
+                                   : juce::jlimit (SlotPattern::kMinTheoryValue,
+                                                   SlotPattern::kMaxTheoryValue,
+                                                   event.pitchValue);
             if (event.role == SlotPattern::StepRole::fill)
                 semitoneOffset += ((semitoneOffset & 1) ? 12 : 0);
             if (event.role == SlotPattern::StepRole::bass)
@@ -939,25 +962,51 @@ void PluginProcessor::triggerRuntimePatternEvents (int slot,
         if (event.startTick != patternTick)
             continue;
 
-        const int baseNote = m_slotNote[slot].load();
-        const int note = realizeRuntimePitch (slot, event, baseNote, keyRoot, keyScale, currentChord, nextChord, structureFollow, structureChordPcs);
+        const int targetSlot = juce::jlimit (0,
+                                             SpoolAudioGraph::kNumSlots - 1,
+                                             event.targetSlot >= 0 ? event.targetSlot : slot);
+        if (! m_audioGraph.isSlotActive (targetSlot))
+            continue;
 
-        for (auto& held : m_heldNotes[slot])
+        const bool eventStructureFollow = structureFollow && event.followStructure;
+        Chord eventCurrentChord = currentChord;
+        Chord eventNextChord = nextChord;
+        std::vector<int> eventStructureChordPcs = structureChordPcs;
+        if (! eventStructureFollow)
+        {
+            const auto chordType = tonicChordTypeForScale (keyScale);
+            eventCurrentChord = { keyRoot.isNotEmpty() ? keyRoot : juce::String ("C"), chordType };
+            eventNextChord = eventCurrentChord;
+            eventStructureChordPcs.clear();
+        }
+
+        const int baseNote = m_slotNote[targetSlot].load();
+        const int note = realizeRuntimePitch (targetSlot,
+                                              event,
+                                              baseNote,
+                                              keyRoot,
+                                              keyScale,
+                                              eventCurrentChord,
+                                              eventNextChord,
+                                              eventStructureFollow,
+                                              eventStructureChordPcs);
+
+        for (auto& held : m_heldNotes[targetSlot])
         {
             if (held.active && held.note == note)
             {
-                m_slotMidi[slot].addEvent (juce::MidiMessage::noteOff (1, held.note), sampleOffset);
+                m_slotMidi[targetSlot].addEvent (juce::MidiMessage::noteOff (1, held.note), sampleOffset);
                 held.active = false;
                 held.note = -1;
                 held.ticksRemaining = 0;
             }
         }
 
-        m_slotMidi[slot].addEvent (
+        m_slotMidi[targetSlot].addEvent (
             juce::MidiMessage::noteOn (1, note, static_cast<juce::uint8> (event.velocity)),
             sampleOffset);
-        pushHeldNote (slot, note, event.lengthTicks);
-        updatePhraseMemory (slot, note, event.role, currentChord);
+        pushHeldNote (targetSlot, note, event.lengthTicks);
+        updatePhraseMemory (targetSlot, note, event.role, eventCurrentChord);
     }
 }
 
@@ -1628,7 +1677,7 @@ void PluginProcessor::setSlotPattern (int slot, const SlotPattern& pattern) noex
     if (slot < 0 || slot >= SpoolAudioGraph::kNumSlots)
         return;
 
-    const auto compiled = compileRuntimePattern (pattern);
+    const auto compiled = compileRuntimePattern (pattern, slot);
     const juce::SpinLock::ScopedLockType lock (m_runtimePatternLocks[slot]);
     m_runtimePatterns[slot] = compiled;
 }
@@ -1966,6 +2015,7 @@ void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setAttribute ("masterGain", static_cast<double> (m_masterGain.load()));
     state.setAttribute ("masterPan",  static_cast<double> (m_masterPan.load()));
     state.setAttribute ("bpm",        static_cast<double> (m_bpm.load()));
+    state.setAttribute ("structureFollowTracks", m_useStructureForTracks.load());
     RoutingState routeCopy;
     {
         std::lock_guard<std::mutex> lock (m_routingLock);
@@ -1992,6 +2042,7 @@ void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
     m_masterGain.store (static_cast<float> (xml->getDoubleAttribute ("masterGain", 1.0)));
     m_masterPan.store  (static_cast<float> (xml->getDoubleAttribute ("masterPan",  0.0)));
     m_bpm.store        (static_cast<float> (xml->getDoubleAttribute ("bpm",       120.0)));
+    m_useStructureForTracks.store (xml->getBoolAttribute ("structureFollowTracks", false));
 
     const juce::String bits = xml->getStringAttribute ("routing", {});
     if (bits.isNotEmpty())

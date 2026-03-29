@@ -100,7 +100,7 @@ void StepGrid::paint (juce::Graphics& g)
     const int availW = getWidth() - pad * 2;
     const int stepW  = (availW - (kStepsPerRow - 1) * gap) / kStepsPerRow;
 
-    g.setColour (juce::Colour (0xFF5a5040));
+    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.55f));
     for (int r = 0; r < 2; ++r)
     {
         const int rowY = kHeaderH + pad + r * (stepH + rowGap);
@@ -177,18 +177,18 @@ void StepGrid::paintStep (juce::Graphics& g, int idx) const
     // Beat-1 inactive gets beat-1 tinted background
     juce::Colour fill;
     if (!isActive && isBeat1Pos)
-        fill = juce::Colour (0xFF635748);                                // beat-1 inactive
+        fill = Theme::Colour::surface4.withAlpha (0.92f);                // beat-1 inactive
     else if (isActive && isBeat1Pos && !isAccented)
         fill = Theme::Colour::accent.brighter (0.15f);                   // beat-1 active
     else
         fill = isActive ? (isAccented ? Theme::Colour::accentWarm : Theme::Colour::accent)
-                        : juce::Colour (0xFF524840);                     // regular inactive
+                        : Theme::Colour::surface3.withAlpha (0.92f);      // regular inactive
 
     g.setColour (fill);
     g.fillRoundedRectangle (r.toFloat(), Theme::Radius::xs);
 
     // Border — clearly visible between each step
-    g.setColour (juce::Colour (0xFF80705a));
+    g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.88f));
     g.drawRoundedRectangle (r.toFloat(), Theme::Radius::xs, Theme::Stroke::subtle);
 
     // Playhead — 1px red line above and below

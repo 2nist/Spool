@@ -33,28 +33,34 @@ public:
     std::function<void(juce::String)> onNameChanged;
 
     void paint            (juce::Graphics&) override;
-    void resized          () override {}
+    void resized          () override;
     void mouseDown        (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
     // juce::ChangeListener for ColourSelector
     void changeListenerCallback (juce::ChangeBroadcaster* source) override;
 
-    static constexpr int kHeight  = 10;
+    static constexpr int kHeight  = 20;
 
 private:
     ModuleGroup&          m_group;
     juce::ColourSelector* m_selectorPtr { nullptr };
 
     std::unique_ptr<juce::TextEditor> m_nameEditor;
+    juce::TextButton                  m_addSlotBtn { "+" };
+    juce::TextButton                  m_collapseBtn { "\xe2\x96\xbd" };
+    juce::TextButton                  m_menuBtn { "..." };
 
     static constexpr int kStripeW = 3;
 
     juce::Rectangle<int> nameRect() const noexcept;
-    juce::Rectangle<int> collapseRect() const noexcept;
+    juce::Rectangle<int> slotCountRect() const noexcept;
 
     void openColorPicker();
     void commitRename();
+    void showContextMenu();
+    void toggleCollapsed();
+    void syncButtonState();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GroupHeader)
 };

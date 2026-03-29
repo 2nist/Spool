@@ -44,6 +44,15 @@ void SequencerHeader::setClipboard (const SlotPattern* /*cb*/, bool hasData)
     repaint();
 }
 
+void SequencerHeader::setSequencerFocusMode (bool enabled)
+{
+    if (m_sequencerFocusMode == enabled)
+        return;
+
+    m_sequencerFocusMode = enabled;
+    repaint();
+}
+
 void SequencerHeader::setStructureContext (const juce::String& sectionName,
                                            const juce::String& positionLabel,
                                            const juce::String& currentChord,
@@ -112,6 +121,11 @@ juce::Rectangle<int> SequencerHeader::copyRect() const noexcept
     return pasteRect().translated (-(kBtnW + 2), 0);
 }
 
+juce::Rectangle<int> SequencerHeader::focusRect() const noexcept
+{
+    return copyRect().translated (-(kFocusW + 4), 0).withWidth (kFocusW);
+}
+
 //==============================================================================
 // Paint
 //==============================================================================
@@ -163,15 +177,35 @@ void SequencerHeader::paint (juce::Graphics& g)
     // Action buttons
     g.setFont (Theme::Font::micro());
 
-    auto paintBtn = [&] (juce::Rectangle<int> r, const juce::String& label, bool enabled)
+    auto paintBtn = [&] (juce::Rectangle<int> r, const juce::String& label, bool enabled, bool active = false)
     {
-        g.setColour (enabled ? (juce::Colour) Theme::Colour::inkMid : (juce::Colour) Theme::Colour::inkGhost);
+        if (r.isEmpty())
+            return;
+
+        g.setColour (active ? Theme::Zone::b.withAlpha (0.2f) : Theme::Colour::surface2.withAlpha (0.9f));
+        g.fillRoundedRectangle (r.toFloat().reduced (0.5f, 1.0f), Theme::Radius::chip);
+        g.setColour ((active ? Theme::Zone::b : Theme::Colour::surfaceEdge).withAlpha (0.9f));
+        g.drawRoundedRectangle (r.toFloat().reduced (0.5f, 1.0f), Theme::Radius::chip, Theme::Stroke::normal);
+        g.setColour (enabled ? (active ? (juce::Colour) Theme::Colour::inkLight : (juce::Colour) Theme::Colour::inkMid)
+                             : (juce::Colour) Theme::Colour::inkGhost);
         g.drawText (label, r, juce::Justification::centred, false);
     };
 
-    paintBtn (copyRect(),  "COPY",  m_hasFocus);
-    paintBtn (pasteRect(), "PASTE", m_hasFocus && m_hasClipboard);
-    paintBtn (clearRect(), "CLR",   m_hasFocus);
+    const int actionMinX = patNextRect().getRight() + 6;
+    const bool compactButtons = getWidth() < 760;
+    const bool canShowFocus = focusRect().getX() >= actionMinX;
+    const bool canShowCopy = copyRect().getX() >= actionMinX;
+    const bool canShowPaste = pasteRect().getX() >= actionMinX;
+    const bool canShowClear = clearRect().getX() >= actionMinX;
+
+    if (canShowFocus)
+        paintBtn (focusRect(), m_sequencerFocusMode ? "SPLIT" : "FULL", true, m_sequencerFocusMode);
+    if (canShowCopy)
+        paintBtn (copyRect(), compactButtons ? "CPY" : "COPY", m_hasFocus);
+    if (canShowPaste)
+        paintBtn (pasteRect(), compactButtons ? "PST" : "PASTE", m_hasFocus && m_hasClipboard);
+    if (canShowClear)
+        paintBtn (clearRect(), "CLR", m_hasFocus);
 
     auto contextRect = juce::Rectangle<int> (kPad, 16, getWidth() - kPad * 2, 11);
     juce::String context = "SEC ";
@@ -226,19 +260,32 @@ void SequencerHeader::mouseDown (const juce::MouseEvent& e)
         }
     }
 
-    if (copyRect().contains (pos) && m_hasFocus)
+    const int actionMinX = patNextRect().getRight() + 6;
+    const bool canShowFocus = focusRect().getX() >= actionMinX;
+    const bool canShowCopy = copyRect().getX() >= actionMinX;
+    const bool canShowPaste = pasteRect().getX() >= actionMinX;
+    const bool canShowClear = clearRect().getX() >= actionMinX;
+
+    if (canShowCopy && copyRect().contains (pos) && m_hasFocus)
     {
         if (onCopy) onCopy();
         return;
     }
 
-    if (pasteRect().contains (pos) && m_hasFocus && m_hasClipboard)
+    if (canShowFocus && focusRect().contains (pos))
+    {
+        if (onToggleSequencerFocus)
+            onToggleSequencerFocus();
+        return;
+    }
+
+    if (canShowPaste && pasteRect().contains (pos) && m_hasFocus && m_hasClipboard)
     {
         if (onPaste) onPaste();
         return;
     }
 
-    if (clearRect().contains (pos) && m_hasFocus)
+    if (canShowClear && clearRect().contains (pos) && m_hasFocus)
     {
         if (onClear) onClear();
         return;

@@ -21,7 +21,8 @@ void FaceplatePanel::setSlots (const std::array<QuickControlSlot, kNumSliders>& 
                                 const std::array<QuickControlSlot, kNumKnobs>&   knobs,
                                 const std::array<QuickControlSlot, kNumButtons>& buttons,
                                 const juce::Array<QuickControlSlot>&             available,
-                                const juce::String&                              label)
+                                const juce::String&                              label,
+                                bool                                             splitSliderBanks)
 {
     m_sliderSlots   = sliders;
     m_knobSlots     = knobs;
@@ -33,6 +34,7 @@ void FaceplatePanel::setSlots (const std::array<QuickControlSlot, kNumSliders>& 
 
     m_available     = available;
     m_sectionLabel  = label.isEmpty() ? "QUICK CONTROLS" : label.toUpperCase();
+    m_splitSliderBanks = splitSliderBanks;
 
     rebuildWidgets();
 }
@@ -183,6 +185,44 @@ void FaceplatePanel::applySlotToFader (int idx)
     {
         fader->setParamColor (ModuleRow::paramColorForLabel (slot.paramId));
 
+        const auto parseToNorm = [mn = slot.minVal, mx = slot.maxVal] (const juce::String& raw, float currentNorm)
+        {
+            if (mx <= mn)
+                return currentNorm;
+
+            auto text = raw.trim().toLowerCase();
+            if (text.isEmpty())
+                return currentNorm;
+
+            bool hasK = text.containsChar ('k');
+            bool hasMs = text.endsWithChar ('m');
+            bool hasSec = text.endsWithChar ('s');
+            bool hasPercent = text.containsChar ('%');
+
+            juce::String numeric;
+            for (auto c : text)
+                if ((c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+')
+                    numeric << juce::String::charToString (c);
+
+            if (numeric.isEmpty())
+                return currentNorm;
+
+            float value = numeric.getFloatValue();
+            if (hasPercent)
+                value = mn + juce::jlimit (0.0f, 100.0f, value) * 0.01f * (mx - mn);
+            else if (hasK)
+                value *= 1000.0f;
+            else if (hasMs)
+                value *= 0.001f;
+            else if (mn >= 0.0f && mx <= 1.0f && !hasSec && value > 1.0f)
+                value *= 0.01f; // 65 -> 0.65 for normalized controls
+
+            value = juce::jlimit (mn, mx, value);
+            return (value - mn) / (mx - mn);
+        };
+
+        fader->setValueParser (parseToNorm);
+
         // Value formatter based on range
         const float mn = slot.minVal, mx = slot.maxVal;
         if (mx >= 100.f)
@@ -226,8 +266,9 @@ void FaceplatePanel::applySlotToFader (int idx)
     }
     else
     {
-        fader->setParamColor (juce::Colour (0xFF2a2a2a));
+        fader->setParamColor (Theme::Colour::surfaceEdge.withAlpha (0.8f));
         fader->setValueFormatter ([] (float) { return juce::String ("--"); });
+        fader->setValueParser ({});
     }
 
     fader->repaint();
@@ -238,8 +279,6 @@ void FaceplatePanel::applySlotToKnob (int idx)
     const auto& slot = m_knobSlots[idx];
     auto*       knob = m_knobWidgets[idx];
     if (knob == nullptr) return;
-
-    const auto& theme = ThemeManager::get().theme();
 
     if (slot.assigned)
     {
@@ -371,6 +410,8 @@ void FaceplatePanel::paint (juce::Graphics& g)
 {
     const int w = getWidth();
     const int h = getHeight();
+    const int barY = juce::jmax (kSectionH + 42, h - kBarH);
+    const int faderH = juce::jmax (60, barY - kBarSep - kSectionH);
 
     // Background
     g.setColour (Theme::Colour::surface0);
@@ -389,13 +430,25 @@ void FaceplatePanel::paint (juce::Graphics& g)
                  kStripeW + 6, 0, w - kStripeW - 8, kSectionH,
                  juce::Justification::centred, false);
 
+    if (m_splitSliderBanks)
+    {
+        const int btnColX = w - kBtnColW - kBtnColMgn;
+        const int sliderLeft  = kStripeW + 2;
+        const int sliderRight = btnColX - 4;
+        const int midX = sliderLeft + (sliderRight - sliderLeft) / 2;
+
+        g.setColour (Theme::Colour::inkGhost.withAlpha (0.5f));
+        g.drawText ("A", sliderLeft, 0, (sliderRight - sliderLeft) / 2, kSectionH, juce::Justification::centredLeft, false);
+        g.drawText ("B", midX, 0, sliderRight - midX, kSectionH, juce::Justification::centredRight, false);
+    }
+
     // Bar background
     g.setColour (Theme::Colour::surface1);
-    g.fillRect  (kStripeW, kBarY, w - kStripeW, kBarH);
+    g.fillRect  (kStripeW, barY, w - kStripeW, kBarH);
 
     // Separator above bar
     g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.5f));
-    g.fillRect  (kStripeW, kBarY, w - kStripeW, 1);
+    g.fillRect  (kStripeW, barY, w - kStripeW, 1);
 
     // Knob labels (painted above each knob; knobs themselves are child components)
     g.setFont   (Theme::Font::micro());
@@ -406,7 +459,7 @@ void FaceplatePanel::paint (juce::Graphics& g)
         const auto& slot = m_knobSlots[i];
 
         const juce::Rectangle<int> labelBounds {
-            knob->getX() - 2, kBarY + 1,
+            knob->getX() - 2, barY + 1,
             kKnobSize + 4, kBarLabelH - 1
         };
         g.setColour (slot.assigned ? Theme::Colour::inkGhost
@@ -419,12 +472,12 @@ void FaceplatePanel::paint (juce::Graphics& g)
         const int btnColX = getWidth() - kBtnColW - kBtnColMgn;
 
         // Subtle column tint so buttons read as a distinct section
-        g.setColour (juce::Colour (0xFF0f0d0b));
-        g.fillRect  (btnColX, kSectionH, kBtnColW + kBtnColMgn, kFaderH);
+        g.setColour (Theme::Colour::surface0.withMultipliedBrightness (0.86f));
+        g.fillRect  (btnColX, kSectionH, kBtnColW + kBtnColMgn, faderH);
 
         // Thin separator line between fader area and button column
         g.setColour (Theme::Colour::surfaceEdge.withAlpha (0.4f));
-        g.fillRect  (btnColX - 1, kSectionH + 2, 1, kFaderH - 4);
+        g.fillRect  (btnColX - 1, kSectionH + 2, 1, juce::jmax (4, faderH - 4));
     }
 }
 
@@ -437,11 +490,14 @@ void FaceplatePanel::resized()
     if (m_faderWidgets.isEmpty()) return;
 
     const int w = getWidth();
+    const int h = getHeight();
+    const int barY = juce::jmax (kSectionH + 42, h - kBarH);
+    const int faderH = juce::jmax (60, barY - kBarSep - kSectionH);
 
     // ---- Button column: compact vertical strip anchored to the right ----
     {
         const int btnColX = w - kBtnColW - kBtnColMgn;
-        const int btnH    = (kFaderH - (kNumButtons - 1) * kBtnVGap) / kNumButtons;
+        const int btnH    = juce::jmax (10, (faderH - (kNumButtons - 1) * kBtnVGap) / kNumButtons);
 
         for (int i = 0; i < kNumButtons; ++i)
         {
@@ -457,18 +513,51 @@ void FaceplatePanel::resized()
         const int sliderLeft  = kStripeW + 2;
         const int sliderRight = btnColX - 4;
         const int n           = m_faderWidgets.size();
+        const int faderTop    = kSectionH;
+        const int prefW       = m_faderWidgets[0]->getPreferredWidth();
 
         if (n > 0)
         {
-            const int prefW   = m_faderWidgets[0]->getPreferredWidth();
-            const int totalFW = n * prefW;
-            const int dynGap  = juce::jmax (2, (sliderRight - sliderLeft - totalFW) / juce::jmax (1, n - 1));
-
-            int x = sliderLeft;
-            for (auto* f : m_faderWidgets)
+            if (m_splitSliderBanks && n >= 4)
             {
-                f->setBounds (x, kSectionH, prefW, VerticalFader::kPreferredHeight);
-                x += prefW + dynGap;
+                const int leftCount = n / 2;
+                const int rightCount = n - leftCount;
+                const int totalW = juce::jmax (2, sliderRight - sliderLeft);
+                const int leftBankW = juce::jmax (1, (totalW - kSliderBankGap) / 2);
+                const int rightBankX = sliderLeft + leftBankW + kSliderBankGap;
+
+                const auto layoutBank = [&] (int startIdx, int count, int bankX, int bankW)
+                {
+                    if (count <= 0)
+                        return;
+
+                    const int totalFW = count * prefW;
+                    const int dynGap = (count > 1) ? juce::jmax (2, (bankW - totalFW) / (count - 1)) : 0;
+                    const int usedW = totalFW + juce::jmax (0, count - 1) * dynGap;
+                    int x = bankX + juce::jmax (0, (bankW - usedW) / 2);
+
+                    for (int i = 0; i < count; ++i)
+                    {
+                        if (auto* f = m_faderWidgets[startIdx + i])
+                            f->setBounds (x, faderTop, prefW, faderH);
+                        x += prefW + dynGap;
+                    }
+                };
+
+                layoutBank (0, leftCount, sliderLeft, leftBankW);
+                layoutBank (leftCount, rightCount, rightBankX, juce::jmax (1, sliderRight - rightBankX));
+            }
+            else
+            {
+                const int totalFW = n * prefW;
+                const int dynGap  = juce::jmax (2, (sliderRight - sliderLeft - totalFW) / juce::jmax (1, n - 1));
+
+                int x = sliderLeft;
+                for (auto* f : m_faderWidgets)
+                {
+                    f->setBounds (x, faderTop, prefW, faderH);
+                    x += prefW + dynGap;
+                }
             }
         }
     }
@@ -483,7 +572,7 @@ void FaceplatePanel::resized()
         {
             if (m_knobWidgets[i] == nullptr) continue;
             const int kx = knobsX0 + i * (kKnobSize + knobGap);
-            const int ky = kBarY + kBarLabelH;
+            const int ky = barY + kBarLabelH;
             m_knobWidgets[i]->setBounds (kx, ky, kKnobSize, kKnobSize);
         }
     }

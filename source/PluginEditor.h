@@ -17,6 +17,7 @@
 #include "components/ZoneResizer.h"
 #include "components/AudioHistoryStrip.h"
 #include "components/SettingsPanel.h"
+#include "components/SplashComponent.h"
 #include "state/AppPreferences.h"
 #include "melatonin_inspector/melatonin_inspector.h"
 #include "theme/SpoolLookAndFeel.h"
@@ -190,6 +191,7 @@ private:
     juce::Array<TimelineClipAudioCacheEntry> m_timelineClipAudioCache;
     juce::AudioFormatManager m_audioFormatManager;
     SpoolLookAndFeel m_lookAndFeel;
+    std::unique_ptr<SplashComponent> m_splash;
     std::unique_ptr<melatonin::Inspector> m_inspector;
     double m_lastObservedProcessorBeat { 0.0 };
     bool m_hasObservedProcessorBeat { false };

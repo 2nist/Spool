@@ -22,6 +22,9 @@ struct SlotPattern
     static constexpr int kUseSlotBasePitch    = -1;
     static constexpr int kMinTheoryValue      = -24;
     static constexpr int kMaxTheoryValue      = 127;
+    static constexpr int kRouteRows           = 4;
+    static constexpr int kRouteUnitsPerRow    = 16;
+    static constexpr int kRouteSelf           = -1;
 
     enum class LaneContext : uint8_t
     {
@@ -80,7 +83,7 @@ struct SlotPattern
         bool     accent     { false };
         StepRole role       { StepRole::lead };
         NoteMode noteMode   { NoteMode::absolute };
-        bool     followStructure { true };
+        bool     followStructure { false };
         HarmonicSource harmonicSource { HarmonicSource::key };
         bool     lookAheadToNextChord { false };
         int      anchorValue { kUseSlotBasePitch };
@@ -92,6 +95,7 @@ struct SlotPattern
     {
         int patternLength { DEFAULT_PATTERN_UNITS };
         LaneContext laneContext { LaneContext::melodic };
+        std::array<int, kRouteRows> rowTargetSlots { { kRouteSelf, kRouteSelf, kRouteSelf, kRouteSelf } };
         int stepCount { DEFAULT_PATTERN_UNITS };
         std::array<Step, MAX_STEPS> steps {};
     };
@@ -116,6 +120,33 @@ struct SlotPattern
 
     int activeStepCount() const noexcept { return current().stepCount; }
     int patternLength() const noexcept   { return current().patternLength; }
+    int routeRowForUnit (int unit) const noexcept
+    {
+        return juce::jlimit (0, kRouteRows - 1, juce::jmax (0, unit) / kRouteUnitsPerRow);
+    }
+
+    int routeRowForStepIndex (int stepIndex) const noexcept
+    {
+        if (const auto* step = getStep (stepIndex))
+            return routeRowForUnit (step->start);
+        return 0;
+    }
+
+    int getRowTargetSlot (int row) const noexcept
+    {
+        if (! juce::isPositiveAndBelow (row, kRouteRows))
+            return kRouteSelf;
+
+        return current().rowTargetSlots[(size_t) row];
+    }
+
+    void setRowTargetSlot (int row, int targetSlot) noexcept
+    {
+        if (! juce::isPositiveAndBelow (row, kRouteRows))
+            return;
+
+        current().rowTargetSlots[(size_t) row] = juce::jlimit (kRouteSelf, 127, targetSlot);
+    }
 
     static const char* shortLabel (NoteMode mode) noexcept
     {
@@ -453,12 +484,27 @@ struct SlotPattern
     {
         auto& pat = current();
         const auto lane = pat.laneContext;
+        const auto routes = pat.rowTargetSlots;
         pat = {};
         pat.laneContext = lane;
+        pat.rowTargetSlots = routes;
         pat.stepCount = DEFAULT_PATTERN_UNITS;
         for (int i = 0; i < pat.stepCount; ++i)
             pat.steps[(size_t) i].duration = 1;
         normalizeStepLayout();
+    }
+
+    void setFollowStructureForAllSteps (bool enabled, bool activeOnly = false) noexcept
+    {
+        auto& pat = current();
+        for (int i = 0; i < pat.stepCount; ++i)
+        {
+            auto& step = pat.steps[(size_t) i];
+            if (activeOnly && (step.gateMode == GateMode::rest || step.microEventCount <= 0))
+                continue;
+
+            step.followStructure = enabled;
+        }
     }
 
     void normalizeStepLayout()
@@ -483,6 +529,7 @@ struct SlotPattern
         {
             auto& pat = patterns[(size_t) patternIndex];
             pat = {};
+            pat.rowTargetSlots.fill (kRouteSelf);
             pat.patternLength = DEFAULT_PATTERN_UNITS;
             pat.stepCount = DEFAULT_PATTERN_UNITS;
             for (int i = 0; i < pat.stepCount; ++i)

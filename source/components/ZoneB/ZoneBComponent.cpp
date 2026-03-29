@@ -20,7 +20,7 @@ ZoneBComponent::ZoneBComponent()
     {
         const juce::String name  = "GROUP " + juce::String (m_groups.size() + 1);
         const juce::Colour color { 0xFF4B9EDB };
-        addGroup (name, color);
+        addGroup (name, color, true);
         const int newIdx = m_groups.size() - 1;
         if (auto* hdr = m_groupHeaders[newIdx])
             hdr->startRename();
@@ -43,6 +43,11 @@ ZoneBComponent::ZoneBComponent()
         const int maxSplit = getHeight() - kHandleH - minBottomHeight();
         m_splitY = juce::jlimit (minSplit, juce::jmax (minSplit, maxSplit),
                                  m_splitDragStartY + dy);
+        if (m_sequencerFocusMode)
+        {
+            m_sequencerFocusMode = false;
+            m_seqHeader.setSequencerFocusMode (false);
+        }
         resized();
     };
 
@@ -111,6 +116,9 @@ ZoneBComponent::ZoneBComponent()
         onPatternModified (flatIdx, m_focusedRow->pattern());
     };
 
+    m_seqHeader.onToggleSequencerFocus = [this] { toggleSequencerFocusMode(); };
+    m_seqHeader.setSequencerFocusMode (false);
+
     createDefaultGroups();
 }
 
@@ -166,6 +174,27 @@ const ModuleRow* ZoneBComponent::rowForFlatSlot (int flatSlotIndex, int* groupIn
     return const_cast<ZoneBComponent*> (this)->rowForFlatSlot (flatSlotIndex, groupIndexOut);
 }
 
+int ZoneBComponent::findGroupIndexForRow (const ModuleRow* row) const noexcept
+{
+    if (row == nullptr)
+        return -1;
+
+    for (int gi = 0; gi < m_groups.size(); ++gi)
+    {
+        auto* group = m_groups[gi];
+        if (group == nullptr)
+            continue;
+
+        for (auto* groupRow : group->slots)
+        {
+            if (groupRow == row)
+                return gi;
+        }
+    }
+
+    return -1;
+}
+
 DrumMachineData* ZoneBComponent::getDrumDataForSlot (int flatSlotIndex) noexcept
 {
     if (auto* row = rowForFlatSlot (flatSlotIndex))
@@ -204,13 +233,12 @@ bool ZoneBComponent::setDrumDataForSlot (int flatSlotIndex, const DrumMachineDat
 
 void ZoneBComponent::createDefaultGroups()
 {
-    addGroup ("SYNTHS", juce::Colour (0xFF4B9EDB));
-    for (int i = 0; i < 3; ++i)
-        addSlotToGroup (0, ModuleRow::ModuleType::Synth);
-
-    addGroup ("DRUMS", juce::Colour (0xFFDBA34B));
-    addSlotToGroup (1, ModuleRow::ModuleType::DrumMachine);
-
+    // Intentionally start empty so startup behaviour reflects normal user flow.
+    m_seqHeader.clearFocus();
+    m_stepGridSingle.clearPattern();
+    m_stepGridSingle.setVisible (true);
+    m_stepGridDrum.clearDrumData();
+    m_stepGridDrum.setVisible (false);
     updateSourceNames();
 }
 
@@ -218,7 +246,7 @@ void ZoneBComponent::createDefaultGroups()
 // Group / row management
 //==============================================================================
 
-void ZoneBComponent::addGroup (const juce::String& name, juce::Colour color)
+void ZoneBComponent::addGroup (const juce::String& name, juce::Colour color, bool addInitialEmptySlot)
 {
     auto* grp    = m_groups.add (new ModuleGroup{});
     grp->name    = name;
@@ -227,7 +255,11 @@ void ZoneBComponent::addGroup (const juce::String& name, juce::Colour color)
 
     auto* header = m_groupHeaders.add (new GroupHeader (*grp));
     m_rowsContent.addAndMakeVisible (*header);
-    connectGroupHeader (m_groups.size() - 1);
+    const int groupIndex = m_groups.size() - 1;
+    connectGroupHeader (groupIndex);
+
+    if (addInitialEmptySlot)
+        addSlotToGroup (groupIndex, ModuleRow::ModuleType::Empty);
 
     layoutRowsContent();
     updateSourceNames();
@@ -244,9 +276,24 @@ void ZoneBComponent::addSlotToGroup (int groupIndex, ModuleRow::ModuleType type)
     row->setModuleType (type);
     row->setGroupColor (grp.color);
 
-    row->onRowClicked  = [this, row, groupIndex] (int) { onRowClicked  (row, groupIndex); };
-    row->onEmptyClicked= [this, row, groupIndex] (int) { onEmptyClicked(row, groupIndex); };
-    row->onRightClicked= [this, row, groupIndex] (int) { onRightClick  (row, groupIndex); };
+    row->onRowClicked  = [this, row] (int)
+    {
+        const int gi = findGroupIndexForRow (row);
+        if (gi >= 0)
+            onRowClicked (row, gi);
+    };
+    row->onEmptyClicked= [this, row] (int)
+    {
+        const int gi = findGroupIndexForRow (row);
+        if (gi >= 0)
+            onEmptyClicked (row, gi);
+    };
+    row->onRightClicked= [this, row] (int)
+    {
+        const int gi = findGroupIndexForRow (row);
+        if (gi >= 0)
+            onRightClick (row, gi);
+    };
 
     row->onCollapseToggled = [this] (int)
     {
@@ -255,8 +302,12 @@ void ZoneBComponent::addSlotToGroup (int groupIndex, ModuleRow::ModuleType type)
     };
 
     // DnD drop from AudioHistoryStrip —————————————————————————————————————
-    row->onClipDropped = [this, row, groupIndex] (int)
+    row->onClipDropped = [this, row] (int)
     {
+        const int groupIndex = findGroupIndexForRow (row);
+        if (groupIndex < 0)
+            return;
+
         // If the row was converted from Empty to Reel inside itemDropped,
         // re-sync the module list and update the row layout.
         updateSourceNames();
@@ -276,8 +327,12 @@ void ZoneBComponent::addSlotToGroup (int groupIndex, ModuleRow::ModuleType type)
 
     // Forward fader changes to PluginEditor so they reach the DSP layer.
     // Compute the flat slot index identically to focusRow / onClipDropped.
-    row->onParamChanged = [this, row, groupIndex] (int paramIdx, float /*norm*/)
+    row->onParamChanged = [this, row] (int paramIdx, float /*norm*/)
     {
+        const int groupIndex = findGroupIndexForRow (row);
+        if (groupIndex < 0)
+            return;
+
         if (!onQuickParamChanged) return;
         const auto& params = row->getAllParams();
         if (paramIdx < 0 || paramIdx >= params.size()) return;
@@ -288,8 +343,12 @@ void ZoneBComponent::addSlotToGroup (int groupIndex, ModuleRow::ModuleType type)
     };
 
     // FaceplatePanel events (SYNTH / DRUM rows — paramId-routed, replaces onParamChanged for those types)
-    row->onFaceplateChanged = [this, row, groupIndex] (const juce::String& paramId, float value)
+    row->onFaceplateChanged = [this, row] (const juce::String& paramId, float value)
     {
+        const int groupIndex = findGroupIndexForRow (row);
+        if (groupIndex < 0)
+            return;
+
         if (!onQuickParamChanged) return;
         int flatSlot = row->getRowIndex();
         for (int g = 0; g < groupIndex; ++g)
@@ -371,7 +430,7 @@ int ZoneBComponent::calculateRowsContentH() const noexcept
                 h += grp->slots[ri]->currentHeight() + kRowGap;
         }
     }
-    h += 18;  // ADD GROUP button
+    h += 22;  // ADD GROUP button + breathing room
     return h;
 }
 
@@ -433,7 +492,7 @@ void ZoneBComponent::layoutRowsContent()
         }
     }
 
-    m_addGroupBtn.setBounds (4, y, 80, 14);
+    m_addGroupBtn.setBounds (4, y, 106, 18);
 }
 
 void ZoneBComponent::broadcastModuleList()
@@ -457,6 +516,38 @@ void ZoneBComponent::updateSourceNames()
                 slotNames.add (grp->name + ":" + row->getModuleTypeName());
         onModuleListChanged (slotNames);
     }
+}
+
+void ZoneBComponent::toggleSequencerFocusMode()
+{
+    const int minSplit = kStripeH + kMinRowsH;
+    const int maxSplit = getHeight() - kHandleH - minBottomHeight();
+    const int clampedMin = juce::jlimit (minSplit, juce::jmax (minSplit, maxSplit), minSplit);
+
+    if (! m_sequencerFocusMode)
+    {
+        // Capture the current split so SPLIT can restore the prior layout.
+        if (m_splitY >= 0)
+            m_splitBeforeSequencerFocus = m_splitY;
+        else
+            m_splitBeforeSequencerFocus = juce::jmax (minSplit, maxSplit);
+
+        m_splitY = clampedMin;
+        m_sequencerFocusMode = true;
+    }
+    else
+    {
+        if (m_splitBeforeSequencerFocus >= 0)
+            m_splitY = juce::jlimit (minSplit, juce::jmax (minSplit, maxSplit), m_splitBeforeSequencerFocus);
+        else
+            m_splitY = -1;
+
+        m_sequencerFocusMode = false;
+    }
+
+    m_seqHeader.setSequencerFocusMode (m_sequencerFocusMode);
+    resized();
+    repaint();
 }
 
 //==============================================================================
@@ -584,6 +675,10 @@ void ZoneBComponent::focusRow (ModuleRow* row, int groupIndex)
         m_seqHeader.setPattern     (&row->pattern());
         m_seqHeader.setClipboard   (&m_patternClipboard, m_hasClipboard);
 
+        int flatSlot = row->getRowIndex();
+        for (int g = 0; g < groupIndex; ++g)
+            flatSlot += m_groups[g]->slots.size();
+
         if (row->isDrumMachine())
         {
             resized();
@@ -592,11 +687,7 @@ void ZoneBComponent::focusRow (ModuleRow* row, int groupIndex)
             m_stepGridDrum.setVisible (true);
             m_stepGridDrum.setDrumData (row->drumData(), groupColor);
 
-            // Compute flat index for DSP wiring
-            int drumFlatIdx = row->getRowIndex();
-            for (int g = 0; g < groupIndex; ++g)
-                drumFlatIdx += m_groups[g]->slots.size();
-            const int capturedDrumIdx = drumFlatIdx;
+            const int capturedDrumIdx = flatSlot;
 
             if (onDrumSlotFocused)
                 onDrumSlotFocused (capturedDrumIdx, row->drumData());
@@ -613,13 +704,9 @@ void ZoneBComponent::focusRow (ModuleRow* row, int groupIndex)
             m_stepGridDrum.setVisible (false);
             m_stepGridDrum.clearDrumData();
             m_stepGridSingle.setVisible (true);
-            m_stepGridSingle.setPattern (&row->pattern(), groupColor);
+            m_stepGridSingle.setPattern (&row->pattern(), groupColor, flatSlot);
 
-            // Compute flat index for pattern→processor wiring
-            int flatIdx = row->getRowIndex();
-            for (int g = 0; g < groupIndex; ++g)
-                flatIdx += m_groups[g]->slots.size();
-            const int capturedIdx = flatIdx;
+            const int capturedIdx = flatSlot;
 
             m_stepGridSingle.onModified = [this, capturedIdx]()
             {
@@ -627,11 +714,6 @@ void ZoneBComponent::focusRow (ModuleRow* row, int groupIndex)
                     onPatternModified (capturedIdx, m_focusedRow->pattern());
             };
         }
-
-        // Compute flat slot index (same logic as capturedIdx above)
-        int flatSlot = row->getRowIndex();
-        for (int g = 0; g < groupIndex; ++g)
-            flatSlot += m_groups[g]->slots.size();
 
         m_listeners.call (&Listener::slotSelected,
                           flatSlot,
@@ -675,8 +757,43 @@ void ZoneBComponent::setStructureContext (const juce::String& sectionName,
                                           bool followingStructure,
                                           bool locallyOverriding)
 {
-    m_seqHeader.setStructureContext (sectionName, positionLabel, currentChord, nextChord, transitionIntent, followingStructure, locallyOverriding);
-    m_stepGridSingle.setMusicalContext (keyRoot, keyScale, currentChord, nextChord, followingStructure, locallyOverriding);
+    bool effectiveLocalOverride = locallyOverriding;
+    if (m_focusedRow != nullptr && ! m_focusedRow->isDrumMachine())
+        effectiveLocalOverride = effectiveLocalOverride || ! m_stepGridSingle.isSelectedStepFollowingStructure();
+
+    const bool effectiveFollowingStructure = followingStructure && ! effectiveLocalOverride;
+    m_seqHeader.setStructureContext (sectionName,
+                                     positionLabel,
+                                     currentChord,
+                                     nextChord,
+                                     transitionIntent,
+                                     effectiveFollowingStructure,
+                                     effectiveLocalOverride);
+    m_stepGridSingle.setMusicalContext (keyRoot,
+                                        keyScale,
+                                        currentChord,
+                                        nextChord,
+                                        effectiveFollowingStructure,
+                                        effectiveLocalOverride);
+}
+
+void ZoneBComponent::setFocusedPatternFollowStructure (bool enabled, bool activeOnly)
+{
+    if (m_focusedRow == nullptr || m_focusedRow->isDrumMachine())
+        return;
+
+    auto& pattern = m_focusedRow->pattern();
+    pattern.setFollowStructureForAllSteps (enabled, activeOnly);
+
+    if (onPatternModified)
+    {
+        int flatSlot = m_focusedRow->getRowIndex();
+        for (int g = 0; g < m_focusedGroupIdx; ++g)
+            flatSlot += m_groups[g]->slots.size();
+        onPatternModified (flatSlot, pattern);
+    }
+
+    m_stepGridSingle.repaint();
 }
 
 void ZoneBComponent::seedPatternForSlot (int flatSlotIndex, int stepCount, const std::initializer_list<int>& activeSteps)
@@ -757,8 +874,7 @@ void ZoneBComponent::onRightClick (ModuleRow* row, int groupIndex)
                 row->setMuted (!row->isMuted());
             else if (result == 2)
             {
-                if (m_focusedRow == row) defocusRow();
-                row->setModuleType (ModuleRow::ModuleType::Empty);
+                onRowTypeChosen (row, ModuleRow::ModuleType::Empty);
             }
             juce::ignoreUnused (groupIndex);
         });
@@ -767,14 +883,45 @@ void ZoneBComponent::onRightClick (ModuleRow* row, int groupIndex)
 void ZoneBComponent::onRowTypeChosen (ModuleRow* row, ModuleRow::ModuleType type)
 {
     if (row == nullptr) return;
-    row->setModuleType (type);
 
-    for (int gi = 0; gi < m_groups.size(); ++gi)
-        for (auto* s : m_groups[gi]->slots)
-            if (s == row)
-                row->setGroupColor (m_groups[gi]->color);
+    const int groupIndex = findGroupIndexForRow (row);
+    if (groupIndex < 0 || groupIndex >= m_groups.size())
+        return;
+
+    const auto computeFlatSlot = [this, row, groupIndex]() -> int
+    {
+        int flatSlot = row->getRowIndex();
+        for (int g = 0; g < groupIndex; ++g)
+            flatSlot += m_groups[g]->slots.size();
+        return flatSlot;
+    };
+
+    const bool wasFocused = (m_focusedRow == row);
+    const int flatSlot = computeFlatSlot();
+
+    // Force a full focus refresh when changing the module type of the active row.
+    if (wasFocused)
+        defocusRow();
+
+    row->setModuleType (type);
+    row->setGroupColor (m_groups[groupIndex]->color);
+
+    // Clearing a row should also clear sequencer runtime state immediately.
+    if (type == ModuleRow::ModuleType::Empty)
+    {
+        row->pattern().clearPattern();
+        if (onPatternModified)
+            onPatternModified (flatSlot, row->pattern());
+    }
+
+    updateSourceNames();
+    layoutRowsContent();
 
     dismissLoadDialog();
+
+    if (type != ModuleRow::ModuleType::Empty)
+        focusRow (row, groupIndex);
+
     repaint();
 }
 
