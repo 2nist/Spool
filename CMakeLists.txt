@@ -122,6 +122,9 @@ juce_add_plugin("${PROJECT_NAME}"
     # Icons for the standalone app
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icon.png"
 
+    # MIDI Output Support (Step 1.1 - DAW Integration)
+    NEEDS_MIDI_OUTPUT true
+
     # Change me!
     COMPANY_NAME "${COMPANY_NAME}"
     BUNDLE_ID "${BUNDLE_ID}"

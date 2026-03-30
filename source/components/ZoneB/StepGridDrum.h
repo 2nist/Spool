@@ -29,6 +29,11 @@ public:
 
     /** Fired on the message thread whenever any step or step-count changes. */
     std::function<void()> onModified;
+    /** Fired at the start of a destructive edit gesture (mouseDown or first drag). */
+    std::function<void()> onBeforeEdit;
+    /** Fired when a destructive edit gesture completes (mouseUp).
+        Use to commit an undoable action (hooked by ZoneB/PluginEditor). */
+    std::function<void()> onGestureEnd;
 
     /** Highlight the current playhead column across all voice rows. */
     void setPlayhead (int stepIndex);
@@ -107,6 +112,7 @@ private:
     int  m_playhead    { -1 };
     int  m_hoverVoice  { -1 };
     int  m_hoverStep   { -1 };
+    bool m_inGesture   { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StepGridDrum)
 };

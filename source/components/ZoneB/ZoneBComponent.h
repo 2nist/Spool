@@ -52,6 +52,19 @@ public:
     /** Fired after any drum step or step-count changes. */
     std::function<void (int slotIdx, DrumMachineData*)> onDrumPatternModified;
 
+    /** Fired when a drum edit gesture completes with before/after snapshots.
+        Hook this in PluginEditor to push an UndoableAction for drum edits. */
+    std::function<void (int slotIdx, const DrumMachineData& before, const DrumMachineData& after)> onDrumUndoableEdit;
+
+    /** Fired when a step-pattern gesture completes, with before and after snapshots.
+        Hook this in PluginEditor to push a UndoableAction to the UndoManager. */
+    std::function<void (int slotIdx, SlotPattern before, SlotPattern after)> onUndoableEdit;
+
+    /** Apply a pattern snapshot to a slot — called by UndoableActions on undo/redo. */
+    void applyPatternForUndo (int slotIdx, const SlotPattern& snap);
+    /** Apply a drum-machine snapshot to a slot — called by UndoableActions on undo/redo. */
+    void applyDrumStateForUndo (int slotIdx, const DrumMachineData& snap);
+
     /** Called by PluginEditor when the sequencer advances a step. */
     void setPlayheadStep (int step);
     void setStructureContext (const juce::String& sectionName,
@@ -85,6 +98,10 @@ public:
     ZoneBComponent();
     ~ZoneBComponent() override;
 
+    // Test-only helper: force a flat slot to become a DrumMachine row.
+    // Returns true if the slot exists and was converted.
+    bool test_forceSlotToDrumMachine (int flatSlotIndex);
+
     LooperStrip& getLooperStrip() noexcept { return m_looperStrip; }
     void setLooperVisible (bool shouldShow);
 
@@ -106,11 +123,22 @@ private:
     juce::OwnedArray<ModuleGroup>  m_groups;
     juce::OwnedArray<GroupHeader>  m_groupHeaders;
 
-    ModuleRow* m_focusedRow      { nullptr };
-    int        m_focusedGroupIdx { -1 };
+    ModuleRow*   m_focusedRow        { nullptr };
+    int          m_focusedGroupIdx   { -1 };
+    juce::Colour m_focusedGroupColor { 0x00000000 };
+
+    // Undo snapshot — captured at gesture start, consumed at gesture end
+    SlotPattern m_editSnapshot;
+    int         m_editSnapshotSlot  { -1 };
+    bool        m_hasEditSnapshot   { false };
 
     SlotPattern m_patternClipboard;
     bool        m_hasClipboard { false };
+
+    // Drum undo snapshot — captured at gesture start, consumed at gesture end
+    DrumMachineData m_drumEditSnapshot;
+    int             m_drumEditSnapshotSlot { -1 };
+    bool            m_hasDrumEditSnapshot  { false };
 
     //==========================================================================
     // Scrollable row-list content component

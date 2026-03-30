@@ -292,12 +292,25 @@ void StepGridDrum::paintVoiceRow (juce::Graphics& g, int vi) const
             const bool hoveredStep = (vi == m_hoverVoice && s == m_hoverStep);
             auto fill = (active ? juce::Colour (voice.colorArgb) : (juce::Colour) Theme::Colour::surface3).withAlpha (alpha);
             if (active)
-                fill = fill.interpolatedWith (juce::Colour (Theme::Colour::inkLight), 1.0f - voice.stepVelocity (s));
-            if (hoveredStep && ! selectedStep)
-                fill = fill.brighter (0.08f);
+            {
+                // Visualise velocity as a vertical gradient inside the cell.
+                const float vel = voice.stepVelocity (s); // 0.05..1.0
+                const juce::Colour base = juce::Colour (voice.colorArgb).withAlpha (alpha);
+                const juce::Colour top  = base.interpolatedWith (juce::Colour (Theme::Colour::inkLight), 1.0f - vel);
+                const juce::Colour bot  = base.darker (0.6f + (1.0f - vel) * 0.4f);
+                juce::ColourGradient grad (top, (float) cr.getX(), (float) cr.getY(),
+                                          bot, (float) cr.getX(), (float) cr.getBottom(), false);
+                g.setGradientFill (grad);
+                g.fillRoundedRectangle (cr.toFloat(), Theme::Radius::xs);
+            }
+            else
+            {
+                if (hoveredStep && ! selectedStep)
+                    fill = fill.brighter (0.08f);
 
-            g.setColour (fill);
-            g.fillRoundedRectangle (cr.toFloat(), Theme::Radius::xs);
+                g.setColour (fill);
+                g.fillRoundedRectangle (cr.toFloat(), Theme::Radius::xs);
+            }
             g.setColour (selectedStep ? Theme::Colour::inkLight
                                       : hoveredStep ? juce::Colour (voice.colorArgb).brighter (0.4f)
                                                     : Theme::Colour::surfaceEdge.withAlpha (0.45f));
@@ -412,6 +425,14 @@ void StepGridDrum::voiceMouseDown (const juce::MouseEvent& e)
             return;
         }
 
+        // Begin an edit gesture for toggles/paint-drag operations
+        if (! m_inGesture)
+        {
+            m_inGesture = true;
+            if (onBeforeEdit)
+                onBeforeEdit();
+        }
+
         if (e.mods.isShiftDown())
         {
             const float currentVelocity = voice.stepVelocity (step);
@@ -468,6 +489,11 @@ void StepGridDrum::voiceMouseUp (const juce::MouseEvent&)
 {
     m_lastVoice = -1;
     m_lastStep  = -1;
+    if (m_inGesture)
+    {
+        m_inGesture = false;
+        if (onGestureEnd) onGestureEnd();
+    }
 }
 
 //==============================================================================
@@ -631,34 +657,57 @@ void StepGridDrum::rightClickStep (int vi, int step)
 {
     if (m_data == nullptr || vi >= static_cast<int> (m_data->voices.size())) return;
 
+    const auto& srcVoice = m_data->voices[(size_t) vi];
+    const int curRatchet  = srcVoice.stepRatchetCount (step);
+    const int curDivision = srcVoice.stepRepeatDivision (step);
+    const int curVelPct   = juce::roundToInt (srcVoice.stepVelocity (step) * 100.0f);
+
     juce::PopupMenu menu;
-    menu.addItem (1, m_data->voices[(size_t) vi].stepActive (step) ? "Deactivate Step" : "Activate Step");
-    menu.addItem (2, "Duplicate To Next");
+    menu.addItem (1, srcVoice.stepActive (step) ? "Deactivate Step" : "Activate Step");
+    menu.addItem (2, "Duplicate To Next Step");
     menu.addItem (3, "Clear Step");
     menu.addSeparator();
 
+    // Velocity — 10 steps in 10% increments, current value ticked
     juce::PopupMenu velMenu;
-    velMenu.addItem (10, "25%");
-    velMenu.addItem (11, "50%");
-    velMenu.addItem (12, "75%");
-    velMenu.addItem (13, "100%");
-    menu.addSubMenu ("Velocity", velMenu);
+    for (int pct = 10; pct <= 100; pct += 10)
+        velMenu.addItem (10 + (pct / 10) - 1,
+                         juce::String (pct) + "%",
+                         true,                          // enabled
+                         curVelPct >= pct - 5 && curVelPct < pct + 5);  // ticked
+    menu.addSubMenu ("Velocity  (" + juce::String (curVelPct) + "%)", velMenu);
 
+    // Repeat Count — 1–8 hits, current ticked
     juce::PopupMenu ratchetMenu;
-    ratchetMenu.addItem (20, "1 hit");
-    ratchetMenu.addItem (21, "2 hits");
-    ratchetMenu.addItem (22, "3 hits");
-    ratchetMenu.addItem (23, "4 hits");
-    menu.addSubMenu ("Repeat Count", ratchetMenu);
+    for (int r = 1; r <= 8; ++r)
+        ratchetMenu.addItem (20 + r - 1,
+                             juce::String (r) + (r == 1 ? "×" : "×"),
+                             true,
+                             r == curRatchet);
+    menu.addSubMenu ("Repeat Count  (" + juce::String (curRatchet) + "×)", ratchetMenu);
 
+    // Repeat Division — current ticked
+    const int divValues[] = { 1, 2, 3, 4, 6, 8 };
     juce::PopupMenu divisionMenu;
-    divisionMenu.addItem (30, "1");
-    divisionMenu.addItem (31, "2");
-    divisionMenu.addItem (32, "3");
-    divisionMenu.addItem (33, "4");
-    divisionMenu.addItem (34, "6");
-    divisionMenu.addItem (35, "8");
-    menu.addSubMenu ("Repeat Division", divisionMenu);
+    for (int i = 0; i < 6; ++i)
+        divisionMenu.addItem (30 + i,
+                              "/" + juce::String (divValues[i]),
+                              true,
+                              divValues[i] == curDivision);
+    menu.addSubMenu ("Repeat Division  (/" + juce::String (curDivision) + ")", divisionMenu);
+
+    // Copy to another voice
+    if (m_data->voices.size() > 1)
+    {
+        juce::PopupMenu copyMenu;
+        for (int other = 0; other < static_cast<int> (m_data->voices.size()); ++other)
+        {
+            if (other != vi)
+                copyMenu.addItem (100 + other, juce::String (m_data->voices[(size_t) other].name));
+        }
+        menu.addSeparator();
+        menu.addSubMenu ("Copy Step To Voice", copyMenu);
+    }
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (m_voiceContent.get()),
                         [this, vi, step] (int result)
@@ -666,31 +715,50 @@ void StepGridDrum::rightClickStep (int vi, int step)
                             if (m_data == nullptr || vi >= static_cast<int> (m_data->voices.size()) || result == 0) return;
                             auto& voice = m_data->voices[(size_t) vi];
 
-                            switch (result)
+                            // Velocity: IDs 10–19 → 10%–100%
+                            if (result >= 10 && result <= 19)
                             {
-                                case 1: voice.setStepActive (step, ! voice.stepActive (step)); break;
-                                case 2: duplicateStep (vi, step); break;
-                                case 3: clearStep (vi, step); break;
-                                case 10: voice.setStepVelocity (step, 0.25f); break;
-                                case 11: voice.setStepVelocity (step, 0.50f); break;
-                                case 12: voice.setStepVelocity (step, 0.75f); break;
-                                case 13: voice.setStepVelocity (step, 1.00f); break;
-                                case 20: voice.setStepRatchetCount (step, 1); break;
-                                case 21: voice.setStepRatchetCount (step, 2); break;
-                                case 22: voice.setStepRatchetCount (step, 3); break;
-                                case 23: voice.setStepRatchetCount (step, 4); break;
-                                case 30: voice.setStepRepeatDivision (step, 1); break;
-                                case 31: voice.setStepRepeatDivision (step, 2); break;
-                                case 32: voice.setStepRepeatDivision (step, 3); break;
-                                case 33: voice.setStepRepeatDivision (step, 4); break;
-                                case 34: voice.setStepRepeatDivision (step, 6); break;
-                                case 35: voice.setStepRepeatDivision (step, 8); break;
-                                default: break;
+                                voice.setStepVelocity (step, juce::jlimit (0.05f, 1.0f, (result - 9) * 0.10f));
+                            }
+                            // Repeat count: IDs 20–27 → 1–8 hits
+                            else if (result >= 20 && result <= 27)
+                            {
+                                voice.setStepRatchetCount (step, result - 19);
+                            }
+                            // Repeat division: IDs 30–35
+                            else if (result >= 30 && result <= 35)
+                            {
+                                const int divValues[] = { 1, 2, 3, 4, 6, 8 };
+                                voice.setStepRepeatDivision (step, divValues[result - 30]);
+                            }
+                            // Copy to voice: IDs 100+
+                            else if (result >= 100)
+                            {
+                                const int targetVoice = result - 100;
+                                if (juce::isPositiveAndBelow (targetVoice, (int) m_data->voices.size()) && targetVoice != vi)
+                                {
+                                    auto& dst = m_data->voices[(size_t) targetVoice];
+                                    dst.setStepActive       (step, voice.stepActive (step));
+                                    dst.setStepVelocity     (step, voice.stepVelocity (step));
+                                    dst.setStepRatchetCount (step, voice.stepRatchetCount (step));
+                                    dst.setStepRepeatDivision (step, voice.stepRepeatDivision (step));
+                                }
+                            }
+                            else
+                            {
+                                switch (result)
+                                {
+                                    case 1: voice.setStepActive (step, ! voice.stepActive (step)); break;
+                                    case 2: duplicateStep (vi, step); break;
+                                    case 3: clearStep (vi, step); break;
+                                    default: break;
+                                }
                             }
 
                             m_data->focusedVoiceIndex = vi;
                             m_data->focusedStepIndex = step;
                             if (m_voiceContent) m_voiceContent->repaint();
+                            repaint();  // inspector row shows updated values
                             if (onModified) onModified();
                         });
 }

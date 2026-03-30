@@ -16,8 +16,17 @@ void StepGrid::setArmedSlot (int slotIndex, const juce::String& abbreviation)
 
 void StepGrid::setPlayhead (int stepIndex)
 {
+    if (m_playhead == stepIndex)
+        return;
+
+    const int old = m_playhead;
     m_playhead = stepIndex;
-    repaint();
+
+    // Repaint only the two affected step cells instead of the whole component.
+    if (juce::isPositiveAndBelow (old, kNumSteps))
+        repaint (stepRect (old));
+    if (juce::isPositiveAndBelow (stepIndex, kNumSteps))
+        repaint (stepRect (stepIndex));
 }
 
 //==============================================================================

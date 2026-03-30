@@ -47,18 +47,31 @@ inline const char* toString (DrumVoiceRole role) noexcept
 struct DrumVoiceParams
 {
     //==========================================================================
+    // Tone — pitched oscillator layer (kick body, sub, tonal percussion)
     struct ToneParams
     {
         bool  enable       = true;
-        float pitch        = 55.0f;   // Hz — base (target) frequency
-        float pitchstart   = 3.5f;    // multiplier: start pitch = pitch * pitchstart
-        float pitchdecay   = 0.06f;   // seconds — pitch fall time
-        float attack       = 0.0f;    // seconds — shared voice attack ramp
-        float decay        = 0.6f;    // seconds — amplitude decay
-        float level        = 1.0f;    // 0..1
-        float body         = 0.5f;    // 0..1 — harmonic weight / body density
-        bool  triangleWave = false;   // false=sine, true=triangle
+        float pitch        = 80.0f;    // Hz base frequency
+        float pitchstart   = 2.0f;     // pitch multiplier at attack (1.0 = no sweep)
+        float pitchdecay   = 0.05f;    // seconds for pitch envelope to settle
+        float decay        = 0.30f;    // seconds for amplitude decay
+        float attack       = 0.003f;   // seconds of attack
+        float level        = 0.8f;     // 0..1
+        float body         = 0.5f;     // blend between sine and harmonic content
+        bool  triangleWave = false;    // false = sine, true = triangle
     } tone;
+
+    //==========================================================================
+    // FM (NEW Phase 1)
+    struct FmParams
+    {
+        bool  enable        = false;
+        float level         = 0.0f;      // 0..1
+        float decay         = 0.3f;      // seconds
+        float carrierFreq   = 220.0f;    // Hz base
+        float modRatio      = 2.0f;      // 0.5..8.0
+        float modIndex      = 4.0f;      // 0..16 semitones deviation
+    } fm;
 
     struct NoiseParams
     {
@@ -110,6 +123,9 @@ struct DrumVoiceParams
     DrumVoiceRole role = DrumVoiceRole::kick;
     int midiNote = 36;
 
+    // FM defaults for roles
+    static DrumVoiceParams withFmDefaults (DrumVoiceRole role);
+
     static int defaultMidiNote (DrumVoiceRole role) noexcept
     {
         switch (role)
@@ -155,6 +171,7 @@ struct DrumVoiceParams
         p.tone   = { true, 72.0f, 1.85f, 0.040f, 0.0035f, 0.280f, 1.00f, 0.88f, false };
         p.noise  = { true, 0.012f, 0.025f, 240.0f, 1800.0f, 0.05f };
         p.click  = { true, 0.080f, 0.0016f, 0.22f, 1450.0f, 1, 0.010f };
+        p.fm     = { false, 0.0f, 0.3f, 60.0f, 1.0f, 2.0f };  // Tuned sub pulse
         p.character = { 0.28f, 0.08f, 0.16f };
         p.out    = { 1.10f, 0.0f, 0.0f, 0.75f };
         p.midiNote = defaultMidiNote (p.role);
@@ -181,6 +198,7 @@ struct DrumVoiceParams
         p.tone   = { true, 208.0f, 1.18f, 0.020f, 0.0015f, 0.160f, 0.75f, 0.58f, false };
         p.noise  = { true, 0.185f, 0.78f, 900.0f, 10500.0f, 0.08f };
         p.click  = { true, 0.62f, 0.0055f, 0.18f, 2800.0f, 1, 0.010f };
+        p.fm     = { true, 0.45f, 0.12f, 440.0f, 4.0f, 8.0f };  // Metallic ring tail
         p.character = { 0.26f, 0.13f, 0.82f };
         p.out    = { 1.00f, 0.0f, 0.0f, 0.85f };
         p.midiNote = defaultMidiNote (p.role);
@@ -197,6 +215,7 @@ struct DrumVoiceParams
         p.metal = { true, 6, 540.0f,
                     { 2.0f, 3.17f, 4.21f, 5.42f, 6.83f, 8.18f, 9.31f, 10.47f },
                     0.030f, 0.95f, 4600.0f };
+        p.fm     = { true, 0.65f, 0.018f, 1200.0f, 6.4f, 12.0f };  // Hi-shimmer FM
         p.character = { 0.18f, 0.10f, 0.92f };
         p.out = { 0.95f, 0.0f, 0.0f, 0.72f };
         p.midiNote = defaultMidiNote (p.role);

@@ -1,7 +1,9 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_dsp/juce_dsp.h>
 #include "DrumVoiceParams.h"
+#include "FmDrumVoice.h"
 
 //==============================================================================
 /**
@@ -117,6 +119,7 @@ private:
 
     // Cached params
     DrumVoiceParams m_params;
+    FmDrumVoice m_fmLayer;  // Phase 1: FM layer integration
 
     // Per-voice random generator (audio thread only — no locking needed)
     juce::Random m_random;

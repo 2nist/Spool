@@ -1013,32 +1013,7 @@ void PluginProcessor::triggerRuntimePatternEvents (int slot,
 //==============================================================================
 const juce::String PluginProcessor::getName() const  { return JucePlugin_Name; }
 
-bool PluginProcessor::acceptsMidi() const
-{
-   #if JucePlugin_WantsMidiInput
-    return true;
-   #else
-    return false;
-   #endif
-}
 
-bool PluginProcessor::producesMidi() const
-{
-   #if JucePlugin_ProducesMidiOutput
-    return true;
-   #else
-    return false;
-   #endif
-}
-
-bool PluginProcessor::isMidiEffect() const
-{
-   #if JucePlugin_IsMidiEffect
-    return true;
-   #else
-    return false;
-   #endif
-}
 
 double PluginProcessor::getTailLengthSeconds() const { return 2.0; }
 
@@ -1102,6 +1077,24 @@ bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 }
 
 //==============================================================================
+void PluginProcessor::renderMidiForBlock (juce::MidiBuffer& outBuffer, double blockStartBeat, double beatsPerSample) noexcept
+{
+    jassert (beatsPerSample > 0.0);
+    
+    // MVP: Echo slot MIDI to DAW output (monitor internal sequencer)
+    for (int slot = 0; slot < SpoolAudioGraph::kNumSlots; ++slot)
+    {
+        if (!m_audioGraph.isSlotActive (slot)) continue;
+        
+        for (const auto metadata : m_slotMidi[slot])
+        {
+            outBuffer.addEvent (metadata.getMessage(), metadata.samplePosition);
+        }
+    }
+    
+    // TODO: Full timeline/pattern render
+}
+
 void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                     juce::MidiBuffer&          midiMessages)
 {
@@ -1110,6 +1103,16 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const bool transportPlaying = m_playing.load (std::memory_order_relaxed);
     double blockStartBeat = m_currentSongBeat.load (std::memory_order_relaxed);
     double beatsPerSample = 0.0;
+
+    if (transportPlaying)
+    {
+        const double bpm = static_cast<double> (m_bpm.load());
+        const double bps = bpm / 60.0;
+        beatsPerSample = bps / m_sampleRate;
+    }
+
+    // NEW: Clear MIDI output buffer (JUCE forwards to DAW)
+    m_midiOutBuffer.clear();
 
     // Constraint pass: incoming MIDI -> structure-aware constrained notes
     juce::MidiBuffer constrainedIncoming;
@@ -1183,9 +1186,6 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // ── Song clock ───────────────────────────────────────────────────────────
     if (transportPlaying)
     {
-        const double bpm            = static_cast<double> (m_bpm.load());
-        const double bps            = bpm / 60.0;
-        beatsPerSample = bps / m_sampleRate;
         const double beatDelta = static_cast<double> (numSamples) * beatsPerSample;
 
         const auto currentBeat = m_currentBeat.load (std::memory_order_relaxed) + beatDelta;
@@ -1217,6 +1217,15 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             }
         }
     }
+
+    // Render MIDI after routing and sequencer tick advancement so this block
+    // includes all newly generated events (and not stale pre-tick state).
+    if (transportPlaying && beatsPerSample > 0.0)
+        renderMidiForBlock (m_midiOutBuffer, blockStartBeat, beatsPerSample);
+
+    // Host-facing MIDI output comes from the rendered slot/timeline stream.
+    // This avoids duplicate passthrough of constrained input events.
+    midiMessages.swapWith (m_midiOutBuffer);
 
     // ── Audio graph ──────────────────────────────────────────────────────────
     // We run the per-slot graph to populate post-insert slot buffers, then build

@@ -29,7 +29,8 @@ class PluginEditor : public juce::AudioProcessorEditor,
                      public ZoneBComponent::Listener,
                      public TransportListener,
                      public ThemeManager::Listener,
-                     private AppPreferences::Listener
+                     private AppPreferences::Listener,
+                     private juce::Timer
 {
 public:
     explicit PluginEditor (PluginProcessor&);
@@ -198,6 +199,13 @@ private:
     juce::int64 m_lastBackstepWarningMs { 0 };
     bool m_timelineDebugOverlayEnabled { false };
     std::array<bool, SpoolAudioGraph::kNumSlots> m_timelineLaneArmed {};
+
+    // Pattern compilation debounce — coalesces rapid edits (e.g. drag-painting)
+    // into a single compile per ~40ms window instead of one per mouse event.
+    std::array<bool,        SpoolAudioGraph::kNumSlots> m_patternDirty {};
+    std::array<SlotPattern, SpoolAudioGraph::kNumSlots> m_pendingPatterns;
+    void timerCallback() override;
+    void flushPendingPatterns();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

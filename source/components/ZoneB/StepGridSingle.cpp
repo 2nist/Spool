@@ -55,6 +55,9 @@ void StepGridSingle::clearPattern()
     m_pageIndex = 0;
     m_hoverColumn = -1;
     m_hoverRow = -1;
+    m_hoverResizeStep = -1;
+    m_resizingStep = -1;
+    m_inResizeDrag = false;
     m_rowMuted.fill (false);
     for (auto& row : m_rowMuteHadEvent)
         row.fill (false);
@@ -65,8 +68,44 @@ void StepGridSingle::clearPattern()
 
 void StepGridSingle::setPlayhead (int stepIndex)
 {
+    if (m_playhead == stepIndex)
+        return;
+
+    const int oldPlayhead = m_playhead;
     m_playhead = stepIndex;
-    repaint();
+
+    // Auto-follow: advance page to keep the playhead visible
+    if (m_pattern != nullptr && stepIndex >= 0)
+    {
+        const int unit = stepIndex % juce::jmax (1, totalUnits());
+        const int newPage = pageForUnit (unit);
+        if (newPage != m_pageIndex)
+        {
+            m_pageIndex = newPage;
+            repaint(); // page changed — full repaint needed
+            return;
+        }
+    }
+
+    // Targeted repaint: invalidate only the two column strips that changed
+    // (the old playhead position and the new one). Each strip spans the full
+    // component height so both the overview row and note grid are covered.
+    auto repaintColumn = [this] (int ph)
+    {
+        if (ph < 0)
+            return;
+        const int unit = ph % juce::jmax (1, totalUnits());
+        const int col = columnForUnit (unit);
+        if (col < 0)
+            return; // unit is on a different page — nothing to repaint here
+        const auto r = cellRect (0, col);
+        if (r.isEmpty())
+            return;
+        repaint (r.getX() - 1, 0, r.getWidth() + 2, getHeight());
+    };
+
+    repaintColumn (oldPlayhead);
+    repaintColumn (stepIndex);
 }
 
 void StepGridSingle::setMusicalContext (const juce::String& keyRoot,
@@ -377,6 +416,43 @@ juce::Rectangle<int> StepGridSingle::cellRect (int row, int col) const noexcept
     const int y2 = juce::roundToInt (g.getY() + (float) (row + 1) * cellH);
 
     return { x1, y1, juce::jmax (1, x2 - x1), juce::jmax (1, y2 - y1) };
+}
+
+int StepGridSingle::stepIndexForResizeAt (juce::Point<int> pos) const noexcept
+{
+    if (m_pattern == nullptr)
+        return -1;
+
+    if (! noteGridRect().contains (pos))
+        return -1;
+
+    const auto cells = noteGridRect().withTrimmedLeft (kLabelW);
+    if (cells.isEmpty())
+        return -1;
+
+    const int pageStart = pageStartUnit();
+
+    for (int i = 0; i < m_pattern->activeStepCount(); ++i)
+    {
+        const auto* step = m_pattern->getStep (i);
+        if (step == nullptr)
+            continue;
+
+        const int stepEnd = step->start + step->duration - 1;
+        if (stepEnd < pageStart || step->start >= pageStart + kCols)
+            continue;
+
+        const int lastVisibleUnit = juce::jmin (stepEnd, pageStart + kCols - 1);
+        const int col = columnForUnit (lastVisibleUnit);
+        if (col < 0)
+            continue;
+
+        const int rightEdgeX = cellRect (0, col).getRight();
+        if (pos.x >= rightEdgeX - kResizeZoneW && pos.x <= rightEdgeX + 2)
+            return i;
+    }
+
+    return -1;
 }
 
 int StepGridSingle::midiForRow (int row) const noexcept
@@ -696,6 +772,10 @@ void StepGridSingle::commitChange()
     repaint();
     if (onModified)
         onModified();
+    // Keyboard edits are single-shot — close the gesture immediately so each
+    // key press gets its own undo action. Mouse gestures close in mouseUp.
+    if (! m_inMouseGesture && onGestureEnd)
+        onGestureEnd();
 }
 
 void StepGridSingle::showModeMenu()
@@ -1341,6 +1421,26 @@ void StepGridSingle::paintGrid (juce::Graphics& g) const
         }
     }
 
+    // Resize handle indicator — highlight the right edge of the hovered/dragged step
+    if (m_view == LaneView::notes && (m_hoverResizeStep >= 0 || m_inResizeDrag))
+    {
+        const int highlightStep = m_inResizeDrag ? m_resizingStep : m_hoverResizeStep;
+        const auto* resStep = m_pattern->getStep (highlightStep);
+        if (resStep != nullptr)
+        {
+            const int pageStart = pageStartUnit();
+            const int stepEnd = resStep->start + resStep->duration - 1;
+            const int lastVisibleUnit = juce::jmin (stepEnd, pageStart + kCols - 1);
+            const int resCol = columnForUnit (lastVisibleUnit);
+            if (resCol >= 0)
+            {
+                const int edgeX = cellRect (0, resCol).getRight() - 2;
+                g.setColour (m_groupColor.withAlpha (0.85f));
+                g.fillRect (edgeX, cellsArea.getY(), 2, cellsArea.getHeight());
+            }
+        }
+    }
+
     if (m_view == LaneView::chord)
     {
         const int rootPc = rootToPitchClass (chordRootString (m_currentChord));
@@ -1519,6 +1619,10 @@ void StepGridSingle::paintInspector (juce::Graphics& g) const
 
 void StepGridSingle::mouseDown (const juce::MouseEvent& e)
 {
+    m_inMouseGesture = true;
+    if (m_pattern != nullptr && onBeforeEdit)
+        onBeforeEdit();
+
     if (m_pattern == nullptr)
         return;
 
@@ -1526,6 +1630,22 @@ void StepGridSingle::mouseDown (const juce::MouseEvent& e)
     ensureSelectionValid();
 
     const auto pos = e.getPosition();
+
+    // Resize handle — takes priority over all other grid hits
+    {
+        const int resizeStep = stepIndexForResizeAt (pos);
+        if (resizeStep >= 0)
+        {
+            if (const auto* step = m_pattern->getStep (resizeStep))
+            {
+                m_inResizeDrag = true;
+                m_resizingStep = resizeStep;
+                m_resizeDragStartX = pos.x;
+                m_resizeDragOrigDur = step->duration;
+            }
+            return;
+        }
+    }
 
     if (pagePrevRect().contains (pos))
     {
@@ -1693,6 +1813,20 @@ void StepGridSingle::mouseDrag (const juce::MouseEvent& e)
     if (m_pattern == nullptr)
         return;
 
+    if (m_inResizeDrag && m_resizingStep >= 0)
+    {
+        const auto cells = noteGridRect().withTrimmedLeft (kLabelW);
+        const float cellW = cells.getWidth() / (float) kCols;
+        if (cellW > 0.0f)
+        {
+            const int deltaUnits = juce::roundToInt ((e.getPosition().x - m_resizeDragStartX) / cellW);
+            const int newDuration = juce::jlimit (1, SlotPattern::MAX_STEP_DURATION, m_resizeDragOrigDur + deltaUnits);
+            m_pattern->setStepDuration (m_resizingStep, newDuration);
+            commitChange();
+        }
+        return;
+    }
+
     const int col = cellColumnAt (e.getPosition());
     const int row = cellRowAt (e.getPosition());
     if (col < 0 || row < 0)
@@ -1724,6 +1858,13 @@ void StepGridSingle::mouseMove (const juce::MouseEvent& e)
 {
     m_hoverColumn = cellColumnAt (e.getPosition());
     m_hoverRow = cellRowAt (e.getPosition());
+
+    const int resizeStep = stepIndexForResizeAt (e.getPosition());
+    if (resizeStep != m_hoverResizeStep)
+    {
+        m_hoverResizeStep = resizeStep;
+        updateMouseCursor();
+    }
 }
 
 void StepGridSingle::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
@@ -1768,12 +1909,22 @@ void StepGridSingle::mouseWheelMove (const juce::MouseEvent& e, const juce::Mous
 
 void StepGridSingle::mouseUp (const juce::MouseEvent&)
 {
+    m_inResizeDrag = false;
+    m_resizingStep = -1;
+    m_inMouseGesture = false;
+    if (onGestureEnd)
+        onGestureEnd();
 }
 
 bool StepGridSingle::keyPressed (const juce::KeyPress& key)
 {
     if (m_pattern == nullptr)
         return false;
+
+    // Snapshot before any key edit. Navigation keys won't call commitChange so
+    // onGestureEnd won't fire — the snapshot is harmlessly overwritten next time.
+    if (onBeforeEdit)
+        onBeforeEdit();
 
     const auto ch = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
 
@@ -1874,6 +2025,9 @@ bool StepGridSingle::keyPressed (const juce::KeyPress& key)
 
 juce::MouseCursor StepGridSingle::getMouseCursor()
 {
+    if (m_hoverResizeStep >= 0 || m_inResizeDrag)
+        return juce::MouseCursor::LeftRightResizeCursor;
+
     return juce::MouseCursor::CrosshairCursor;
 }
 

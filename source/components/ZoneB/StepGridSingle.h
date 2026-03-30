@@ -21,6 +21,12 @@ public:
     bool isSelectedStepFollowingStructure() const noexcept;
 
     std::function<void()> onModified;
+    /** Fired once at the start of each edit gesture (mouseDown or destructive key).
+        Hook this to snapshot the pattern before the mutation. */
+    std::function<void()> onBeforeEdit;
+    /** Fired once at the end of each edit gesture (mouseUp or after keyboard edit).
+        Hook this to commit a before/after UndoableAction. */
+    std::function<void()> onGestureEnd;
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
@@ -34,6 +40,8 @@ public:
     static constexpr int kHeight = 124;
 
 private:
+    bool m_inMouseGesture { false };
+
     enum class LaneView : uint8_t
     {
         notes = 0,
@@ -62,6 +70,11 @@ private:
     bool m_hasStepClipboard { false };
     int m_hoverColumn { -1 };
     int m_hoverRow { -1 };
+    int m_hoverResizeStep  { -1 };   // step whose right edge the cursor is near
+    int m_resizingStep     { -1 };   // step currently being resize-dragged
+    int m_resizeDragStartX { 0 };    // mouse X when resize drag began
+    int m_resizeDragOrigDur { 0 };   // step duration when resize drag began
+    bool m_inResizeDrag    { false };
     std::array<bool, SlotPattern::kRouteRows> m_rowMuted {};
     std::array<std::array<SlotPattern::GateMode, SlotPattern::kRouteUnitsPerRow>, SlotPattern::kRouteRows> m_rowMuteGateSnapshot {};
     std::array<std::array<bool, SlotPattern::kRouteUnitsPerRow>, SlotPattern::kRouteRows> m_rowMuteHadEvent {};
@@ -76,6 +89,7 @@ private:
     static constexpr int kPad = 4;
     static constexpr int kHeaderH = 16;
     static constexpr int kInspectorH = 16;
+    static constexpr int kResizeZoneW = 5;  // px from step right edge that triggers resize cursor
     static constexpr int kOverviewRows = 4;
     static constexpr int kOverviewRowH = 11;
     static constexpr int kOverviewPadY = 2;
@@ -120,6 +134,7 @@ private:
     int cellColumnAt (juce::Point<int> pos) const noexcept;
     int cellRowAt (juce::Point<int> pos) const noexcept;
     juce::Rectangle<int> cellRect (int row, int col) const noexcept;
+    int stepIndexForResizeAt (juce::Point<int> pos) const noexcept;
 
     int midiForRow (int row) const noexcept;
     int rowForMidi (int midiNote) const noexcept;

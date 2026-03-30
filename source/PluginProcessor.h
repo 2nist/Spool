@@ -38,9 +38,9 @@ public:
     bool hasEditor() const override;
 
     const juce::String getName() const override;
-    bool  acceptsMidi()   const override;
-    bool  producesMidi()  const override;
-    bool  isMidiEffect()  const override;
+    bool  acceptsMidi()   const override { return true; }
+    bool  producesMidi()  const override { return true; }
+    bool  isMidiEffect()  const override { return false; }
     double getTailLengthSeconds() const override;
 
     int  getNumPrograms() override;
@@ -359,6 +359,12 @@ private:
     std::atomic<int>        m_fxSendReadIndex { 0 };
     static constexpr int    kRoutingSources = 4;
     static constexpr int    kRoutingOutputs = 2;
+
+    //--- MIDI Output (New for DAW integration)
+    juce::MidiBuffer m_midiOutBuffer;
+
+    /** Render MIDI events for current block to output buffer (RT-safe). */
+    void renderMidiForBlock (juce::MidiBuffer& outBuffer, double blockStartBeat, double beatsPerSample) noexcept;
 
     //--- Song helpers
     void advanceSequencerTick (int sampleOffset);

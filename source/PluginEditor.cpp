@@ -805,14 +805,59 @@ PluginEditor::PluginEditor (PluginProcessor& p)
         persistZoneCFxStateToSong();
     };
 
-    // Wire Zone B step-pattern edits to the processor
+    // Wire Zone B step-pattern edits to the processor via a 40ms debounce.
+    // During drag-paint gestures this can fire 10-20× per second; coalescing
+    // prevents a full compileRuntimePattern() on every mouse-move event.
     zoneB.onPatternModified = [this] (int slotIdx, const SlotPattern& pattern)
     {
-        const int stepCount = pattern.activeStepCount();
-        processorRef.setStepCount (slotIdx, stepCount);
-        for (int s = 0; s < SlotPattern::MAX_STEPS; ++s)
-            processorRef.setStepActive (slotIdx, s, s < stepCount && pattern.stepActive (s));
-        processorRef.setSlotPattern (slotIdx, pattern);
+        if (slotIdx < 0 || slotIdx >= static_cast<int> (m_pendingPatterns.size()))
+            return;
+        m_pendingPatterns[(size_t) slotIdx] = pattern;
+        m_patternDirty[(size_t) slotIdx] = true;
+        if (! isTimerRunning())
+            startTimer (40);
+    };
+
+    // Push a pattern undo action whenever a step-editing gesture completes.
+    zoneB.onUndoableEdit = [this] (int slotIdx, SlotPattern before, SlotPattern after)
+    {
+        struct PatternEditAction : public juce::UndoableAction
+        {
+            ZoneBComponent& zb;
+            int             slot;
+            SlotPattern     bef, aft;
+
+            PatternEditAction (ZoneBComponent& z, int s, SlotPattern b, SlotPattern a)
+                : zb (z), slot (s), bef (std::move (b)), aft (std::move (a)) {}
+
+            bool perform() override { zb.applyPatternForUndo (slot, aft); return true; }
+            bool undo()    override { zb.applyPatternForUndo (slot, bef); return true; }
+            int  getSizeInUnits() override { return 1; }
+        };
+
+        processorRef.getUndoManager().perform (
+            new PatternEditAction (zoneB, slotIdx, std::move (before), std::move (after)));
+    };
+
+    // Push a drum-machine undo action whenever a drum edit gesture completes.
+    zoneB.onDrumUndoableEdit = [this] (int slotIdx, const DrumMachineData& before, const DrumMachineData& after)
+    {
+        struct DrumEditAction : public juce::UndoableAction
+        {
+            ZoneBComponent& zb;
+            int             slot;
+            DrumMachineData bef, aft;
+
+            DrumEditAction (ZoneBComponent& z, int s, DrumMachineData b, DrumMachineData a)
+                : zb (z), slot (s), bef (std::move (b)), aft (std::move (a)) {}
+
+            bool perform() override { zb.applyDrumStateForUndo (slot, aft); return true; }
+            bool undo()    override { zb.applyDrumStateForUndo (slot, bef); return true; }
+            int  getSizeInUnits() override { return 1; }
+        };
+
+        processorRef.getUndoManager().perform (
+            new DrumEditAction (zoneB, slotIdx, before, after));
     };
 
     // Wire Zone B DnD drop → load the pending clip into the target slot
@@ -1395,6 +1440,14 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 
 PluginEditor::~PluginEditor()
 {
+    // Stop debounce timer and flush any pending pattern compile before teardown.
+    stopTimer();
+    flushPendingPatterns();
+
+    // Clear processor callback before any member teardown to prevent a queued
+    // AsyncUpdater from firing into a partially-destroyed editor.
+    processorRef.onStepAdvanced = nullptr;
+
     if (m_splash != nullptr)
         m_splash->onFinished = {};
 
@@ -1633,6 +1686,29 @@ void PluginEditor::playStateChanged (bool playing)
 void PluginEditor::onStepAdvanced (int step)
 {
     zoneB.setPlayheadStep (step);
+}
+
+void PluginEditor::timerCallback()
+{
+    stopTimer();
+    flushPendingPatterns();
+}
+
+void PluginEditor::flushPendingPatterns()
+{
+    for (int slot = 0; slot < static_cast<int> (m_patternDirty.size()); ++slot)
+    {
+        if (! m_patternDirty[(size_t) slot])
+            continue;
+
+        m_patternDirty[(size_t) slot] = false;
+        const auto& pattern = m_pendingPatterns[(size_t) slot];
+        const int stepCount = pattern.activeStepCount();
+        processorRef.setStepCount (slot, stepCount);
+        for (int s = 0; s < SlotPattern::MAX_STEPS; ++s)
+            processorRef.setStepActive (slot, s, s < stepCount && pattern.stepActive (s));
+        processorRef.setSlotPattern (slot, pattern);
+    }
 }
 
 void PluginEditor::positionChanged (float beat)

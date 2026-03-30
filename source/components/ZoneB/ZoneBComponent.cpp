@@ -132,6 +132,15 @@ ZoneBComponent::~ZoneBComponent()
         m_rowsContent.removeChildComponent (hdr);
 }
 
+bool ZoneBComponent::test_forceSlotToDrumMachine (int flatSlotIndex)
+{
+    auto* row = rowForFlatSlot (flatSlotIndex);
+    if (row == nullptr)
+        return false;
+    row->setModuleType (ModuleRow::ModuleType::DrumMachine);
+    return true;
+}
+
 void ZoneBComponent::setLooperVisible (bool shouldShow)
 {
     if (m_showLooper == shouldShow)
@@ -656,6 +665,9 @@ void ZoneBComponent::focusRow (ModuleRow* row, int groupIndex)
     if (m_focusedRow != nullptr)
         m_focusedRow->setSelected (false);
 
+    // Discard any in-flight snapshot when focus changes to a different row.
+    m_hasEditSnapshot = false;
+
     m_focusedRow      = row;
     m_focusedGroupIdx = groupIndex;
 
@@ -671,6 +683,7 @@ void ZoneBComponent::focusRow (ModuleRow* row, int groupIndex)
             groupColor = m_groups[groupIndex]->color;
         }
 
+        m_focusedGroupColor = groupColor;
         m_seqHeader.setFocusedSlot (row->getModuleTypeName(), groupName, groupColor);
         m_seqHeader.setPattern     (&row->pattern());
         m_seqHeader.setClipboard   (&m_patternClipboard, m_hasClipboard);
@@ -697,6 +710,31 @@ void ZoneBComponent::focusRow (ModuleRow* row, int groupIndex)
                 if (m_focusedRow != nullptr && onDrumPatternModified)
                     onDrumPatternModified (capturedDrumIdx, m_focusedRow->drumData());
             };
+
+            // Drum gesture undo/redo: capture snapshot at gesture start, emit
+            // an undo callback on gesture end. PluginEditor will push the
+            // corresponding UndoableAction into the UndoManager.
+            m_stepGridDrum.onBeforeEdit = [this, capturedDrumIdx]()
+            {
+                if (m_focusedRow != nullptr)
+                {
+                    m_drumEditSnapshot = *m_focusedRow->drumData();
+                    m_drumEditSnapshotSlot = capturedDrumIdx;
+                    m_hasDrumEditSnapshot = true;
+                }
+            };
+
+            m_stepGridDrum.onGestureEnd = [this, capturedDrumIdx]()
+            {
+                if (m_hasDrumEditSnapshot
+                    && m_drumEditSnapshotSlot == capturedDrumIdx
+                    && m_focusedRow != nullptr
+                    && onDrumUndoableEdit)
+                {
+                    onDrumUndoableEdit (capturedDrumIdx, m_drumEditSnapshot, *m_focusedRow->drumData());
+                    m_hasDrumEditSnapshot = false;
+                }
+            };
         }
         else
         {
@@ -707,6 +745,28 @@ void ZoneBComponent::focusRow (ModuleRow* row, int groupIndex)
             m_stepGridSingle.setPattern (&row->pattern(), groupColor, flatSlot);
 
             const int capturedIdx = flatSlot;
+
+            m_stepGridSingle.onBeforeEdit = [this, capturedIdx]()
+            {
+                if (m_focusedRow != nullptr)
+                {
+                    m_editSnapshot     = m_focusedRow->pattern();
+                    m_editSnapshotSlot = capturedIdx;
+                    m_hasEditSnapshot  = true;
+                }
+            };
+
+            m_stepGridSingle.onGestureEnd = [this, capturedIdx]()
+            {
+                if (m_hasEditSnapshot
+                    && m_editSnapshotSlot == capturedIdx
+                    && m_focusedRow != nullptr
+                    && onUndoableEdit)
+                {
+                    onUndoableEdit (capturedIdx, m_editSnapshot, m_focusedRow->pattern());
+                    m_hasEditSnapshot = false;
+                }
+            };
 
             m_stepGridSingle.onModified = [this, capturedIdx]()
             {
@@ -745,6 +805,48 @@ void ZoneBComponent::setPlayheadStep (int step)
 {
     m_stepGridSingle.setPlayhead (step);
     m_stepGridDrum.setPlayhead   (step);
+}
+
+void ZoneBComponent::applyPatternForUndo (int slotIdx, const SlotPattern& snap)
+{
+    int groupIdx = -1;
+    auto* row = rowForFlatSlot (slotIdx, &groupIdx);
+    if (row == nullptr)
+        return;
+
+    // Write the snapshot directly into the row's pattern (the StepGridSingle
+    // holds a pointer into this same object, so the grid sees the new data).
+    row->pattern() = snap;
+
+    if (row == m_focusedRow)
+    {
+        m_stepGridSingle.repaint();
+        m_seqHeader.repaint();
+    }
+
+    if (onPatternModified)
+        onPatternModified (slotIdx, row->pattern());
+}
+
+void ZoneBComponent::applyDrumStateForUndo (int slotIdx, const DrumMachineData& snap)
+{
+    int groupIdx = -1;
+    auto* row = rowForFlatSlot (slotIdx, &groupIdx);
+    if (row == nullptr)
+        return;
+
+    // Overwrite the row's drum data with the snapshot. The StepGridDrum points
+    // into this data so repaint will reflect the new state immediately.
+    row->setDrumData (snap);
+
+    if (row == m_focusedRow)
+    {
+        m_stepGridDrum.repaint();
+        m_seqHeader.repaint();
+    }
+
+    if (onDrumPatternModified)
+        onDrumPatternModified (slotIdx, row->drumData());
 }
 
 void ZoneBComponent::setStructureContext (const juce::String& sectionName,
