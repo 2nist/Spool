@@ -8,6 +8,7 @@
 #include "StepGridSingle.h"
 #include "StepGridDrum.h"
 #include "LooperStrip.h"
+#include "StepGridSingleInspector.h"
 
 //==============================================================================
 /**
@@ -159,6 +160,7 @@ private:
     SequencerHeader  m_seqHeader;
     StepGridSingle   m_stepGridSingle;
     StepGridDrum     m_stepGridDrum;
+    StepGridSingleInspector m_stepGridSingleInspector;
     LooperStrip      m_looperStrip;
     bool             m_showLooper { true };
 

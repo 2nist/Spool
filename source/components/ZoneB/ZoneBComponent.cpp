@@ -26,10 +26,14 @@ ZoneBComponent::ZoneBComponent()
             hdr->startRename();
     };
     m_rowsContent.addAndMakeVisible (m_addGroupBtn);
-
-    // Split handle
-    addAndMakeVisible (m_splitHandle);
-    m_splitHandle.onDragStarted = [this]
+        const int inspectorW = 220;
+        const int gridW = juce::jmin (800, juce::jmax (400, getWidth() - inspectorW - 48));
+        const int gridX = juce::jmax (0, m_seqHeader.getRight() - gridW - inspectorW);
+        m_seqHeader.setBounds (seqHeaderY(), 0, getWidth(), kSeqHdrH);
+        m_stepGridSingle.setBounds (gridX, seqHeaderY() + kSeqHdrH, gridW, m_gridH);
+        m_stepGridDrum.setBounds (gridX, seqHeaderY() + kSeqHdrH, gridW, m_gridH);
+        m_stepGridSingleInspector.setBounds (gridX + gridW + 8, seqHeaderY() + kSeqHdrH, inspectorW, m_gridH);
+        m_looperStrip.setBounds (0, seqHeaderY() + kSeqHdrH + m_gridH, getWidth(), looperHeight());
     {
         // Materialise the visual position before starting a drag if default (-1).
         if (m_splitY < 0)
@@ -54,6 +58,7 @@ ZoneBComponent::ZoneBComponent()
     // Sequencer area
     addAndMakeVisible (m_seqHeader);
     addAndMakeVisible (m_stepGridSingle);
+    addAndMakeVisible (m_stepGridSingleInspector);
     addChildComponent (m_stepGridDrum);
     addAndMakeVisible (m_looperStrip);
 
@@ -773,6 +778,10 @@ void ZoneBComponent::focusRow (ModuleRow* row, int groupIndex)
                 if (m_focusedRow != nullptr && onPatternModified)
                     onPatternModified (capturedIdx, m_focusedRow->pattern());
             };
+
+                // Connect inspector to the single step grid
+                m_stepGridSingleInspector.setStepGridSingle (&m_stepGridSingle);
+                m_stepGridSingleInspector.setVisible (true);
         }
 
         m_listeners.call (&Listener::slotSelected,
