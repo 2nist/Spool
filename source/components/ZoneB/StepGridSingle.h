@@ -186,4 +186,8 @@ private:
     int realizedPitchForPreview (const SlotPattern::Step& step, const SlotPattern::MicroEvent& event) const noexcept;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StepGridSingle)
+public:
+    // Public accessor to selected step for inspector/tests
+    const SlotPattern::Step* getSelectedStepData() const noexcept { return selectedStepData(); }
+    SlotPattern::Step* getSelectedStepData() noexcept { return selectedStepData(); }
 };

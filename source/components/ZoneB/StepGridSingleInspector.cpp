@@ -29,7 +29,7 @@ void StepGridSingleInspector::attachCallbacks()
     lengthBox.onChange = [this]() { applyLengthChange(); };
 }
 
-void StepGridSingleInspector::setStepGridSingle (ZoneB::StepGridSingle* sg) noexcept
+void StepGridSingleInspector::setStepGridSingle (StepGridSingle* sg) noexcept
 {
     stepGrid = sg;
     refresh();
@@ -57,7 +57,7 @@ void StepGridSingleInspector::refresh()
     if (stepGrid == nullptr)
         return;
 
-    if (const auto* step = stepGrid->selectedStepData())
+    if (const auto* step = stepGrid->getSelectedStepData())
     {
         // Use first microEvent velocity as representative if present
         uint8_t vel = 100;
@@ -72,7 +72,7 @@ void StepGridSingleInspector::refresh()
 void StepGridSingleInspector::applyVelocityChange()
 {
     if (stepGrid == nullptr) return;
-    auto* step = stepGrid->selectedStepData();
+    auto* step = stepGrid->getSelectedStepData();
     if (step == nullptr) return;
 
     if (stepGrid->onBeforeEdit) stepGrid->onBeforeEdit();
@@ -92,7 +92,7 @@ void StepGridSingleInspector::applyVelocityChange()
 void StepGridSingleInspector::applyGateChange()
 {
     if (stepGrid == nullptr) return;
-    auto* step = stepGrid->selectedStepData();
+    auto* step = stepGrid->getSelectedStepData();
     if (step == nullptr) return;
 
     if (stepGrid->onBeforeEdit) stepGrid->onBeforeEdit();
@@ -114,7 +114,7 @@ void StepGridSingleInspector::applyGateChange()
 void StepGridSingleInspector::applyLengthChange()
 {
     if (stepGrid == nullptr) return;
-    auto* step = stepGrid->selectedStepData();
+    auto* step = stepGrid->getSelectedStepData();
     if (step == nullptr) return;
 
     if (stepGrid->onBeforeEdit) stepGrid->onBeforeEdit();
@@ -125,4 +125,23 @@ void StepGridSingleInspector::applyLengthChange()
     if (stepGrid->onModified) stepGrid->onModified();
     if (stepGrid->onGestureEnd) stepGrid->onGestureEnd();
 }
+
+void StepGridSingleInspector::setVelocityAndCommit (int velocity)
+{
+    velocitySlider.setValue ((double) velocity, juce::dontSendNotification);
+    applyVelocityChange();
+}
+
+void StepGridSingleInspector::setGateAndCommit (bool gateOn)
+{
+    gateToggle.setToggleState (gateOn, juce::dontSendNotification);
+    applyGateChange();
+}
+
+void StepGridSingleInspector::setLengthAndCommit (int lengthUnits)
+{
+    lengthBox.setSelectedId (lengthUnits, juce::dontSendNotification);
+    applyLengthChange();
+}
+
 
